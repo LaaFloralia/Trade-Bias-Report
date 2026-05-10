@@ -7,6 +7,23 @@
 
 ---
 
+## 採用結論（2026-05-10）
+
+社長判断で**課金ゼロ路線を採用**。本レポートの推奨案のうち FMP・公式 financial-services プラグイン（$19/月〜）は見送り。**無料で純利益が大きい FRED のみ導入**する方針に確定。
+
+実装方針（2026-05-10 完了）:
+- FRED は **Python 通常実装**で導入（MCP 依存しない、`scrapers/fred.py`）
+- API key は **macOS Keychain（`-A` silent access）一択**。1Password vault が正本、`op` はワンタイム bootstrap のみ
+- 取得系列: **DGS10**（US10Y、旧 Investing.com / CNBC スクレイピングを完全置換）/ **DGS2**（US2Y、新規）/ **DTWEXBGS**（Broad USD Index、**DXY とは別物として別フィールドで保持** — DXY 失敗時の proxy fallback としてのみ参照）
+- メタデータ schema: source / series_id / value / prev_value / change / timestamp / as_of_date / prev_as_of_date / stale / fallback_used / error / note
+- stale フォールバック: 直近 7 日の `output/scraped_data_*.json` から最後の成功値を復元
+
+未採用（検証だけ todo に残す、`dev/tasks/todo.md` 参照）:
+- FMP MCP / Free 枠（250 calls/day）— economic_calendar 検証のみ
+- CoinGlass OSS MCP / ETF Flow OSS MCP — Playwright 代替候補として検証のみ
+
+---
+
 ## 1. エグゼクティブサマリー
 
 3〜5 行で結論：

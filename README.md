@@ -23,6 +23,7 @@ Claude API にマスタープロンプトとデータを渡してレポートを
 - Anthropic API キー（https://console.anthropic.com/）
 - Node.js 18+（Playwright 用）
 - Twelve Data API キー（価格取得用）
+- **FRED API キー**（Treasury yields + Broad USD Index、無料、https://fred.stlouisfed.org/）— **macOS Keychain 推奨**（service: `FRED_API_KEY`、account: `$USER`、`-A` silent access）
 
 ---
 
@@ -45,6 +46,17 @@ cp .env.example .env
 # - ANTHROPIC_API_KEY
 # - TWELVEDATA_API_KEY
 # - OBSIDIAN_VAULT_PATH（Brain へのローカルパス）
+
+# FRED API key は macOS Keychain (-A silent access) 推奨:
+# 1. https://fred.stlouisfed.org/ で API key を取得（無料）
+# 2. 1Password vault に「FRED API」item として保管（正本）
+# 3. ワンタイム bootstrap で Keychain へ転記（API key 値は echo しない）:
+#    op signin
+#    KEY=$(op item get "FRED API" --field credential --reveal 2>/dev/null \
+#          || op item get "FRED API" --field password   --reveal 2>/dev/null \
+#          || op item get "FRED API" --field "api key"  --reveal 2>/dev/null)
+#    [ -n "$KEY" ] && security add-generic-password -a "$USER" -s "FRED_API_KEY" -w "$KEY" -A -U && unset KEY
+# 4. ランタイムは Python が Keychain から自動取得（解決順: env → Keychain → .env）
 ```
 
 ### 2-3. 実行
@@ -78,7 +90,14 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │   ├── fxssi.py              # FXSSI Current Ratio 取得
 │   ├── ig_sentiment.py       # IG Client Sentiment 取得
 │   ├── coinglass.py          # CoinGlass L/S Ratio + Funding Rate
-│   └── economic_calendar.py  # 経済指標カレンダー（Investing.com）
+│   ├── economic_calendar.py  # 経済指標カレンダー（Investing.com）
+│   ├── dxy.py                # DXY スクレイピング（Investing.com / MarketWatch / Stooq）
+│   ├── twelvedata.py         # Twelve Data API（XAUUSD/USDJPY/BTCUSD OHLCV）
+│   ├── cot.py                # CFTC COT 公式 API
+│   ├── btc_etf.py            # BTC ETF フロー
+│   ├── fedwatch.py           # CME FedWatch（FOMC週のみ）
+│   ├── fred.py               # FRED: DGS10 (US10Y) / DGS2 (US2Y) / DTWEXBGS (Broad USD Index, ≠ DXY)
+│   └── validation.py         # データバリデーション
 └── output/                   # ローカル出力（Brain にも commit）
 ```
 

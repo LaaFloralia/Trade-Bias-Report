@@ -26,7 +26,7 @@ from scrapers.dxy import scrape_dxy
 from scrapers.economic_calendar import scrape_economic_calendar
 from scrapers.fedwatch import scrape_fedwatch
 from scrapers.btc_etf import scrape_btc_etf
-from scrapers.us10y import scrape_us10y
+from scrapers.fred import fetch_fred_data
 from scrapers.validation import validate_all, apply_validation
 
 
@@ -78,7 +78,7 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
 async def collect_all_data(weekly: bool = False) -> dict:
     """MyFXBook優先でデータを取得し、失敗銘柄はFXSSI→IGの順でフォールバックする。
     weekly=True のときは COT データも取得する。
-    新規データソース: DXY, US10Y, 経済指標カレンダー, FedWatch, BTC ETFフロー
+    新規データソース: DXY, FRED (DGS10/DGS2/DTWEXBGS), 経済指標カレンダー, FedWatch, BTC ETFフロー
     """
     print("[1/4] データ取得を開始...")
 
@@ -89,7 +89,7 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "coinglass": {},
         "cot": None,  # ウィークリー時のみ使用
         "dxy": None,
-        "us10y": None,
+        "fred": None,  # FRED: DGS10 (US10Y) / DGS2 (US2Y) / DTWEXBGS (Broad USD Index, ≠ DXY)
         "economic_calendar": None,
         "fedwatch": None,
         "btc_etf": None,
@@ -200,18 +200,18 @@ async def collect_all_data(weekly: bool = False) -> dict:
     print(f"  FOMC判定: is_fomc_week={is_fomc_week}, next={fomc_meta['next_fomc_date']}, "
           f"days_until={fomc_meta['days_until_fomc']}")
 
-    # DXY, US10Y, 経済指標カレンダー, BTC ETF + FedWatch（FOMC週のみ）を並列取得
+    # DXY, FRED, 経済指標カレンダー, BTC ETF + FedWatch（FOMC週のみ）を並列取得
     new_tasks = [
         ("dxy", scrape_dxy()),
-        ("us10y", scrape_us10y()),
+        ("fred", fetch_fred_data()),
         ("economic_calendar", scrape_economic_calendar()),
         ("btc_etf", scrape_btc_etf()),
     ]
     if is_fomc_week:
         new_tasks.append(("fedwatch", scrape_fedwatch()))
-        print("  新規データソース: 並列取得中（DXY, US10Y, Calendar, FedWatch, BTC ETF）...")
+        print("  新規データソース: 並列取得中（DXY, FRED, Calendar, FedWatch, BTC ETF）...")
     else:
-        print("  新規データソース: 並列取得中（DXY, US10Y, Calendar, BTC ETF）※FedWatchスキップ")
+        print("  新規データソース: 並列取得中（DXY, FRED, Calendar, BTC ETF）※FedWatchスキップ")
 
     new_results = await asyncio.gather(*[t[1] for t in new_tasks], return_exceptions=True)
 
@@ -238,6 +238,9 @@ def format_scraped_data(data: dict) -> str:
     """
     # --- バリデーション実行 ---
     validation_results = validate_all(data)
+
+    # FRED 結果は DXY フォールバック表示でも参照するため早めに参照確保
+    fred = data.get("fred") or {}
 
     lines = []
     lines.append(f"データ取得日時: {data['timestamp']}")
@@ -286,19 +289,57 @@ def format_scraped_data(data: dict) -> str:
         lines.append("")
     elif dxy and isinstance(dxy, dict) and dxy.get("error"):
         lines.append(f"[DXY] 取得不可（{dxy['error']}）")
+        # DXY 失敗時のフォールバック: Broad USD Index (DTWEXBGS) を proxy として明示
+        dtwex_fb = fred.get("DTWEXBGS") if isinstance(fred, dict) else None
+        if isinstance(dtwex_fb, dict) and dtwex_fb.get("value") is not None:
+            lines.append(
+                f"※ DXY unavailable; using Broad USD Index proxy "
+                f"(FRED DTWEXBGS = {dtwex_fb['value']:.3f}, "
+                f"as_of {dtwex_fb.get('as_of_date', 'N/A')}, fallback_used=true)"
+            )
         lines.append("")
 
-    # --- US10Y 利回り ---
-    us10y = data.get("us10y")
-    if us10y and isinstance(us10y, dict) and us10y.get("yield_pct") is not None:
-        lines.append("[US10Y]")
-        change_str = f"{us10y['change']:+.3f}" if us10y.get("change") is not None else "N/A"
-        pct_str = f"{us10y['change_pct']:+.2f}%" if us10y.get("change_pct") is not None else ""
-        lines.append(f"現在利回り: {us10y['yield_pct']:.3f}% | 前日比: {change_str} {pct_str}")
-        lines.append(f"ソース: {us10y.get('source', '不明')}")
+    # --- FRED Treasury yields (US10Y / US2Y) — DGS10 / DGS2 で完全置換（旧 Investing.com / CNBC スクレイピング廃止）---
+    def _emit_fred_yield(label: str, series_id: str):
+        series = fred.get(series_id) if isinstance(fred, dict) else None
+        if not isinstance(series, dict) or series.get("value") is None:
+            err = series.get("error", "取得不可") if isinstance(series, dict) else "取得不可"
+            lines.append(f"[{label}] 取得不可（FRED {series_id}: {err}）")
+            lines.append("")
+            return
+        change = series.get("change")
+        change_str = f"{change:+.3f}" if change is not None else "N/A"
+        stale_tag = " [STALE]" if series.get("stale") else ""
+        lines.append(f"[{label}]{stale_tag}")
+        lines.append(
+            f"現在利回り: {series['value']:.3f}% | 前日比: {change_str} | "
+            f"as_of: {series.get('as_of_date', 'N/A')}"
+        )
+        lines.append(f"ソース: FRED {series_id}")
+        if series.get("note"):
+            lines.append(f"※ {series['note']}")
         lines.append("")
-    elif us10y and isinstance(us10y, dict) and us10y.get("error"):
-        lines.append(f"[US10Y] 取得不可（{us10y['error']}）")
+
+    _emit_fred_yield("US10Y", "DGS10")
+    _emit_fred_yield("US2Y", "DGS2")
+
+    # --- Broad USD Index (FRED DTWEXBGS) — USD macro proxy。DXY とは別物として明示 ---
+    dtwex = fred.get("DTWEXBGS") if isinstance(fred, dict) else None
+    if isinstance(dtwex, dict) and dtwex.get("value") is not None:
+        change = dtwex.get("change")
+        change_str = f"{change:+.3f}" if change is not None else "N/A"
+        stale_tag = " [STALE]" if dtwex.get("stale") else ""
+        lines.append(f"[Broad USD Index]{stale_tag}")
+        lines.append(
+            f"現在値: {dtwex['value']:.3f} | 前日比: {change_str} | "
+            f"as_of: {dtwex.get('as_of_date', 'N/A')}"
+        )
+        lines.append("ソース: FRED DTWEXBGS（Broad USD Index, USD macro proxy / NOT DXY）")
+        if dtwex.get("note"):
+            lines.append(f"※ {dtwex['note']}")
+        lines.append("")
+    elif isinstance(dtwex, dict) and dtwex.get("error"):
+        lines.append(f"[Broad USD Index] 取得不可（FRED DTWEXBGS: {dtwex['error']}）")
         lines.append("")
 
     # --- リテールセンチメント（銘柄ごとに1ソース）---
