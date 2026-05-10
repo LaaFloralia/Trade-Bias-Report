@@ -53,7 +53,7 @@ if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
   BRAIN_PATH="${BRAIN_PATH:-$(find_repo Brain)}"
   PYTHON_BIN="${PYTHON_BIN:-python3}"
 else
-  PROJECT_DIR="${PROJECT_DIR:-/Users/laa/dev/ict-daily-bias}"
+  PROJECT_DIR="${PROJECT_DIR:-/Users/laa/dev/fundamental-macro-analysis}"
   BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
   PYTHON_BIN="${PYTHON_BIN:-$PROJECT_DIR/.venv/bin/python3}"
 fi

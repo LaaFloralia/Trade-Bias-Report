@@ -21,7 +21,7 @@ allowed-tools: Bash, Read, Write
 
 | 変数 | デフォルト | 用途 |
 |---|---|---|
-| `PROJECT_DIR` | `/Users/laa/dev/ict-daily-bias` | ict-daily-bias リポジトリのパス |
+| `PROJECT_DIR` | `/Users/laa/dev/fundamental-macro-analysis` | チャート外分析リポジトリ（旧 ict-daily-bias）のパス |
 | `BRAIN_PATH` | `$HOME/Brain` | Brain リポジトリのパス |
 | `PYTHON_BIN` | `$PROJECT_DIR/.venv/bin/python3` | Python 実行コマンド |
 | `SLACK_NOTIFY_CHANNEL` | `#ceo` | Slack 通知先チャンネル |
@@ -66,7 +66,7 @@ if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
   PYTHON_BIN="${PYTHON_BIN:-python3}"
 else
   # ローカル (Mac) 環境: 固定パス
-  PROJECT_DIR="${PROJECT_DIR:-/Users/laa/dev/ict-daily-bias}"
+  PROJECT_DIR="${PROJECT_DIR:-/Users/laa/dev/fundamental-macro-analysis}"
   BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
   PYTHON_BIN="${PYTHON_BIN:-$PROJECT_DIR/.venv/bin/python3}"
 fi

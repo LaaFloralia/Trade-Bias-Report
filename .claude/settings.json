@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ls /Users/laa/dev/ict-daily-bias/*.py)",
+      "Bash(ls /Users/laa/dev/fundamental-macro-analysis/*.py)",
       "Bash(python scrapers/cot.py)",
       "Bash(python3 scrapers/cot.py)",
       "Bash(python scrapers/twelvedata.py)",

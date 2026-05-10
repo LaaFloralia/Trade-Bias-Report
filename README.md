@@ -1,11 +1,19 @@
 # ICT Daily / Weekly Bias Report — 自動生成パイプライン
 
+> **2026-05-09 リネーム**: フォルダ名を `ict-daily-bias` → `fundamental-macro-analysis` に変更。
+> 社長は本プロジェクトを「**チャート外分析**」と呼ぶ（リテールセンチメント / 経済指標 / FedWatch / ETFフロー / COT 等、チャート上の値動き以外の情報を体系化するため）。
+> Output report 名（"ICT Daily Bias Report" / "ICT Weekly Bias Report"）、GitHub repo 名（`Trade-Bias-Report`）、Sovereign Stack skill / Routine 識別子（`ict-daily-bias` / `ict-weekly-bias`）は **変更なし**（識別子として継続使用）。
+
 Playwright（ヘッドレスブラウザ）でリテールセンチメントデータと経済指標を取得し、
 Claude API にマスタープロンプトとデータを渡してレポートを生成する。
 出力は Markdown として Obsidian Vault（Brain）に保存される。
 
-本リポジトリは **Claude Code Routines のクラウド環境で Run now 起動される** ことを前提に設計されている。
-ローカル実行も可能だが、本番運用は Routines 経由。
+> **次世代化メモ**: 2026-05-05 リリースの Anthropic 公式 financial-services プラグイン（Financial Modeling Prep MCP 含む）で、Twelve Data + DXY/US10Y/economic_calendar スクレイピングを大幅に置き換え可能な見込み。詳細は `MODERNIZATION_RESEARCH.md` を参照。
+
+本リポジトリは **Sovereign Stack の Flow D（ad-hoc 起動）から呼び出される** ことを前提に設計されている。
+**Full 展開時**: 自宅母艦に SSH → `~/HQ/bin/run-skill ict-daily-bias` で起動（skill 識別子は継続）。
+**Bootstrap 期**: Anthropic Claude Code Routines のクラウド環境で Run now 起動。
+ローカル実行（MacBook 直叩き）も可能。
 
 ---
 
@@ -51,8 +59,9 @@ python main.py --weekly       # Weekly Bias（実装に応じて）
 ## 3. ファイル構成
 
 ```
-ict-daily-bias/
+fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート外分析」
 ├── README.md                 # このファイル
+├── MODERNIZATION_RESEARCH.md # 2026-05-09 調査: Anthropic 公式 financial-services プラグイン / FMP MCP による置換計画
 ├── requirements.txt          # Python 依存パッケージ
 ├── .env.example              # 環境変数テンプレート
 ├── main.py                   # メインオーケストレーター
@@ -75,14 +84,14 @@ ict-daily-bias/
 
 ---
 
-## 4. Claude Code Routines での運用
+## 4. Sovereign Stack での運用
 
-本リポジトリは Routines 経由で Run now 起動される。Routines の共通設定ルール・Setup script テンプレート・
-トラブル一覧は `~/hq/infrastructure/routines-setup.md` を参照。**本 README はこのリポジトリ固有の設定のみを扱う。**
+本リポジトリは Sovereign Stack の **Flow D（ad-hoc 起動）** から呼び出される。共通の AI Runtime 設定・launchd / webhook テンプレート・トラブル一覧は `~/HQ/infrastructure/runtime-setup.md` を参照。**本 README はこのリポジトリ固有の設定のみを扱う。**
 
-### 4-1. Routine 設定（claude.ai/code/routines）
+- **Full（自宅母艦取得後）**: iPhone Termius / MacBook ターミナルから母艦 SSH → `~/HQ/bin/run-skill ict-daily-bias`（または Slack `/laa daily-bias` slash command）
+- **Bootstrap 期（自宅母艦未取得）**: `claude.ai/code/routines` で Routine を 2 本作成し Run now で起動（API trigger の `text` は非パースのため、Daily / Weekly は **Routine を 2 つに分割**する）
 
-Daily / Weekly で **Routine を 2 つに分割**して作成する（API trigger の `text` は非パースのため、引数で動作切替する代わりに Routine 自体を分ける）。
+### 4-1. Bootstrap 期の Routine 設定（`claude.ai/code/routines`）
 
 | 項目 | ict-daily-bias | ict-weekly-bias |
 |---|---|---|
@@ -93,20 +102,20 @@ Daily / Weekly で **Routine を 2 つに分割**して作成する（API trigge
 | Model | **Sonnet 4.6**（Opus 4.7 は Stream timeout 多発） | 同左 |
 | Network access | **Full**（外部サイトのスクレイピング必要） | 同左 |
 
-### 4-2. Environment variables（Routine ごとに個別登録）
+### 4-2. Environment variables
 
 | 変数 | 値 | 出典 |
 |---|---|---|
-| `TWELVEDATA_API_KEY` | `.env` の値をコピー | Twelve Data（価格 API） |
-| `ANTHROPIC_API_KEY` | 不要（Routines が自動注入） | — |
+| `TWELVEDATA_API_KEY` | **Full** = Keychain `twelvedata-api-key` から `.zshrc` で export / **Bootstrap** = Routine ごとに UI で個別登録 | Twelve Data（価格 API）|
+| `ANTHROPIC_API_KEY` | **Full** = `claude` CLI が自動解決 / **Bootstrap** = Routines が自動注入 | — |
 
-### 4-3. Setup script
+### 4-3. Setup script（Bootstrap 期のみ）
 
-`~/hq/infrastructure/routines-setup.md` § 8 の標準テンプレートを使い、`<REPO_NAME>` を `Trade-Bias-Report` に置換する。Setup script 内で `$CLAUDE_ENV_FILE` は**使わない**（§ 8 の罠参照）。
+`~/HQ/infrastructure/runtime-setup.md § 9-3` の標準テンプレートを使い、`<REPO_NAME>` を `Trade-Bias-Report` に置換する。Setup script 内で `$CLAUDE_ENV_FILE` は**使わない**（罠参照）。Full 展開時は不要（母艦のローカル環境で完結）。
 
-### 4-4. プロンプト（Routine の prompt 欄）
+### 4-4. プロンプト
 
-Routine 本体のプロンプトはシンプルに以下のみ記載し、本体ロジックは `.claude/commands/*.md` で版管理する:
+Routine / `run-skill` から渡すプロンプトはシンプルに以下のみ記載し、本体ロジックは `.claude/commands/*.md` で版管理する:
 
 ```
 リポジトリ内の .claude/commands/daily-bias.md を Read で読み込み、その指示に従って実行せよ。
@@ -119,12 +128,10 @@ Routine 本体のプロンプトはシンプルに以下のみ記載し、本体
 
 Weekly も同じ構造で `weekly-bias.md` を参照する。
 
-### 4-5. 起動
+### 4-5. 起動の具体例
 
-- **Phase 2 初期**: iPhone Safari で `claude.ai/code/routines` → 対象 Routine の **Run now** をタップ
-- **MacBook**: CLI `/schedule run ict-daily-bias`
-- **Phase 2 後期**: Slack Workflow「バイアス」キーワード → Cloudflare Workers → API trigger
-  （中継 Bot の実装は `~/hq/infrastructure/slack-routines-operations.md` § 5 参照）
+- **Full（推奨）**: iPhone Termius で母艦 SSH → `~/HQ/bin/run-skill ict-daily-bias` / Slack `/laa daily-bias` slash command（母艦 webhook daemon 経由、Flow C）
+- **Bootstrap**: iPhone Safari で `claude.ai/code/routines` → 対象 Routine の **Run now** / MacBook で CLI `/schedule run ict-daily-bias`
 
 ---
 
@@ -176,8 +183,8 @@ fi
 
 ### 6-2. プロジェクトパス解決
 
-- ローカル: 固定値（例: `~/dev/ict-daily-bias`）
-- Routines: for ループ + find で clone 先を検出（`~/hq/infrastructure/routines-setup.md` § 8 の Setup script と同じロジック）
+- ローカル: 固定値（例: `~/dev/fundamental-macro-analysis`）
+- Routines: for ループ + find で clone 先を検出（`~/HQ/infrastructure/runtime-setup.md` § 8 の Setup script と同じロジック）
 
 ### 6-3. Brain への push
 
@@ -206,7 +213,7 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 
 ## 8. トラブルシューティング（ICT Bias 固有）
 
-Routines 共通のトラブルは `~/hq/infrastructure/routines-setup.md` § 17 を参照。以下は本リポジトリ固有の症状。
+Routines 共通のトラブルは `~/HQ/infrastructure/runtime-setup.md` § 17 を参照。以下は本リポジトリ固有の症状。
 
 | 症状 | 原因 | 解決策 |
 |---|---|---|
@@ -223,8 +230,8 @@ Routines 共通のトラブルは `~/hq/infrastructure/routines-setup.md` § 17 
 
 ## 9. 関連ドキュメント
 
-- `~/hq/infrastructure/routines-setup.md` — Routines 構築の共通ガイド（Setup script テンプレート、トラブル表、モデル選択等）
-- `~/hq/infrastructure/slack-routines-operations.md` — Slack × Routines の運用方針 SSoT
+- `~/HQ/infrastructure/runtime-setup.md` — Routines 構築の共通ガイド（Setup script テンプレート、トラブル表、モデル選択等）
+- `~/HQ/infrastructure/slack-operations.md` — Slack × Routines の運用方針 SSoT
 - Anthropic 公式: https://code.claude.com/docs/en/routines
 - Anthropic 公式: https://code.claude.com/docs/en/claude-code-on-the-web
 
