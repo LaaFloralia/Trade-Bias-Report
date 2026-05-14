@@ -78,12 +78,19 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 ├── .env.example              # 環境変数テンプレート
 ├── main.py                   # メインオーケストレーター
 ├── config.py                 # 設定読み込み
-├── master_prompt.md          # ICT Daily Bias マスタープロンプト
-├── master_prompt_weekly.md   # ICT Weekly Bias マスタープロンプト
+├── master_prompt.md          # ICT Daily Bias マスタープロンプト（速報用）
+├── master_prompt_weekly.md   # ICT Weekly Bias マスタープロンプト（速報用）
+├── master_prompt_deep.md     # ICT Deep Bias マスタープロンプト（強化版、S0〜S14 / 信頼度 11 項目）
 ├── .claude/
 │   └── commands/
-│       ├── daily-bias.md     # Routine から参照されるスラッシュコマンド
-│       └── weekly-bias.md
+│       ├── daily-bias.md     # Routine から参照されるスラッシュコマンド（速報用、Mac/Routines 両対応）
+│       ├── weekly-bias.md    # 週次速報用（Mac/Routines 両対応）
+│       └── deep-bias.md      # Deep Bias 強化版（ローカル専用、Deep Research + 自己検証 + 3 形式出力）
+├── scripts/
+│   └── render_report.py      # MD → HTML/PDF レンダラ（markdown + Playwright）
+├── templates/
+│   ├── report.html           # PDF 用 A4 テンプレ（表紙 + 本文 + フッタ）
+│   └── style.css             # 印刷用 CSS（システムフォント、テーブル、バッジ、@page）
 ├── scrapers/
 │   ├── __init__.py
 │   ├── myfxbook.py           # MyFXBook センチメント取得
@@ -224,9 +231,84 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 
 ## 7. カスタマイズ
 
-- **マスタープロンプト変更**: `master_prompt.md` / `master_prompt_weekly.md` を編集
+- **マスタープロンプト変更**: `master_prompt.md` / `master_prompt_weekly.md` / `master_prompt_deep.md` を編集
 - **銘柄追加・変更**: `config.py` の `INSTRUMENTS` を編集
 - **スクレイピング対象サイト変更**: 各 `scrapers/*.py` を編集
+
+---
+
+## 7.5. Deep Bias（強化版）
+
+`master_prompt.md` / `master_prompt_weekly.md` は **速報用**（1500〜3500 字、Routines / Mac 両対応）。
+これとは別に、10〜15 分かけて深層リサーチを行う **強化版** を並走させている。
+速報用ファイル群は変更せず温存し、Deep Bias は独立ファイルとして並走する。
+
+### 7.5-1. 既存 Daily / Weekly との違い
+
+| 項目 | Daily / Weekly（速報） | **Deep Bias（強化版）** |
+|---|---|---|
+| 実行コマンド | `/daily-bias` / `/weekly-bias` | **`/deep-bias`** |
+| 所要時間 | 2〜3 分 | **10〜15 分** |
+| 字数目安 | 1500〜3500 字 | **5000〜8000 字** |
+| 出力形式 | MD のみ | **MD / HTML / PDF の 3 形式** |
+| WebSearch | なし | **8〜12 クエリ必須**（固定群 a〜h を最低 1 回ずつ） |
+| 自己検証 | なし | **スコア再計算 / 欠損検出 / 矛盾検出 を必須実施** |
+| 実行環境 | Mac / Routines 両対応 | **Mac ローカル専用** |
+| 信頼度スコア項目 | 6〜7 項目 | **11 項目（ニュース / 地政学 / 季節性を追加）** |
+| Brain への push | 速報 MD | **MD のみ**（HTML/PDF は `output/` のみ保持） |
+| プロンプトファイル | `master_prompt.md` / `master_prompt_weekly.md` | `master_prompt_deep.md` |
+
+### 7.5-2. 実行
+
+```bash
+# Claude Code セッション内で:
+/deep-bias
+```
+
+または以下を直接実行（プロンプト経由）。
+
+```
+リポジトリ内の .claude/commands/deep-bias.md を Read で読み込み、その指示に従って実行せよ。
+```
+
+### 7.5-3. 出力の置き場所
+
+| 形式 | パス | 備考 |
+|---|---|---|
+| Markdown | `output/Deep_Bias_Report_YYYY-MM-DD.md` | Brain に master 直接 push される |
+| HTML | `output/Deep_Bias_Report_YYYY-MM-DD.html` | ローカルのみ。Playwright での目視確認用 |
+| PDF | `output/Deep_Bias_Report_YYYY-MM-DD.pdf` | A4 / 5〜20 ページ目安 |
+| Brain 側 | `~/Brain/Calendar/Deep-Bias/Deep_Bias_Report_YYYY-MM-DD.md` | MD のみ commit + push |
+| Preview PNG | `output/Deep_Bias_Report_YYYY-MM-DD_preview.png` | Step 7 で生成、目視チェック用 |
+
+### 7.5-4. ネットリサーチ 8〜12 クエリの内訳
+
+必須群（a〜h、各 1 回以上、合計 8 クエリ。状況に応じて最大 12 まで追加可）:
+
+| # | カテゴリ | 例 |
+|---|---|---|
+| a | Fed / ECB / BOJ 高官発言（24h、タカ派 / ハト派） | `Fed FOMC member speech hawkish dovish 2026` |
+| b | SPX / VIX / NQ 前日比 + 当日プリマーケット | `SPX VIX NQ premarket today 2026` |
+| c | US10Y / US2Y 前日比 + Yield Curve | `US10Y US2Y yield curve slope 2026` |
+| d | WTI / Brent 価格と前日比 | `WTI Brent crude oil price today 2026` |
+| e | 中東 / 台湾 / ウクライナの地政学 | `Middle East Taiwan Ukraine geopolitical news 2026` |
+| f | BTC / SEC / ETF / 機関買い | `Bitcoin ETF inflow SEC institutional 2026` |
+| g | NFP / CPI / FOMC 等主要指標予想ブレ | `NFP CPI forecast revision today 2026` |
+| h | リスクオン / オフセンチメント指標 | `VIX Fear Greed Put-Call ratio today 2026` |
+
+各クエリで最重要 URL を 3〜5 件選び **WebFetch でクロスチェック**。
+最終的に「データソース脚注」セクションに URL を列挙する。
+
+### 7.5-5. 自己検証ステップ
+
+レポート生成後、AI 自身が以下を実施し本文に結果を記載する:
+
+1. **スコア再計算**: S12 の信頼度スコアを項目別に再計算し、本文値と一致するか検算
+2. **空テーブル / 未入力セル走査**: 「取得不可」と空セルの残存を一覧化
+3. **セクション間矛盾検出**: DXY-XAUUSD 逆相関 / DXY-USDJPY 順相関 / Draw on Liquidity 整合 / PO3 整合 / ニュース整合 を機械的にチェック
+4. **矛盾検出時の自動修正**: 本文を **1 回まで** 自動再生成。残存矛盾があれば信頼度を Low に下げて完遂
+
+---
 
 ---
 

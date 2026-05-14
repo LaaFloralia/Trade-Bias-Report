@@ -28,6 +28,14 @@ from scrapers.fedwatch import scrape_fedwatch
 from scrapers.btc_etf import scrape_btc_etf
 from scrapers.fred import fetch_fred_data
 from scrapers.validation import validate_all, apply_validation
+# Deep Bias 強化用スクレイパー (Daily / Weekly 速報用ラインには影響しない)
+from scrapers.dxy_components import scrape_dxy_components
+from scrapers.vix_structure import scrape_vix_structure
+from scrapers.premarket import scrape_premarket
+from scrapers.macro_liquidity import scrape_macro_liquidity
+from scrapers.rate_spreads import scrape_rate_spreads
+from scrapers.crypto_funding import scrape_crypto_funding
+from scrapers.myfxbook_open_orders import scrape_myfxbook_open_orders
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -93,6 +101,14 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "economic_calendar": None,
         "fedwatch": None,
         "btc_etf": None,
+        # Deep Bias 強化用 (速報用 daily / weekly セクションでは出力されない)
+        "dxy_components": None,
+        "vix_structure": None,
+        "premarket": None,
+        "macro_liquidity": None,
+        "rate_spreads": None,
+        "crypto_funding": None,
+        "myfxbook_open_orders": {},  # 銘柄ごとに格納
     }
 
     # --- Twelve Data: 価格データ取得 ---
@@ -200,23 +216,28 @@ async def collect_all_data(weekly: bool = False) -> dict:
     print(f"  FOMC判定: is_fomc_week={is_fomc_week}, next={fomc_meta['next_fomc_date']}, "
           f"days_until={fomc_meta['days_until_fomc']}")
 
-    # DXY, FRED, 経済指標カレンダー, BTC ETF + FedWatch（FOMC週のみ）を並列取得
-    new_tasks = [
+    # Twelve Data /quote 競合回避のため 2 段階で取得する。
+    # Phase A (Twelve Data 非依存): 全部並列で OK
+    # Phase B (Twelve Data /quote 依存): 直列で 7 秒間隔
+    #   理由: TD 無料枠 8 calls/min。fetch_price_data() で既に /quote+/time_series=2 calls 消費、
+    #         dxy_components / premarket でさらに 2 calls 必要。並列だと burst で 429 を踏む。
+    # FedWatch は is_fomc_week 分岐を撤廃し常時取得 (Deep Bias 強化要件)
+    phase_a_tasks = [
         ("dxy", scrape_dxy()),
         ("fred", fetch_fred_data()),
         ("economic_calendar", scrape_economic_calendar()),
         ("btc_etf", scrape_btc_etf()),
+        ("fedwatch", scrape_fedwatch()),
+        # vix_structure は CBOE Dashboard を 4 ページ直列取得するため重い。Phase B へ移動。
+        ("macro_liquidity", scrape_macro_liquidity()),
+        ("rate_spreads", scrape_rate_spreads()),
+        ("crypto_funding", scrape_crypto_funding()),
     ]
-    if is_fomc_week:
-        new_tasks.append(("fedwatch", scrape_fedwatch()))
-        print("  新規データソース: 並列取得中（DXY, FRED, Calendar, FedWatch, BTC ETF）...")
-    else:
-        print("  新規データソース: 並列取得中（DXY, FRED, Calendar, BTC ETF）※FedWatchスキップ")
+    print(f"  Phase A: {len(phase_a_tasks)} 系を並列取得中（DXY/FRED/Calendar/BTC ETF/FedWatch + Deep 強化大半）...")
+    phase_a_results = await asyncio.gather(*[t[1] for t in phase_a_tasks], return_exceptions=True)
 
-    new_results = await asyncio.gather(*[t[1] for t in new_tasks], return_exceptions=True)
-
-    for i, (key, _) in enumerate(new_tasks):
-        res = new_results[i]
+    for i, (key, _) in enumerate(phase_a_tasks):
+        res = phase_a_results[i]
         if isinstance(res, Exception):
             results[key] = {"error": str(res)}
             print(f"  [ERROR] {key}: {res}")
@@ -227,6 +248,63 @@ async def collect_all_data(weekly: bool = False) -> dict:
                 print(f"  [WARN]  {key}: {err}")
             else:
                 print(f"  [OK]    {key}")
+
+    # Phase B: Twelve Data /quote 系 + CBOE Dashboard 直列実行
+    # - Twelve Data: 8 calls/min 制限回避のため間隔を空ける
+    # - CBOE Dashboard: 並列だと Playwright 競合で失敗するため直列実行する vix_structure
+    print("  Phase B: 直列実行（dxy_components → 7s → premarket → vix_structure）...")
+    try:
+        results["dxy_components"] = await scrape_dxy_components()
+        err_d = results["dxy_components"].get("error") if isinstance(results["dxy_components"], dict) else None
+        print(f"  [{'WARN' if err_d else 'OK'}]  dxy_components: {err_d or 'OK'}")
+    except Exception as e:
+        results["dxy_components"] = {"error": str(e)}
+        print(f"  [ERROR] dxy_components: {e}")
+
+    # 7 秒待機して Twelve Data 1 分窓内の連続呼び出しを回避
+    await asyncio.sleep(7)
+
+    try:
+        results["premarket"] = await scrape_premarket()
+        err_p = results["premarket"].get("error") if isinstance(results["premarket"], dict) else None
+        print(f"  [{'WARN' if err_p else 'OK'}]  premarket: {err_p or 'OK'}")
+    except Exception as e:
+        results["premarket"] = {"error": str(e)}
+        print(f"  [ERROR] premarket: {e}")
+
+    # vix_structure を直列取得 (CBOE Dashboard 4 ページ + FRED)
+    try:
+        results["vix_structure"] = await scrape_vix_structure()
+        err_v = results["vix_structure"].get("error") if isinstance(results["vix_structure"], dict) else None
+        vals = results["vix_structure"].get("values", {}) if isinstance(results["vix_structure"], dict) else {}
+        print(f"  [{'WARN' if err_v else 'OK'}]  vix_structure: {len(vals)} series ({err_v or sorted(vals.keys())})")
+    except Exception as e:
+        results["vix_structure"] = {"error": str(e)}
+        print(f"  [ERROR] vix_structure: {e}")
+
+    # --- MyFXBook Open Orders: XAUUSD / USDJPY 並列取得 (Deep Bias 強化) ---
+    open_order_targets = ["XAUUSD", "USDJPY"]
+    print(f"  MyFXBook Open Orders: {open_order_targets} を並列取得中...")
+    oo_tasks = [scrape_myfxbook_open_orders(s) for s in open_order_targets]
+    oo_results = await asyncio.gather(*oo_tasks, return_exceptions=True)
+    for sym, res in zip(open_order_targets, oo_results):
+        if isinstance(res, Exception):
+            results["myfxbook_open_orders"][sym] = {"error": str(res)}
+            print(f"  [ERROR] open_orders/{sym}: {res}")
+        else:
+            results["myfxbook_open_orders"][sym] = res
+            if res.get("error"):
+                print(f"  [WARN]  open_orders/{sym}: {res['error']}")
+            else:
+                # 新スキーマ: bid_count + ask_count + bsl_candidates + ssl_candidates
+                bsl_n = len(res.get("bsl_candidates", []))
+                ssl_n = len(res.get("ssl_candidates", []))
+                cp = res.get("current_price")
+                print(
+                    f"  [OK]    open_orders/{sym}: "
+                    f"bids={res.get('bid_count', 0)} asks={res.get('ask_count', 0)} "
+                    f"BSL clusters={bsl_n} SSL clusters={ssl_n} (current_price={cp})"
+                )
 
     return results
 
@@ -414,29 +492,186 @@ def format_scraped_data(data: dict) -> str:
         else:
             lines.append("該当なし")
 
-    # --- FedWatch（条件付き出力）---
+    # --- FedWatch（常時取得、Deep Bias 強化）---
+    # 旧 is_fomc_week 分岐は撤廃。平時も次回 FOMC への利下げ確率を追跡する。
     fomc_meta = _get_fomc_metadata()
     lines.append("")
-    lines.append("### FedWatch（FOMC週のみ）")
+    lines.append("### FedWatch（常時取得 / Deep Bias 強化）")
     lines.append(f"is_fomc_week: {str(fomc_meta['is_fomc_week']).lower()}")
     lines.append(f"next_fomc_date: {fomc_meta['next_fomc_date']}")
     lines.append(f"days_until_fomc: {fomc_meta['days_until_fomc']}")
 
-    if fomc_meta["is_fomc_week"]:
-        fedwatch = data.get("fedwatch")
-        if fedwatch and isinstance(fedwatch, dict) and any(
-            fedwatch.get(k) is not None for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct"]
-        ):
-            if fedwatch.get("hold_pct") is not None:
-                lines.append(f"- 据え置き確率: {fedwatch['hold_pct']}%")
-            if fedwatch.get("cut_25bp_pct") is not None:
-                lines.append(f"- 25bp利下げ確率: {fedwatch['cut_25bp_pct']}%")
-            if fedwatch.get("cut_50bp_pct") is not None:
-                lines.append(f"- 50bp利下げ確率: {fedwatch['cut_50bp_pct']}%")
-            if fedwatch.get("hike_25bp_pct") is not None:
-                lines.append(f"- 25bp利上げ確率: {fedwatch['hike_25bp_pct']}%")
-        else:
-            lines.append("FOMC週: FedWatchデータを手動で入力してください")
+    fedwatch = data.get("fedwatch")
+    if fedwatch and isinstance(fedwatch, dict) and any(
+        fedwatch.get(k) is not None for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct"]
+    ):
+        if fedwatch.get("hold_pct") is not None:
+            lines.append(f"- 据え置き確率: {fedwatch['hold_pct']}%")
+        if fedwatch.get("cut_25bp_pct") is not None:
+            lines.append(f"- 25bp利下げ確率: {fedwatch['cut_25bp_pct']}%")
+        if fedwatch.get("cut_50bp_pct") is not None:
+            lines.append(f"- 50bp利下げ確率: {fedwatch['cut_50bp_pct']}%")
+        if fedwatch.get("hike_25bp_pct") is not None:
+            lines.append(f"- 25bp利上げ確率: {fedwatch['hike_25bp_pct']}%")
+        if fedwatch.get("source"):
+            lines.append(f"- ソース: {fedwatch['source']}")
+    elif fedwatch and isinstance(fedwatch, dict) and fedwatch.get("error"):
+        lines.append(f"- 取得不可（{fedwatch['error']}）")
+    else:
+        lines.append("- 取得不可（CME / Investing.com 両ソースから値抽出失敗）")
+
+    # ============================================================
+    # Deep Bias 強化セクション (master_prompt_deep.md S2-X / S5-X / S6-X 用)
+    # ============================================================
+
+    # --- DXY 構成通貨スプレッド分解 (S2-X) ---
+    dxy_comp = data.get("dxy_components")
+    if dxy_comp and isinstance(dxy_comp, dict) and dxy_comp.get("components"):
+        lines.append("")
+        lines.append("### Deep: DXY 構成通貨分解 (S2-X)")
+        lines.append(f"推定 DXY 前日比 (構成寄与合計): {dxy_comp.get('estimated_dxy_change_pct')}%")
+        lead = dxy_comp.get("leading_driver")
+        lead_v = dxy_comp.get("leading_contribution")
+        if lead:
+            lines.append(f"主要ドライバー: {lead} (寄与 {lead_v:+.4f}%)")
+        for c in dxy_comp["components"]:
+            if c.get("change_pct") is not None:
+                lines.append(
+                    f"- {c['symbol']} (w={c['weight']:.3f}): "
+                    f"前日比 {c['change_pct']:+.3f}% → DXY 寄与 {c.get('dxy_contribution'):+.4f}%"
+                )
+            else:
+                lines.append(f"- {c['symbol']} (w={c['weight']:.3f}): 取得不可")
+    elif dxy_comp and isinstance(dxy_comp, dict) and dxy_comp.get("error"):
+        lines.append("")
+        lines.append(f"### Deep: DXY 構成通貨分解 (S2-X) — 取得不可（{dxy_comp['error']}）")
+
+    # --- VIX ターム構造 (S5-X ボラ環境) ---
+    vix = data.get("vix_structure")
+    if vix and isinstance(vix, dict) and vix.get("values"):
+        lines.append("")
+        lines.append("### Deep: VIX ターム構造 (S5-X ボラ環境)")
+        for k, v in vix["values"].items():
+            lines.append(f"- {k}: {v}")
+        lines.append(f"- ターム構造: {vix.get('term_structure')}")
+        lines.append(f"- VIX レベル区分: {vix.get('vix_level_regime')}")
+        if vix.get("short_term_event_alert"):
+            lines.append("- 短期イベント警戒 (VIX9D > VIX×1.05)")
+    elif vix and isinstance(vix, dict) and vix.get("error"):
+        lines.append("")
+        lines.append(f"### Deep: VIX ターム構造 (S5-X) — 取得不可（{vix['error']}）")
+
+    # --- US 株指数プリマーケット ---
+    pre = data.get("premarket")
+    if pre and isinstance(pre, dict) and pre.get("indices"):
+        lines.append("")
+        lines.append("### Deep: US 株指数プリマーケット (S5)")
+        lines.append(f"- リスクレジーム: {pre.get('risk_regime')}")
+        for sym, vals in pre["indices"].items():
+            if vals.get("error"):
+                lines.append(f"- {sym}: 取得不可 ({vals['error']})")
+                continue
+            cp = vals.get("change_pct")
+            cur = vals.get("current")
+            lines.append(
+                f"- {sym}: 現在 {cur} | 前日比 {cp:+.2f}% (O {vals.get('open')} / H {vals.get('high')} / L {vals.get('low')})"
+            )
+    elif pre and isinstance(pre, dict) and pre.get("error"):
+        lines.append("")
+        lines.append(f"### Deep: US 株指数プリマーケット — 取得不可（{pre['error']}）")
+
+    # --- マクロ流動性 ---
+    liq = data.get("macro_liquidity")
+    if liq and isinstance(liq, dict) and liq.get("series"):
+        lines.append("")
+        lines.append("### Deep: マクロ流動性 (S6-X Net Liquidity)")
+        lines.append(
+            f"- Net Liquidity: {liq.get('net_liquidity_b')} B USD "
+            f"(前回比 {liq.get('net_liquidity_change_b'):+.2f} B USD, regime: {liq.get('regime')})"
+            if liq.get('net_liquidity_change_b') is not None
+            else f"- Net Liquidity: {liq.get('net_liquidity_b')} B USD (regime: {liq.get('regime')})"
+        )
+        for sid, s in liq["series"].items():
+            if s.get("value") is not None:
+                stale_tag = " [STALE]" if s.get("stale") else ""
+                lines.append(
+                    f"- FRED {sid}{stale_tag}: {s.get('value')} (as_of {s.get('as_of_date')}, "
+                    f"前回 {s.get('prev_value')})"
+                )
+            else:
+                lines.append(f"- FRED {sid}: 取得不可 ({s.get('error', 'unknown')})")
+    elif liq and isinstance(liq, dict) and liq.get("error"):
+        lines.append("")
+        lines.append(f"### Deep: マクロ流動性 (S6-X) — 取得不可（{liq['error']}）")
+
+    # --- 国債利回りスプレッド ---
+    rs = data.get("rate_spreads")
+    if rs and isinstance(rs, dict) and rs.get("spreads"):
+        lines.append("")
+        lines.append("### Deep: 国債利回りスプレッド (S6-X 中期方向)")
+        for s in rs["spreads"]:
+            stale_tag = " [STALE]" if s.get("stale") else ""
+            spread = s.get("spread")
+            change = s.get("change")
+            change_str = f"{change:+.3f}" if change is not None else "N/A"
+            spread_str = f"{spread:+.3f}" if spread is not None else "N/A"
+            lines.append(
+                f"- {s['pair']}{stale_tag}: スプレッド {spread_str} (前回比 {change_str}) — {s.get('interpretation')}"
+            )
+            if s.get("base_as_of") and s.get("sub_as_of"):
+                lines.append(f"  base_as_of={s['base_as_of']}, sub_as_of={s['sub_as_of']}")
+    elif rs and isinstance(rs, dict) and rs.get("error"):
+        lines.append("")
+        lines.append(f"### Deep: 国債利回りスプレッド (S6-X) — 取得不可（{rs['error']}）")
+
+    # --- 暗号資産 Funding Rate (3 取引所平均) ---
+    cf = data.get("crypto_funding")
+    if cf and isinstance(cf, dict) and cf.get("exchanges"):
+        lines.append("")
+        lines.append("### Deep: 暗号資産 Funding Rate (S2-X BTCUSD)")
+        lines.append(
+            f"- 3 取引所平均 Funding Rate: {cf.get('average_funding_rate')}% "
+            f"(乖離 {cf.get('max_dispersion')}%, regime: {cf.get('regime')})"
+        )
+        for e in cf["exchanges"]:
+            mp = f", mark={e.get('mark_price')}" if e.get("mark_price") is not None else ""
+            lines.append(f"- {e['exchange']}: {e['funding_rate']:.5f}%{mp}")
+    elif cf and isinstance(cf, dict) and cf.get("error"):
+        lines.append("")
+        lines.append(f"### Deep: 暗号資産 Funding Rate — 取得不可（{cf['error']}）")
+
+    # --- MyFXBook Open Orders ヒートマップ (S2-X) ---
+    oo = data.get("myfxbook_open_orders")
+    if oo and isinstance(oo, dict) and oo:
+        lines.append("")
+        lines.append("### Deep: MyFXBook Order Book (S2-X 実数 BSL/SSL クラスタ)")
+        for sym, d in oo.items():
+            if not isinstance(d, dict):
+                lines.append(f"- {sym}: 取得不可")
+                continue
+            if d.get("error"):
+                lines.append(f"- {sym}: 取得不可 ({d['error']})")
+                continue
+            cp = d.get("current_price")
+            lines.append(
+                f"- {sym}: 現在価格 {cp} | bids={d.get('bid_count', 0)} asks={d.get('ask_count', 0)}"
+            )
+            bsl_list = d.get("bsl_candidates") or []
+            ssl_list = d.get("ssl_candidates") or []
+            if bsl_list:
+                lines.append("  - BSL 候補クラスタ (現在価格より上方、Ask 集中):")
+                for c in bsl_list:
+                    lines.append(
+                        f"    * {c.get('low')} – {c.get('high')} "
+                        f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')})"
+                    )
+            if ssl_list:
+                lines.append("  - SSL 候補クラスタ (現在価格より下方、Bid 集中):")
+                for c in ssl_list:
+                    lines.append(
+                        f"    * {c.get('low')} – {c.get('high')} "
+                        f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')})"
+                    )
 
     # --- COT（ウィークリー時のみ）---
     cot = data.get("cot")

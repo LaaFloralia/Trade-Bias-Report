@@ -26,89 +26,143 @@ TARGET_ETFS = ["IBIT", "FBTC", "GBTC"]
 
 
 def _scrape_farside() -> Optional[dict]:
-    """Farside Investors からBTC ETFフローを取得する（requestsのみ）。"""
-    url = "https://farside.co.uk/bitcoin-etf-flow-all-data/"
+    """Farside Investors からBTC ETFフローを取得する（旧 requests 版、403 で殆ど失敗）。
+
+    現状は Cloudflare/anti-bot で 403 を返すため、`_scrape_farside_playwright` を優先使用する。
+    本関数は後方互換のため残置（async に書き換えると主要呼出が壊れるため、シグネチャを維持）。
+    """
+    url = "https://farside.co.uk/btc/"
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://farside.co.uk/",
+    }
     try:
-        resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+        resp = requests.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
-        html = resp.text
-
-        # HTMLテーブルをパース
-        # テーブル内の行を取得
-        table_match = re.search(r'<table[^>]*>(.*?)</table>', html, re.DOTALL | re.IGNORECASE)
-        if not table_match:
-            return None
-
-        table_html = table_match.group(1)
-
-        # ヘッダー行からETF名のインデックスを特定
-        header_match = re.search(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
-        if not header_match:
-            return None
-
-        header_cells = re.findall(r'<t[hd][^>]*>(.*?)</t[hd]>', header_match.group(1), re.DOTALL | re.IGNORECASE)
-        header_cells = [re.sub(r'<[^>]+>', '', c).strip() for c in header_cells]
-
-        etf_indices = {}
-        total_idx = None
-        for i, h in enumerate(header_cells):
-            for etf in TARGET_ETFS:
-                if etf in h.upper():
-                    etf_indices[etf] = i
-            if "total" in h.lower() or "Total" in h:
-                total_idx = i
-
-        # データ行を取得（直近5行）
-        data_rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
-        # ヘッダー行をスキップし、最後の数行を取得（日付の新しい順）
-        data_rows = data_rows[1:]  # ヘッダー除去
-
-        daily_flows = []
-        for row_html in reversed(data_rows[-10:]):
-            cells = re.findall(r'<td[^>]*>(.*?)</td>', row_html, re.DOTALL | re.IGNORECASE)
-            cells = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
-
-            if not cells or len(cells) < 3:
-                continue
-
-            # 最初のセルが日付
-            date_str = cells[0].strip()
-            if not re.match(r'\d', date_str):
-                continue
-
-            day_data = {"date": date_str, "flows": {}, "total": None}
-
-            for etf, idx in etf_indices.items():
-                if idx < len(cells):
-                    val = cells[idx].strip()
-                    day_data["flows"][etf] = _parse_flow_value(val)
-
-            if total_idx and total_idx < len(cells):
-                day_data["total"] = _parse_flow_value(cells[total_idx].strip())
-
-            # 計算で合計を出す
-            if day_data["total"] is None:
-                known = [v for v in day_data["flows"].values() if v is not None]
-                if known:
-                    day_data["total"] = sum(known)
-
-            if day_data["flows"] or day_data["total"] is not None:
-                daily_flows.append(day_data)
-
-            if len(daily_flows) >= 5:
-                break
-
-        if daily_flows:
-            return {
-                "source": "Farside Investors",
-                "daily_flows": daily_flows,
-                "error": None,
-            }
-
     except Exception as e:
-        print(f"  [WARN] Farside: {e}")
+        print(f"  [WARN] Farside (requests): {e}")
+        return None
+    return _parse_farside_html(resp.text)
 
+
+def _parse_farside_html(html: str) -> Optional[dict]:
+    """Farside HTML をパースして daily_flows リストを返す。
+
+    farside.co.uk/btc/ のテーブル構造（class="etf"）:
+      row 0: header (Total only at end)
+      row 1: ETF symbols (IBIT, FBTC, BITB, ARKB, BTCO, EZBC, BRRR, HODL, BTCW, MSBT, GBTC, BTC)
+      row 2: Fee row
+      row 3: empty separator
+      row 4..N-4: daily flow rows (Date | flows | Total)
+      row N-3: Total cumulative
+      row N-2: Average / Maximum / Minimum
+    """
+    # 1) class="etf" テーブルを切り出す
+    tbl_m = re.search(r'<table[^>]*class="etf"[^>]*>(.*?)</table>', html, re.DOTALL | re.IGNORECASE)
+    if not tbl_m:
+        return None
+    table_html = tbl_m.group(1)
+
+    # 2) 各 <tr> 行を分割
+    rows = re.findall(r'<tr[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
+    if len(rows) < 5:
+        return None
+
+    import html as _html
+
+    def cells(row_html: str) -> list[str]:
+        cs = re.findall(r'<t[hd][^>]*>(.*?)</t[hd]>', row_html, re.DOTALL | re.IGNORECASE)
+        # HTML エンティティ (&nbsp; 等) をデコードしてから空白除去。
+        # Farside の header は `&nbsp;&nbsp;IBIT` のような形でくるため必須。
+        return [
+            _html.unescape(re.sub(r'<[^>]+>', '', c)).replace('\xa0', '').strip()
+            for c in cs
+        ]
+
+    # 3) ヘッダー (row 1) から ETF 名を取得
+    header_cells = cells(rows[1])
+    etf_indices: dict[str, int] = {}
+    for i, h in enumerate(header_cells):
+        for etf in TARGET_ETFS:
+            if h.upper() == etf:
+                etf_indices[etf] = i
+    # Total 列はヘッダーにテキストで出ていないので、最後のセル index を total と仮定
+    total_idx = len(header_cells) - 1
+
+    # 4) row 4 から N-4 までを daily flows としてパース
+    daily_flows: list[dict] = []
+    for row_html in rows[4:-4]:
+        cs = cells(row_html)
+        if not cs:
+            continue
+        date_str = cs[0].strip()
+        if not re.match(r'\d{1,2}\s+\w{3}\s+\d{4}', date_str):
+            continue
+        day_data = {"date": date_str, "flows": {}, "total": None}
+        for etf, idx in etf_indices.items():
+            if idx < len(cs):
+                day_data["flows"][etf] = _parse_flow_value(cs[idx])
+        if total_idx < len(cs):
+            day_data["total"] = _parse_flow_value(cs[total_idx])
+        if day_data["total"] is None:
+            known = [v for v in day_data["flows"].values() if v is not None]
+            if known:
+                day_data["total"] = sum(known)
+        if day_data["flows"] or day_data["total"] is not None:
+            daily_flows.append(day_data)
+
+    # 直近 5 件 (新しい順)
+    daily_flows = list(reversed(daily_flows))[:5]
+    if daily_flows:
+        return {
+            "source": "Farside Investors",
+            "daily_flows": daily_flows,
+            "error": None,
+        }
     return None
+
+
+async def _scrape_farside_playwright() -> Optional[dict]:
+    """Farside を Playwright + stealth ヘッダーで取得する（403 回避の主経路）。
+
+    - `--disable-blink-features=AutomationControlled` でボット検知を緩和
+    - フル HTTP ヘッダー (Accept-Language / Sec-Ch-Ua) と User-Agent を実ブラウザ風に
+    - `navigator.webdriver` を undefined に上書き
+    """
+    url = "https://farside.co.uk/btc/"
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            context = await browser.new_context(
+                user_agent=USER_AGENT,
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Encoding": "gzip, deflate, br",
+                    "Sec-Ch-Ua": '"Chromium";v="131", "Not_A Brand";v="24"',
+                    "Sec-Ch-Ua-Mobile": "?0",
+                    "Sec-Ch-Ua-Platform": '"macOS"',
+                },
+                viewport={"width": 1280, "height": 800},
+                ignore_https_errors=True,
+            )
+            await context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+            page = await context.new_page()
+            await page.goto(url, timeout=BROWSER_TIMEOUT, wait_until="domcontentloaded")
+            await page.wait_for_timeout(7000)
+            html = await page.content()
+            await browser.close()
+        return _parse_farside_html(html)
+    except Exception as e:
+        print(f"  [WARN] Farside (Playwright): {e}")
+        return None
 
 
 async def _scrape_sosovalue() -> Optional[dict]:
@@ -263,21 +317,28 @@ async def scrape_btc_etf() -> dict:
             "error": str | None,
         }
     """
-    # 1. Farside (requests のみ)
-    print("  BTC ETF: Farside Investors を試行中...")
-    data = _scrape_farside()
+    # 1. Farside (Playwright stealth) — 主経路
+    print("  BTC ETF: Farside (Playwright stealth) を試行中...")
+    data = await _scrape_farside_playwright()
     if data and data.get("daily_flows"):
-        print(f"  [OK]    BTC ETF: Farside ({len(data['daily_flows'])}日分)")
+        print(f"  [OK]    BTC ETF: Farside Playwright ({len(data['daily_flows'])}日分)")
         return data
 
-    # 2. SoSoValue
+    # 2. Farside (requests fallback) — 一応試行 (殆ど 403)
+    print("  BTC ETF: Farside (requests fallback) を試行中...")
+    data = _scrape_farside()
+    if data and data.get("daily_flows"):
+        print(f"  [OK]    BTC ETF: Farside requests ({len(data['daily_flows'])}日分)")
+        return data
+
+    # 3. SoSoValue
     print("  BTC ETF: SoSoValue を試行中...")
     data = await _scrape_sosovalue()
     if data and data.get("daily_flows"):
         print(f"  [OK]    BTC ETF: SoSoValue ({len(data['daily_flows'])}日分)")
         return data
 
-    # 3. CoinGlass
+    # 4. CoinGlass
     print("  BTC ETF: CoinGlass を試行中...")
     data = await _scrape_coinglass_etf()
     if data and data.get("daily_flows"):

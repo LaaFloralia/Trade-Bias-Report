@@ -1,0 +1,101 @@
+データ取得日時: 2026-05-10T08:48:41.579081
+
+=== Price Data (Twelve Data API) ===
+
+[XAUUSD]
+現在値: 4,715.42 | 前日終値: 4,715.49 | 前日比: -0.07 (-0.000%)
+当日: O 4,715.38 / H 4,715.60 / L 4,715.31 / C 4,715.42
+PDH: 4,716.00 / PDL: 4,714.45
+PWH: 4,765.86 / PWL: 4,514.12
+PMH: 4,837.40 / PML: 4,503.72
+IPDA 20日 High/Low: 4,834.32 / 4,503.72
+IPDA 40日 High/Low: 4,887.93 / 4,486.82
+IPDA 60日 High/Low: 5,191.17 / 4,104.82
+
+[USDJPY]
+現在値: 156.68 | 前日終値: 156.68 | 前日比: +0.00 (+0.000%)
+当日: O 156.68 / H 156.70 / L 156.66 / C 156.68
+PDH: 156.75 / PDL: 156.63
+PWH: 157.94 / PWL: 155.08
+PMH: 160.72 / PML: 155.08
+IPDA 20日 High/Low: 160.72 / 155.08
+IPDA 40日 High/Low: 160.72 / 155.08
+IPDA 60日 High/Low: 160.72 / 155.08
+
+[BTCUSD]
+現在値: 80,647.43 | 前日終値: 80,188.82 | 前日比: +458.61 (+0.570%)
+当日: O 80,188.82 / H 81,065.32 / L 80,115.33 / C 80,647.43
+PDH: 80,487.39 / PDL: 79,520.44
+PWH: 82,814.23 / PWL: 78,205.00
+PMH: 82,814.23 / PML: 73,741.53
+IPDA 20日 High/Low: 82,814.23 / 73,741.53
+IPDA 40日 High/Low: 82,814.23 / 65,696.96
+IPDA 60日 High/Low: 82,814.23 / 64,938.66
+
+[DXY]
+DXY: Twelve Data非対応。EUR/USDの逆数またはチャートで確認してください
+
+
+[DXY (スクレイピング)]
+現在値: 97.900 | 前日終値: 98.28 | 前日比: -0.17 (-0.17%)
+※ PWH/PWL/PMH/PMLはヒストリカルデータから算出
+PDH: 98.280 / PDL: 97.830
+PWH: 99.090 / PWL: 97.720
+PMH: 100.290 / PML: 97.630
+IPDA 20日: High 99.340 / Low 97.630
+IPDA 40日: High 100.640 / Low 97.630
+ソース: Investing.com
+
+[US10Y]
+現在利回り: 4.410% | 前日比: +0.050 | as_of: 2026-05-07
+ソース: FRED DGS10
+
+[US2Y]
+現在利回り: 3.920% | 前日比: +0.050 | as_of: 2026-05-07
+ソース: FRED DGS2
+
+[Broad USD Index]
+現在値: 118.393 | 前日比: -0.278 | as_of: 2026-05-01
+ソース: FRED DTWEXBGS（Broad USD Index, USD macro proxy / NOT DXY）
+
+### リテールポジション (Retail Sentiment)
+- XAUUSD (MyFXBook): Long 58.0% / Short 42.0%, 平均ロング 4,722
+- USDJPY (MyFXBook): Long 51.0% / Short 49.0%, 平均ロング 157.1
+
+### CoinGlass (BTCUSD)
+- Long/Short: 45.86% / 54.14%
+- Funding Rate: 0.0046%
+
+### BTC ETF フロー
+ソース: CoinGlass
+- 2026-05-08: 合計: -1.8M
+- 2026-05-07: 合計: -3.3M
+- 2026-05-06: 合計: +571.4M
+- 2026-05-05: 合計: +5.8M
+- 2026-05-04: 合計: +6.8M
+
+### 経済指標カレンダー（ハイインパクト）
+- Monday, May 11, 2026 23:00 | United States | Existing Home Sales  (Apr) | 前回: 3.98M | 予想: 4.05M
+- Tuesday, May 12, 2026 15:00 | Germany | German CPI (MoM) (Apr) | 前回: 0.6% | 予想: 0.6%
+- Tuesday, May 12, 2026 21:30 | United States | CPI (MoM) (Apr) | 前回: 0.9% | 予想: 0.6%
+- Tuesday, May 12, 2026 21:30 | United States | CPI (YoY) (Apr) | 前回: 3.3% | 予想: 3.7%
+- Tuesday, May 12, 2026 21:30 | United States | Core CPI (MoM) (Apr) | 前回: 0.2% | 予想: 0.3%
+- Wednesday, May 13, 2026 02:00 | United States | 10-Year Note Auction | 前回: 4.282% | 予想: N/A
+- Wednesday, May 13, 2026 21:30 | United States | PPI (MoM) (Apr) | 前回: 0.5% | 予想: 0.5%
+- Wednesday, May 13, 2026 23:30 | United States | Crude Oil Inventories | 前回: -2.313M | 予想: N/A
+- Thursday, May 14, 2026 02:00 | United States | 30-Year Bond Auction | 前回: 4.876% | 予想: N/A
+- Thursday, May 14, 2026 15:00 | United Kingdom | GDP (YoY) (Q1) | 前回: 1.0% | 予想: N/A
+- Thursday, May 14, 2026 15:00 | United Kingdom | GDP (MoM) (Mar) | 前回: 0.5% | 予想: -0.2%
+- Thursday, May 14, 2026 15:00 | United Kingdom | GDP (QoQ) (Q1) | 前回: 0.1% | 予想: 0.6%
+- Tuesday, May 19, 2026 08:50 | Japan | GDP (QoQ) (Q1) | 前回: 0.3% | 予想: N/A
+- Wednesday, May 20, 2026 15:00 | United Kingdom | CPI (YoY) (Apr) | 前回: 3.3% | 予想: N/A
+- Wednesday, May 20, 2026 18:00 | Euro Zone | CPI (YoY) (Apr) | 前回: 3.0% | 予想: N/A
+- Thursday, May 21, 2026 21:30 | United States | Philadelphia Fed Manufacturing Index  (May) | 前回: 26.7 | 予想: N/A
+- Thursday, May 21, 2026 22:45 | United States | S&P Global Manufacturing PMI  (May) | 前回: 54.5 | 予想: N/A
+- Thursday, May 21, 2026 22:45 | United States | S&P Global Services PMI  (May) | 前回: 51.0 | 予想: N/A
+- Friday, May 22, 2026 15:00 | Germany | German GDP (QoQ) (Q1) | 前回: 0.3% | 予想: N/A
+
+### FedWatch（FOMC週のみ）
+is_fomc_week: false
+next_fomc_date: 2026-06-16
+days_until_fomc: 37
