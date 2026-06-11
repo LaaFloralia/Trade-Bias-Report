@@ -87,7 +87,7 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │       ├── weekly-bias.md    # 週次速報用（Mac/Routines 両対応）
 │       └── deep-bias.md      # Deep Bias 強化版（ローカル専用、Deep Research + 自己検証 + 3 形式出力）
 ├── scripts/
-│   └── render_report.py      # MD → HTML/PDF レンダラ（markdown + Playwright）
+│   └── render_report.py      # MD → PDF レンダラ（markdown + Playwright、HTML は中間生成→削除）
 ├── templates/
 │   ├── report.html           # PDF 用 A4 テンプレ（表紙 + 本文 + フッタ）
 │   └── style.css             # 印刷用 CSS（システムフォント、テーブル、バッジ、@page）
@@ -251,12 +251,12 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 | 実行コマンド | `/daily-bias` / `/weekly-bias` | **`/deep-bias`** |
 | 所要時間 | 2〜3 分 | **10〜15 分** |
 | 字数目安 | 1500〜3500 字 | **5000〜8000 字** |
-| 出力形式 | MD のみ | **MD / HTML / PDF の 3 形式** |
+| 出力形式 | MD のみ | **MD のみ**（PDF は引数 `pdf` または明示要求時のみ追加生成、HTML は中間ファイル） |
 | WebSearch | なし | **8〜12 クエリ必須**（固定群 a〜h を最低 1 回ずつ） |
 | 自己検証 | なし | **スコア再計算 / 欠損検出 / 矛盾検出 を必須実施** |
 | 実行環境 | Mac / Routines 両対応 | **Mac ローカル専用** |
 | 信頼度スコア項目 | 6〜7 項目 | **11 項目（ニュース / 地政学 / 季節性を追加）** |
-| Brain への push | 速報 MD | **MD のみ**（HTML/PDF は `output/` のみ保持） |
+| Brain への push | 速報 MD | **MD のみ**（PDF は `output/` のみ保持） |
 | プロンプトファイル | `master_prompt.md` / `master_prompt_weekly.md` | `master_prompt_deep.md` |
 
 ### 7.5-2. 実行
@@ -274,13 +274,18 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 
 ### 7.5-3. 出力の置き場所
 
+デフォルトは Markdown のみを生成し Brain に push する。PDF はオプションで、
+`/deep-bias pdf`（または `/deep-bias-weekly pdf`）のように引数を明示するか、
+社長が会話で「PDF も」「PDF 付き」等を要求した場合のみ追加生成される。
+
+HTML は PDF レンダリング時の中間ファイルとして一時生成し、PDF 生成後に削除する
+（`--keep-html` フラグで保持可能）。Browser test / プレビュー PNG の永続出力は廃止済み（2026-05-16）。
+
 | 形式 | パス | 備考 |
 |---|---|---|
-| Markdown | `output/Deep_Bias_Report_YYYY-MM-DD.md` | Brain に master 直接 push される |
-| HTML | `output/Deep_Bias_Report_YYYY-MM-DD.html` | ローカルのみ。Playwright での目視確認用 |
-| PDF | `output/Deep_Bias_Report_YYYY-MM-DD.pdf` | A4 / 5〜20 ページ目安 |
+| Markdown | `output/Deep_Bias_Report_YYYY-MM-DD.md` | **常時生成**。Brain に master 直接 push |
+| PDF | `output/Deep_Bias_Report_YYYY-MM-DD.pdf` | **オプション**: 明示要求時のみ生成 / A4 / 5〜20 ページ目安 / Brain には置かない |
 | Brain 側 | `~/Brain/Calendar/Deep-Bias/Deep_Bias_Report_YYYY-MM-DD.md` | MD のみ commit + push |
-| Preview PNG | `output/Deep_Bias_Report_YYYY-MM-DD_preview.png` | Step 7 で生成、目視チェック用 |
 
 ### 7.5-4. ネットリサーチ 8〜12 クエリの内訳
 

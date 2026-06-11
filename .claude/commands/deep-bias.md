@@ -1,18 +1,19 @@
 ---
-description: Deep Bias Report（チャート外分析 強化版）を MD/HTML/PDF で生成
+description: Deep Bias Report（チャート外分析 強化版）を MD で生成（PDF はオプション）
 allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch
+argument-hint: "[pdf]"
 ---
 
 # Deep Bias Report 生成（強化版）
 
 既存 Daily / Weekly Bias の **速報用** ルートとは独立して、10〜15 分かけて深層リサーチを行い、
-資料として読める Markdown / HTML / PDF を生成する。ローカル（Mac）専用。
+資料として読める Markdown を生成する。ローカル（Mac）専用。
 
 - 対象銘柄: DXY / XAUUSD / USDJPY / BTCUSD
 - WebSearch クエリ 8〜12 を必ず実行（固定群 a〜h を最低 1 回ずつ）
 - 自己検証ステップ（スコア再計算 / 欠損検出 / 矛盾検出）を必須実施
-- 出力 3 形式（MD / HTML / PDF）を一括生成
-- MD のみ Brain に master 直接 push
+- **デフォルト出力は Markdown のみ**（Brain に master 直接 push）
+- **PDF はオプション**: 引数（`$ARGUMENTS`）に `pdf` / `--pdf` / `--with-pdf` のいずれかが含まれる、または社長が会話内で「PDF も」「PDF 付き」等を明示要求した場合のみ追加生成
 
 ## 環境変数
 
@@ -28,7 +29,16 @@ Routines 分岐は不要（ローカル専用）。
 
 - 全ステップを順番に実行する。途中失敗時は原因を社長に報告して停止
 - 推測で埋めない。取得不可は「取得不可」と明記、推測値は「（推定）」と注記
-- 出力 Markdown 内に絵文字を使わない（HTML テンプレのバッジは色のみで表現）
+- 出力 Markdown 内に絵文字を使わない
+
+## PDF オプションの判定（Step 1 開始前に 1 度だけ実施）
+
+以下のいずれかに該当する場合は `WANT_PDF=1` として後続ステップで分岐する。該当しなければ `WANT_PDF=0`（MD のみで完遂）。
+
+- `$ARGUMENTS` に `pdf` / `--pdf` / `--with-pdf` のいずれかが含まれる
+- 直近の社長メッセージで「PDF も」「PDF 付き」「PDF 出して」等の明示要求がある
+
+判定理由（`WANT_PDF` の値とその根拠）は Step 9 の最終応答に 1 行で記載する。
 
 ## Step 1: スクレイピング実行
 
@@ -153,7 +163,9 @@ S12-1 / S12-2 の信頼度スコアを項目別に再計算し、本文値と一
 当該銘柄の信頼度を Low に引き下げました。
 ```
 
-## Step 6: Render（HTML + PDF）
+## Step 6: Render（PDF、オプション）
+
+**`WANT_PDF=1` の場合のみ実行**。`WANT_PDF=0` ならこの Step は丸ごとスキップする。
 
 ```bash
 cd "$PROJECT_DIR" && "$PYTHON_BIN" scripts/render_report.py \
@@ -162,80 +174,46 @@ cd "$PROJECT_DIR" && "$PYTHON_BIN" scripts/render_report.py \
 
 成功時、以下が生成される:
 
-- `$PROJECT_DIR/output/Deep_Bias_Report_<JST 日付>.html`
 - `$PROJECT_DIR/output/Deep_Bias_Report_<JST 日付>.pdf`
 
-## Step 7: Browser test（Playwright）
+HTML は PDF 生成の中間ファイルとして一時生成され、デフォルトで削除される。
+デバッグ目的で HTML を残したい場合は `--keep-html` フラグを付ける。
+Browser test / プレビュー PNG 生成は廃止された（容量削減のため、2026-05-16）。
 
-`scripts/render_report.py` の HTML を Playwright headless で開き、スクリーンショットを保存する。
+## Step 7: Sanity check（ファイルサイズ + PDF ページ数）
 
-```bash
-cd "$PROJECT_DIR" && "$PYTHON_BIN" - <<'PY'
-import os
-import sys
-from datetime import datetime
-from pathlib import Path
-from playwright.sync_api import sync_playwright
-
-today = datetime.now().strftime("%Y-%m-%d")
-project_dir = Path(os.environ.get("PROJECT_DIR", "."))
-html_path = project_dir / "output" / f"Deep_Bias_Report_{today}.html"
-screenshot_path = project_dir / "output" / f"Deep_Bias_Report_{today}_preview.png"
-
-if not html_path.exists():
-    print(f"ERROR: HTML not found: {html_path}", file=sys.stderr)
-    sys.exit(1)
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page(viewport={"width": 1100, "height": 1500})
-    page.goto(f"file://{html_path.resolve()}")
-    page.wait_for_load_state("domcontentloaded")
-    page.screenshot(path=str(screenshot_path), full_page=False)
-    browser.close()
-print(f"screenshot: {screenshot_path}")
-PY
-```
-
-その後 `Read` ツールでスクリーンショット画像を読み、以下を目視判定する:
-
-- テーブル切れ（カラムが右端で切れている等）
-- 空セクション（セクション見出しだけで本文がない）
-- フォント崩れ（豆腐文字 / 重なり）
-
-崩れが検出された場合、`templates/style.css` を **1 ファイルだけ** 1 回まで修正してから再 render する。
-
-## Step 8: Sanity check（ファイルサイズ + PDF ページ数）
+MD の範囲チェックは常時実施。PDF 関連の範囲チェックは `WANT_PDF=1` の場合のみ実施する。
 
 ```bash
 cd "$PROJECT_DIR/output"
 TODAY=$(date +%Y-%m-%d)
 MD="Deep_Bias_Report_${TODAY}.md"
-HTML="Deep_Bias_Report_${TODAY}.html"
-PDF="Deep_Bias_Report_${TODAY}.pdf"
 
 MD_SIZE=$(stat -f%z "$MD" 2>/dev/null || stat -c%s "$MD")
-HTML_SIZE=$(stat -f%z "$HTML" 2>/dev/null || stat -c%s "$HTML")
-PDF_SIZE=$(stat -f%z "$PDF" 2>/dev/null || stat -c%s "$PDF")
-
-# PDF ページ数（macOS の mdls か pdfinfo を使用、なければ Python で fallback）
-if command -v mdls >/dev/null 2>&1; then
-  PDF_PAGES=$(mdls -name kMDItemNumberOfPages -raw "$PDF")
-else
-  PDF_PAGES="N/A"
-fi
 
 echo "MD: $MD_SIZE bytes (range 10240-51200)"
-echo "HTML: $HTML_SIZE bytes (range 51200-307200)"
-echo "PDF: $PDF_SIZE bytes (range 102400-2097152), pages=$PDF_PAGES (range 5-20)"
 
-# 範囲チェック
 WARNINGS=""
 [ "$MD_SIZE" -lt 10240 ] || [ "$MD_SIZE" -gt 51200 ] && WARNINGS+="MD size out of range; "
-[ "$HTML_SIZE" -lt 51200 ] || [ "$HTML_SIZE" -gt 307200 ] && WARNINGS+="HTML size out of range; "
-[ "$PDF_SIZE" -lt 102400 ] || [ "$PDF_SIZE" -gt 2097152 ] && WARNINGS+="PDF size out of range; "
-if [ "$PDF_PAGES" != "N/A" ] && [ -n "$PDF_PAGES" ]; then
-  [ "$PDF_PAGES" -lt 5 ] || [ "$PDF_PAGES" -gt 20 ] && WARNINGS+="PDF pages out of range; "
+
+# 以下は WANT_PDF=1 のときのみ実施
+if [ "${WANT_PDF:-0}" = "1" ]; then
+  PDF="Deep_Bias_Report_${TODAY}.pdf"
+  PDF_SIZE=$(stat -f%z "$PDF" 2>/dev/null || stat -c%s "$PDF")
+
+  # PDF ページ数（macOS の mdls を使用、なければ N/A）
+  if command -v mdls >/dev/null 2>&1; then
+    PDF_PAGES=$(mdls -name kMDItemNumberOfPages -raw "$PDF")
+  else
+    PDF_PAGES="N/A"
+  fi
+
+  echo "PDF: $PDF_SIZE bytes (range 102400-2097152), pages=$PDF_PAGES (range 5-20)"
+
+  [ "$PDF_SIZE" -lt 102400 ] || [ "$PDF_SIZE" -gt 2097152 ] && WARNINGS+="PDF size out of range; "
+  if [ "$PDF_PAGES" != "N/A" ] && [ -n "$PDF_PAGES" ]; then
+    [ "$PDF_PAGES" -lt 5 ] || [ "$PDF_PAGES" -gt 20 ] && WARNINGS+="PDF pages out of range; "
+  fi
 fi
 
 if [ -n "$WARNINGS" ]; then
@@ -245,7 +223,7 @@ fi
 
 範囲外の警告は最終応答で社長に明示する。
 
-## Step 9: Brain への push（MD のみ）
+## Step 8: Brain への push（MD のみ）
 
 HTML / PDF は `output/` のみに留め Brain には置かない。MD のみを Brain に commit。
 
@@ -269,14 +247,15 @@ git push origin HEAD:master 2>/dev/null || git push origin HEAD:main
 echo "commit: $COMMIT_HASH"
 ```
 
-## Step 10: 社長への最終応答
+## Step 9: 社長への最終応答
 
 以下を簡潔に提示する。
 
 1. **エグゼクティブサマリー（S0）の 5 行**
-2. **3 ファイルのフルパス**（MD / HTML / PDF）
-3. **commit hash**（Step 9）
-4. **取得失敗ソース一覧**（あれば）
-5. **Sanity check 警告**（Step 8 で範囲外があれば）
+2. **出力ファイルのフルパス**: MD は常に / PDF は `WANT_PDF=1` の場合のみ追記
+3. **PDF 判定結果**: `WANT_PDF=0`（MD のみ）or `WANT_PDF=1`（PDF も生成）と、その根拠を 1 行
+4. **commit hash**
+5. **取得失敗ソース一覧**（あれば）
+6. **Sanity check 警告**（Step 7 で範囲外があれば）
 
-長い本文の再掲示は不要。詳細は MD / HTML / PDF で確認する前提。
+長い本文の再掲示は不要。詳細は MD（PDF を生成した場合は PDF も）で確認する前提。

@@ -199,20 +199,34 @@ def render_pdf(html_path: Path) -> Path:
     return pdf_path
 
 
-def render(md_path: Path, project_root: Path | None = None) -> Tuple[Path, Path]:
-    """Render Markdown to both HTML and PDF. Returns (html_path, pdf_path)."""
+def render(md_path: Path, project_root: Path | None = None, keep_html: bool = False) -> Tuple[Path | None, Path]:
+    """Render Markdown to PDF (HTML は PDF 生成の中間ファイル).
+
+    keep_html=False（デフォルト）: PDF 生成後に HTML を削除し (None, pdf_path) を返す。
+    keep_html=True: HTML を保持し (html_path, pdf_path) を返す。
+    """
     html_path = render_html(md_path, project_root=project_root)
     pdf_path = render_pdf(html_path)
+    if not keep_html:
+        html_path.unlink()
+        html_path = None
     return html_path, pdf_path
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Render Deep Bias Report (MD → HTML + PDF)")
-    parser.add_argument("md_path", help="Path to the Deep Bias Markdown file")
+    parser = argparse.ArgumentParser(
+        description="Render Bias Report (MD → PDF; HTML は中間生成後デフォルトで削除)"
+    )
+    parser.add_argument("md_path", help="Path to the Bias Markdown file")
+    parser.add_argument(
+        "--keep-html",
+        action="store_true",
+        help="PDF 生成後も中間 HTML を残す（デフォルトは削除）",
+    )
     parser.add_argument(
         "--html-only",
         action="store_true",
-        help="Skip PDF rendering (useful for fast smoke tests)",
+        help="HTML のみ生成（PDF をスキップ。--keep-html は暗黙的に有効）",
     )
     args = parser.parse_args(argv)
 
@@ -222,13 +236,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     html_path = render_html(md_path)
-    print(f"HTML: {html_path}")
 
     if args.html_only:
+        print(f"HTML: {html_path}")
         return 0
 
     pdf_path = render_pdf(html_path)
     print(f"PDF:  {pdf_path}")
+
+    if args.keep_html:
+        print(f"HTML: {html_path}")
+    else:
+        html_path.unlink()
+
     return 0
 
 
