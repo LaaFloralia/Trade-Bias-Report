@@ -104,6 +104,7 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │   ├── btc_etf.py            # BTC ETF フロー
 │   ├── fedwatch.py           # CME FedWatch（FOMC週のみ）
 │   ├── fred.py               # FRED: DGS10 (US10Y) / DGS2 (US2Y) / DTWEXBGS (Broad USD Index, ≠ DXY)
+│   ├── binance_btc_sentiment.py  # Binance Futures BTC Long/Short（MyFXBook 非対応の代替、2026-05-16 追加）
 │   └── validation.py         # データバリデーション
 └── output/                   # ローカル出力（Brain にも commit）
 ```

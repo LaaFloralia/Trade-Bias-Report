@@ -37,6 +37,7 @@ from scrapers.macro_liquidity import scrape_macro_liquidity
 from scrapers.rate_spreads import scrape_rate_spreads
 from scrapers.crypto_funding import scrape_crypto_funding
 from scrapers.myfxbook_open_orders import scrape_myfxbook_open_orders
+from scrapers.binance_btc_sentiment import fetch_binance_btc_sentiment
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -110,6 +111,7 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "rate_spreads": None,
         "crypto_funding": None,
         "myfxbook_open_orders": {},  # 銘柄ごとに格納
+        "binance_btc_sentiment": None,  # Binance Futures BTCUSDT Long/Short (MyFXBook 非対応の代替)
     }
 
     # --- Twelve Data: 価格データ取得 ---
@@ -121,6 +123,18 @@ async def collect_all_data(weekly: bool = False) -> dict:
     except Exception as e:
         results["price_data"] = f"Twelve Data 取得不可（{e}）"
         print(f"  [ERROR] Twelve Data: {e}")
+
+    # --- Binance Futures: BTC Long/Short 取得（MyFXBook が BTC 非対応のため代替）---
+    print("  Binance Futures: BTC Long/Short 取得中...")
+    try:
+        results["binance_btc_sentiment"] = fetch_binance_btc_sentiment()
+        if results["binance_btc_sentiment"].get("error"):
+            print(f"  [WARN]  Binance BTC: {results['binance_btc_sentiment']['error']}")
+        else:
+            print("  [OK]    Binance BTC: Top Trader + Global L/S 取得完了")
+    except Exception as e:
+        results["binance_btc_sentiment"] = {"error": str(e)}
+        print(f"  [ERROR] Binance BTC: {e}")
 
     # --- Phase 1: MyFXBook + CoinGlass を並列取得 ---
     myfxbook_targets = [(sym, cfg["myfxbook_slug"]) for sym, cfg in INSTRUMENTS.items() if cfg.get("myfxbook_slug")]
@@ -463,6 +477,54 @@ def format_scraped_data(data: dict) -> str:
             lines.append(f"- エラー: {cg['error']}")
     else:
         lines.append("- BTCUSD: 取得不可")
+
+    # --- Binance Top Trader vs Global（BTCUSD のリテール／プロ センチメント差）---
+    # MyFXBook が BTC 非対応のため、取引所機関データで代替。
+    # Top Trader (Position/Account) = プロ寄り、Global = リテール寄り。差分から divergence を読む。
+    binance_btc = data.get("binance_btc_sentiment")
+    if binance_btc and isinstance(binance_btc, dict):
+        lines.append("")
+        lines.append("### Binance Top Trader vs Global (BTCUSD, 1h)")
+        if binance_btc.get("top_trader_position_long_pct") is not None:
+            lines.append(
+                f"- Top Trader Position（実ポジション量、プロ寄り）: "
+                f"Long {binance_btc['top_trader_position_long_pct']}% / "
+                f"Short {binance_btc['top_trader_position_short_pct']}% "
+                f"(L/S ratio {binance_btc['top_trader_position_ls_ratio']})"
+            )
+        if binance_btc.get("top_trader_account_long_pct") is not None:
+            lines.append(
+                f"- Top Trader Account（アカウント数、プロ寄り）: "
+                f"Long {binance_btc['top_trader_account_long_pct']}% / "
+                f"Short {binance_btc['top_trader_account_short_pct']}% "
+                f"(L/S ratio {binance_btc['top_trader_account_ls_ratio']})"
+            )
+        if binance_btc.get("global_long_pct") is not None:
+            lines.append(
+                f"- Global Account（全アカウント、リテール寄り）: "
+                f"Long {binance_btc['global_long_pct']}% / "
+                f"Short {binance_btc['global_short_pct']}% "
+                f"(L/S ratio {binance_btc['global_ls_ratio']})"
+            )
+        # divergence の自動算出
+        if (
+            binance_btc.get("top_trader_position_long_pct") is not None
+            and binance_btc.get("global_long_pct") is not None
+        ):
+            div = round(
+                binance_btc["global_long_pct"] - binance_btc["top_trader_position_long_pct"],
+                2,
+            )
+            sign = "+" if div > 0 else ""
+            interp = (
+                "リテール強気・プロ弱気（ETF流出と整合しやすい）" if div > 5
+                else "リテール弱気・プロ強気（反転シグナル候補）" if div < -5
+                else "Global と Top Trader の偏りは小さい（divergence なし）"
+            )
+            lines.append(f"- Divergence (Global − Top Trader): {sign}{div}pp → {interp}")
+        if binance_btc.get("error"):
+            lines.append(f"- エラー: {binance_btc['error']}")
+        lines.append("- ソース: Binance Futures Public API（無料・認証不要）")
 
     # --- BTC ETFフロー ---
     btc_etf = data.get("btc_etf")
