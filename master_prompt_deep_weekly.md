@@ -442,7 +442,6 @@ WebFetch / WebSearch の取得失敗ソースは数のみ集計し、URL 一覧�
 | Fed / ECB / BOJ 発言 | | |
 | SPX / VIX / NQ | | |
 | US10Y / US2Y / Yield Curve | | |
-| WTI / Brent | | |
 | 地政学（中東 / 台湾 / ウクライナ） | | |
 | BTC / SEC / ETF | | |
 | 当週主要指標予想 | | |

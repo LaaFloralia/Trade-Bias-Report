@@ -22,9 +22,15 @@ from typing import Dict, List, Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from playwright.async_api import async_playwright
-from config import BROWSER_TIMEOUT, USER_AGENT, TWELVEDATA_API_KEY
+from config import (
+    BROWSER_TIMEOUT,
+    DXY_ESTIMATE_SYMBOL,
+    EURUSD_DXY_FACTOR,
+    TWELVEDATA_API_KEY,
+    USER_AGENT,
+)
 
-EURUSD_DXY_FACTOR = 50.14348112
+# EUR/USD 逆数推定の係数・シンボルは config.yaml（SSoT）の dxy_estimate から供給される
 
 
 def _estimate_dxy_from_eurusd(eurusd: float) -> float:
@@ -472,7 +478,7 @@ def _estimate_from_eurusd() -> Optional[dict]:
     try:
         resp = requests.get(
             f"{base}/quote",
-            params={"symbol": "EUR/USD", "apikey": TWELVEDATA_API_KEY, "dp": "5"},
+            params={"symbol": DXY_ESTIMATE_SYMBOL, "apikey": TWELVEDATA_API_KEY, "dp": "5"},
             timeout=15,
         )
         resp.raise_for_status()
@@ -511,7 +517,7 @@ def _estimate_from_eurusd() -> Optional[dict]:
         ts_resp = requests.get(
             f"{base}/time_series",
             params={
-                "symbol": "EUR/USD",
+                "symbol": DXY_ESTIMATE_SYMBOL,
                 "interval": "1day",
                 "outputsize": "25",
                 "apikey": TWELVEDATA_API_KEY,

@@ -10,7 +10,7 @@ argument-hint: "[pdf]"
 資料として読める Markdown を生成する。ローカル（Mac）専用。
 
 - 対象銘柄: DXY / XAUUSD / USDJPY / BTCUSD
-- WebSearch クエリ 8〜12 を必ず実行（固定群 a〜h を最低 1 回ずつ）
+- WebSearch クエリ 7〜12 を必ず実行（固定群 a〜g を最低 1 回ずつ）
 - W0 は 11〜12 行厳守（信頼度バッジ付き）
 - 自己検証ステップ（スコア再計算 / 欠損検出 / 矛盾検出）を必須実施
 - **デフォルト出力は Markdown のみ**（Brain に master 直接 push）
@@ -75,19 +75,18 @@ exit code が 0 でなければ以降中止し stderr を社長に報告する�
 
 ## Step 3: Deep Research（必須、WebSearch 8〜12 クエリ）
 
-以下 a〜h の **固定群を最低 1 回ずつ** 実行する。Daily Deep Bias と同じ構成だが、
+以下 a〜g の **固定群を最低 1 回ずつ** 実行する。Daily Deep Bias と同じ構成だが、
 週次視点で「先週起きたこと」と「今週見るべきこと」の両方を意識して質問を作る。
 
-### 必須クエリ（a〜h）
+### 必須クエリ（a〜g）
 
 a. Fed / ECB / BOJ 高官発言（直近 1 週間 + 今週予定、タカ派 / ハト派の傾き）
 b. SPX / VIX / NQ の週間変化 + 今週見るべきイベント
 c. US10Y / US2Y の週間変化 + Yield Curve 動向
-d. WTI / Brent 価格と週間変化
-e. 中東 / 台湾 / ウクライナの地政学ヘッドライン（直近 1 週間）
-f. BTC 関連の SEC / ETF / 機関買い動向（先週フロー集計 + 今週見通し）
-g. 今週 NFP / CPI / FOMC 等の主要指標予想ブレ
-h. リスクオン / オフ系のセンチメント指標（VIX / Fear & Greed / Put-Call 等）
+d. 中東 / 台湾 / ウクライナの地政学ヘッドライン（直近 1 週間）
+e. BTC 関連の SEC / ETF / 機関買い動向（先週フロー集計 + 今週見通し）
+f. 今週 NFP / CPI / FOMC 等の主要指標予想ブレ
+g. リスクオン / オフ系のセンチメント指標（VIX / Fear & Greed / Put-Call 等）
 
 各クエリは `current year` を含めて検索精度を上げる（例: `Fed FOMC member speech hawkish dovish 2026 weekly`）。
 

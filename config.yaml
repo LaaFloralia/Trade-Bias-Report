@@ -1,0 +1,131 @@
+# =============================================================
+# 銘柄定義 SSoT（Single Source of Truth）
+# =============================================================
+# 全スクレイパー・main.py はここから config.py 経由で参照する。
+# 各モジュールへの銘柄・シンボル・URL の直書きは禁止
+# （回帰ガード: tests/test_config_ssot.py がソース走査で検出する）。
+#
+# 銘柄を追加・変更する場合はこのファイルだけを編集すれば、
+# twelvedata / cot / fxssi / ig_sentiment / myfxbook_open_orders /
+# premarket / vix_structure / btc_etf / dxy_components の全系統に反映される。
+
+# --- メイン 4 銘柄 ---
+# キー名がレポート上の銘柄名になる。
+# フィールド:
+#   twelvedata_symbol : Twelve Data API のシンボル（null = TD 非対応）
+#   myfxbook_slug     : MyFXBook outlook ページの slug（null = 非対応）
+#   fxssi             : FXSSI Current Ratio で抽出するか（フォールバック 1）
+#   ig_url            : IG Client Sentiment ページ URL（null = ページなし、フォールバック 2）
+#   open_orders       : MyFXBook Open Orders（BSL/SSL クラスタ）の対象か
+#   coinglass         : CoinGlass を第 1 センチメントソースに使うか（BTC のみ）
+#   cot               : CFTC Legacy Futures Only の対象定義
+#     order           : レポート表示順（小さい順）
+#     label           : 表示名
+#     market          : market_and_exchange_names の完全一致値
+instruments:
+  DXY:
+    twelvedata_symbol: null   # Twelve Data 非対応（EUR/USD 逆数推定は dxy_estimate 参照）
+    myfxbook_slug: null       # FX 銘柄ではないため対象外
+    fxssi: false              # FXSSI ページに DXY は掲載されない
+    ig_url: null              # IG International にページなし
+    open_orders: false
+    cot:
+      order: 3
+      label: "USD INDEX - DX"
+      market: "USD INDEX - ICE FUTURES U.S."
+  XAUUSD:
+    twelvedata_symbol: "XAU/USD"
+    myfxbook_slug: "XAUUSD"
+    fxssi: true
+    ig_url: "https://www.ig.com/en/commodities/markets-commodities/gold"
+    open_orders: true
+    cot:
+      order: 1
+      label: "GOLD - GC"
+      market: "GOLD - COMMODITY EXCHANGE INC."
+  USDJPY:
+    twelvedata_symbol: "USD/JPY"
+    myfxbook_slug: "USDJPY"
+    fxssi: true
+    ig_url: "https://www.ig.com/en/forex/markets-forex/usd-jpy"
+    open_orders: true
+    cot:
+      order: 2
+      label: "JAPANESE YEN - 6J"
+      market: "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE"
+  BTCUSD:
+    twelvedata_symbol: "BTC/USD"
+    myfxbook_slug: null       # MyFXBook 非対応 → CoinGlass + Binance Futures で代替
+    fxssi: false
+    ig_url: null
+    open_orders: false
+    coinglass: true
+    cot:
+      order: 4
+      label: "BITCOIN - CME"
+      market: "BITCOIN - CHICAGO MERCANTILE EXCHANGE"
+
+# --- FXSSI で追加抽出する参考ペア（メイン銘柄ではない）---
+fxssi_extra_pairs:
+  - EURUSD
+  - GBPUSD
+
+# --- DXY の EUR/USD 逆数推定（最終フォールバック）---
+dxy_estimate:
+  twelvedata_symbol: "EUR/USD"
+  factor: 50.14348112   # DXY ≒ factor / EURUSD の近似係数
+
+# --- DXY 構成 6 通貨（ICE 公式ウェイト）---
+# inverse=true はペア上昇が DXY を押し下げる向き（XXX/USD 形式）。
+dxy_components:
+  - { pair: "EUR/USD", weight: 0.576, inverse: true }
+  - { pair: "USD/JPY", weight: 0.136, inverse: false }
+  - { pair: "GBP/USD", weight: 0.119, inverse: true }
+  - { pair: "USD/CAD", weight: 0.091, inverse: false }
+  - { pair: "USD/SEK", weight: 0.042, inverse: false }
+  - { pair: "USD/CHF", weight: 0.036, inverse: false }
+
+# --- プリマーケット指数（premarket.py）---
+premarket_indices:
+  SPX:
+    twelvedata_symbol: "SPX"
+    yahoo_chart_symbol: "^GSPC"
+    yahoo_url: "https://finance.yahoo.com/quote/%5EGSPC/"
+  NDX:
+    twelvedata_symbol: "NDX"
+    yahoo_chart_symbol: "^NDX"
+    yahoo_url: "https://finance.yahoo.com/quote/%5ENDX/"
+  DJI:
+    twelvedata_symbol: "DJI"
+    yahoo_chart_symbol: "^DJI"
+    yahoo_url: "https://finance.yahoo.com/quote/%5EDJI/"
+
+# --- VIX ターム構造系列（vix_structure.py）---
+# fred_series: null は FRED 未提供（CBOE / Twelve Data / Yahoo で補完）。
+vix_series:
+  VIX9D:
+    twelvedata_symbol: "VIX9D"
+    fred_series: null
+    cboe_url: "https://www.cboe.com/us/indices/dashboard/vix9d/"
+    yahoo_url: "https://finance.yahoo.com/quote/%5EVIX9D"
+  VIX:
+    twelvedata_symbol: "VIX"
+    fred_series: "VIXCLS"
+    cboe_url: "https://www.cboe.com/us/indices/dashboard/vix/"
+    yahoo_url: "https://finance.yahoo.com/quote/%5EVIX"
+  VIX3M:
+    twelvedata_symbol: "VIX3M"
+    fred_series: "VXVCLS"
+    cboe_url: "https://www.cboe.com/us/indices/dashboard/vix3m/"
+    yahoo_url: "https://finance.yahoo.com/quote/%5EVIX3M"
+  VIX6M:
+    twelvedata_symbol: "VIX6M"
+    fred_series: null
+    cboe_url: "https://www.cboe.com/us/indices/dashboard/vix6m/"
+    yahoo_url: "https://finance.yahoo.com/quote/%5EVIX6M"
+
+# --- BTC 現物 ETF（btc_etf.py が個別追跡するティッカー）---
+btc_etf_tickers:
+  - IBIT
+  - FBTC
+  - GBTC

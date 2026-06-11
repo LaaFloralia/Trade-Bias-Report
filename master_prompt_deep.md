@@ -565,7 +565,6 @@ S12 で算出した信頼度スコアを項目別に再計算し、本文の値�
 | Fed / ECB / BOJ 発言 | | |
 | SPX / VIX / NQ | | |
 | US10Y / US2Y / Yield Curve | | |
-| WTI / Brent | | |
 | 地政学（中東 / 台湾 / ウクライナ） | | |
 | BTC / SEC / ETF | | |
 | 当日主要指標予想 | | |

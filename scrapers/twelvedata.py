@@ -17,15 +17,12 @@ from typing import Optional, Tuple, List
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
-from config import TWELVEDATA_API_KEY
+from config import TWELVEDATA_API_KEY, TWELVEDATA_SYMBOLS
 
 BASE_URL = "https://api.twelvedata.com"
 
-SYMBOL_MAP = {
-    "XAUUSD": "XAU/USD",
-    "USDJPY": "USD/JPY",
-    "BTCUSD": "BTC/USD",
-}
+# 銘柄定義は config.yaml（SSoT）から供給される
+SYMBOL_MAP = TWELVEDATA_SYMBOLS
 
 def _get(endpoint: str, params: dict) -> Optional[dict]:
     """GETリクエスト。HTTP 429 または JSON level の rate limit 応答時に5秒待って1回リトライ。"""
@@ -59,10 +56,10 @@ def _parse_quotes(data: Optional[dict], symbols: List[str]) -> dict:
     """_get の結果をシンボル→quoteデータの辞書に変換する。"""
     if data is None:
         return {}
-    # 複数シンボル: {"XAU/USD": {...}, "USD/JPY": {...}}
+    # 複数シンボル: {"XXX/YYY": {...}, ...}（キーは TD シンボル）
     if all(sym in data for sym in symbols):
         return data
-    # 単一シンボル: {"symbol": "XAU/USD", "close": "...", ...}
+    # 単一シンボル: {"symbol": "XXX/YYY", "close": "...", ...}
     if "symbol" in data and "close" in data:
         return {data["symbol"]: data}
     # 全体がエラー応答の場合
@@ -171,7 +168,7 @@ def fetch_price_data_with_raw() -> Tuple[str, dict, dict]:
     """全銘柄の価格データを取得し、テキストと検証用 raw データを返す。"""
     lines = ["=== Price Data (Twelve Data API) ===", ""]
 
-    main_symbols = list(SYMBOL_MAP.values())  # ["XAU/USD", "USD/JPY", "BTC/USD"]
+    main_symbols = list(SYMBOL_MAP.values())  # config.yaml の twelvedata_symbol 一覧
     symbol_str = ",".join(main_symbols)
 
     # --- 1回目: /quote（3銘柄一括）---

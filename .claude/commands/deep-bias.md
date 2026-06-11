@@ -10,7 +10,7 @@ argument-hint: "[pdf]"
 資料として読める Markdown を生成する。ローカル（Mac）専用。
 
 - 対象銘柄: DXY / XAUUSD / USDJPY / BTCUSD
-- WebSearch クエリ 8〜12 を必ず実行（固定群 a〜h を最低 1 回ずつ）
+- WebSearch クエリ 7〜12 を必ず実行（固定群 a〜g を最低 1 回ずつ）
 - 自己検証ステップ（スコア再計算 / 欠損検出 / 矛盾検出）を必須実施
 - **デフォルト出力は Markdown のみ**（Brain に master 直接 push）
 - **PDF はオプション**: 引数（`$ARGUMENTS`）に `pdf` / `--pdf` / `--with-pdf` のいずれかが含まれる、または社長が会話内で「PDF も」「PDF 付き」等を明示要求した場合のみ追加生成
@@ -74,20 +74,19 @@ cd "$PROJECT_DIR" && "$PYTHON_BIN" main.py --weekly
 
 ## Step 3: Deep Research（必須、WebSearch 8〜12 クエリ）
 
-以下 a〜h の **固定群を最低 1 回ずつ** 実行する。状況に応じて追加クエリを最大 12 まで許容。
+以下 a〜g の **固定群を最低 1 回ずつ** 実行する。状況に応じて追加クエリを最大 12 まで許容。
 クエリ実行後、最重要 URL を **3〜5 件選んで WebFetch でクロスチェック** する。
 最終的にクエリ群と URL 群を本文末尾「データソース脚注」セクションに列挙する。
 
-### 必須クエリ（a〜h）
+### 必須クエリ（a〜g）
 
 a. Fed / ECB / BOJ 高官発言（24 時間、タカ派 / ハト派の傾き）
 b. SPX / VIX / NQ の前日比 + 当日プリマーケット
 c. US10Y / US2Y の前日比 + Yield Curve スロープ
-d. WTI / Brent 価格と前日比
-e. 中東 / 台湾 / ウクライナの地政学ヘッドライン
-f. BTC 関連の SEC / ETF / 機関買い動向
-g. 当日 NFP / CPI / FOMC 等の主要指標予想ブレ
-h. リスクオン / オフ系のセンチメント指標（VIX / Fear & Greed / Put-Call 等）
+d. 中東 / 台湾 / ウクライナの地政学ヘッドライン
+e. BTC 関連の SEC / ETF / 機関買い動向
+f. 当日 NFP / CPI / FOMC 等の主要指標予想ブレ
+g. リスクオン / オフ系のセンチメント指標（VIX / Fear & Greed / Put-Call 等）
 
 各クエリは `current year` を含めて検索精度を上げる（例: `Fed FOMC member speech hawkish dovish 2026`）。
 

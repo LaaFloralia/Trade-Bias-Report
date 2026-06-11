@@ -7,7 +7,7 @@
 import asyncio
 import re
 from playwright.async_api import async_playwright
-from config import BROWSER_TIMEOUT, USER_AGENT
+from config import BROWSER_TIMEOUT, FXSSI_SYMBOLS, USER_AGENT
 
 
 async def scrape_fxssi() -> dict:
@@ -40,7 +40,8 @@ async def scrape_fxssi() -> dict:
             body_text = await page.inner_text("body")
 
             # 各銘柄のデータを正規表現で抽出
-            target_symbols = ["XAUUSD", "USDJPY", "EURUSD", "GBPUSD"]
+            # 抽出対象は config.yaml（SSoT）から供給される
+            target_symbols = FXSSI_SYMBOLS
             for symbol in target_symbols:
                 # パターン: "XAUUSD ... XX% ... XX%" のような並び
                 pattern = rf'{symbol}.*?(\d+(?:\.\d+)?)\s*%.*?(\d+(?:\.\d+)?)\s*%'

@@ -33,37 +33,29 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
 from playwright.async_api import async_playwright
-from config import BROWSER_TIMEOUT, USER_AGENT, TWELVEDATA_API_KEY
+from config import (
+    BROWSER_TIMEOUT,
+    USER_AGENT,
+    TWELVEDATA_API_KEY,
+    VIX_CBOE_URLS,
+    VIX_FRED_SYMBOLS,
+    VIX_TD_SYMBOLS,
+    VIX_YAHOO_URLS,
+)
+
+# 系列定義は config.yaml（SSoT）の vix_series から供給される
 
 # Twelve Data 上のシンボル名 (株式・指数扱い、頭の ^ は省略)
-TD_SYMBOLS = {
-    "VIX9D": "VIX9D",
-    "VIX": "VIX",
-    "VIX3M": "VIX3M",
-    "VIX6M": "VIX6M",
-}
+TD_SYMBOLS = VIX_TD_SYMBOLS
 
 # FRED 系列 (VIX9D / VIX6M は FRED 未提供)
-FRED_SYMBOLS = {
-    "VIX": "VIXCLS",
-    "VIX3M": "VXVCLS",
-}
+FRED_SYMBOLS = VIX_FRED_SYMBOLS
 
 # CBOE 公式 Dashboard URL (VIX9D / VIX6M を補完)
-CBOE_URLS = {
-    "VIX9D": "https://www.cboe.com/us/indices/dashboard/vix9d/",
-    "VIX": "https://www.cboe.com/us/indices/dashboard/vix/",
-    "VIX3M": "https://www.cboe.com/us/indices/dashboard/vix3m/",
-    "VIX6M": "https://www.cboe.com/us/indices/dashboard/vix6m/",
-}
+CBOE_URLS = VIX_CBOE_URLS
 
 # Yahoo Finance URL (最終フォールバック)
-YAHOO_URLS = {
-    "VIX9D": "https://finance.yahoo.com/quote/%5EVIX9D",
-    "VIX": "https://finance.yahoo.com/quote/%5EVIX",
-    "VIX3M": "https://finance.yahoo.com/quote/%5EVIX3M",
-    "VIX6M": "https://finance.yahoo.com/quote/%5EVIX6M",
-}
+YAHOO_URLS = VIX_YAHOO_URLS
 
 
 def _fetch_twelvedata_batch() -> Optional[dict]:

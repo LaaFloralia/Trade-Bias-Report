@@ -20,9 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
 from playwright.async_api import async_playwright
-from config import BROWSER_TIMEOUT, USER_AGENT
+from config import BROWSER_TIMEOUT, BTC_ETF_TICKERS, USER_AGENT
 
-TARGET_ETFS = ["IBIT", "FBTC", "GBTC"]
+# 追跡ティッカーは config.yaml（SSoT）の btc_etf_tickers から供給される
+TARGET_ETFS = BTC_ETF_TICKERS
 
 
 def _scrape_farside() -> Optional[dict]:

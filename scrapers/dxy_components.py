@@ -1,13 +1,7 @@
 """DXY 構成通貨のスプレッド分解スクレイパー
 
 DXY (US Dollar Index) の方向性を構成 6 通貨ペアの寄与度に分解する。
-構成ウェイト (ICE 公式):
-  EUR/USD : 57.6%
-  USD/JPY : 13.6%
-  GBP/USD : 11.9%
-  USD/CAD :  9.1%
-  USD/SEK :  4.2%
-  USD/CHF :  3.6%
+構成ウェイト (ICE 公式) は config.yaml の dxy_components を参照（SSoT）。
 
 ICT 用途: USDJPY バイアスの裏付け (USDJPY 寄与が DXY 全体を押している/逆風)。
 
@@ -24,20 +18,14 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
-from config import TWELVEDATA_API_KEY
+from config import DXY_COMPONENTS, TWELVEDATA_API_KEY
 
 BASE_URL = "https://api.twelvedata.com"
 
 # (twelve_data_symbol, weight, is_inverse) — DXY 上昇に寄与する向き。
 # is_inverse=True の場合、その通貨ペアの値上がりが DXY を押し下げる (ペアが USD/XXX ではなく XXX/USD)。
-COMPONENTS = [
-    ("EUR/USD", 0.576, True),
-    ("USD/JPY", 0.136, False),
-    ("GBP/USD", 0.119, True),
-    ("USD/CAD", 0.091, False),
-    ("USD/SEK", 0.042, False),
-    ("USD/CHF", 0.036, False),
-]
+# 定義は config.yaml（SSoT）の dxy_components から供給される。
+COMPONENTS = DXY_COMPONENTS
 
 
 def _fetch_quotes() -> Optional[dict]:
@@ -77,7 +65,7 @@ async def scrape_dxy_components() -> dict:
         {
             "source": "Twelve Data (DXY components)",
             "components": [
-                {"symbol": "EUR/USD", "weight": 0.576, "change_pct": -0.10,
+                {"symbol": "<TDペア>", "weight": <config.yaml のウェイト>, "change_pct": -0.10,
                  "dxy_contribution": +0.0576, ...},
                 ...
             ],

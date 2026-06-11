@@ -6,18 +6,19 @@
 ウィークリーレポート専用モジュール。Playwrightは使用せずrequestsのみで完結する。
 """
 
-import requests
+import sys
+from pathlib import Path
 from urllib.parse import quote
 
-BASE_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# 対象銘柄: (表示名, market_and_exchange_names の値)
-COT_TARGETS = [
-    ("GOLD - GC",         "GOLD - COMMODITY EXCHANGE INC."),
-    ("JAPANESE YEN - 6J", "JAPANESE YEN - CHICAGO MERCANTILE EXCHANGE"),
-    ("USD INDEX - DX",    "USD INDEX - ICE FUTURES U.S."),
-    ("BITCOIN - CME",     "BITCOIN - CHICAGO MERCANTILE EXCHANGE"),
-]
+import requests
+
+# 対象銘柄 (表示名, market_and_exchange_names の値) は
+# config.yaml（SSoT）の instruments.*.cot から供給される
+from config import COT_TARGETS
+
+BASE_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
 
 FIELDS = [
     "report_date_as_yyyy_mm_dd",

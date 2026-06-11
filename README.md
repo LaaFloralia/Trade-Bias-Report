@@ -252,7 +252,7 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 | 所要時間 | 2〜3 分 | **10〜15 分** |
 | 字数目安 | 1500〜3500 字 | **5000〜8000 字** |
 | 出力形式 | MD のみ | **MD のみ**（PDF は引数 `pdf` または明示要求時のみ追加生成、HTML は中間ファイル） |
-| WebSearch | なし | **8〜12 クエリ必須**（固定群 a〜h を最低 1 回ずつ） |
+| WebSearch | なし | **7〜12 クエリ必須**（固定群 a〜g を最低 1 回ずつ） |
 | 自己検証 | なし | **スコア再計算 / 欠損検出 / 矛盾検出 を必須実施** |
 | 実行環境 | Mac / Routines 両対応 | **Mac ローカル専用** |
 | 信頼度スコア項目 | 6〜7 項目 | **11 項目（ニュース / 地政学 / 季節性を追加）** |
@@ -287,20 +287,19 @@ HTML は PDF レンダリング時の中間ファイルとして一時生成し�
 | PDF | `output/Deep_Bias_Report_YYYY-MM-DD.pdf` | **オプション**: 明示要求時のみ生成 / A4 / 5〜20 ページ目安 / Brain には置かない |
 | Brain 側 | `~/Brain/Calendar/Deep-Bias/Deep_Bias_Report_YYYY-MM-DD.md` | MD のみ commit + push |
 
-### 7.5-4. ネットリサーチ 8〜12 クエリの内訳
+### 7.5-4. ネットリサーチ 7〜12 クエリの内訳
 
-必須群（a〜h、各 1 回以上、合計 8 クエリ。状況に応じて最大 12 まで追加可）:
+必須群（a〜g、各 1 回以上、合計 7 クエリ。状況に応じて最大 12 まで追加可）:
 
 | # | カテゴリ | 例 |
 |---|---|---|
 | a | Fed / ECB / BOJ 高官発言（24h、タカ派 / ハト派） | `Fed FOMC member speech hawkish dovish 2026` |
 | b | SPX / VIX / NQ 前日比 + 当日プリマーケット | `SPX VIX NQ premarket today 2026` |
 | c | US10Y / US2Y 前日比 + Yield Curve | `US10Y US2Y yield curve slope 2026` |
-| d | WTI / Brent 価格と前日比 | `WTI Brent crude oil price today 2026` |
-| e | 中東 / 台湾 / ウクライナの地政学 | `Middle East Taiwan Ukraine geopolitical news 2026` |
-| f | BTC / SEC / ETF / 機関買い | `Bitcoin ETF inflow SEC institutional 2026` |
-| g | NFP / CPI / FOMC 等主要指標予想ブレ | `NFP CPI forecast revision today 2026` |
-| h | リスクオン / オフセンチメント指標 | `VIX Fear Greed Put-Call ratio today 2026` |
+| d | 中東 / 台湾 / ウクライナの地政学 | `Middle East Taiwan Ukraine geopolitical news 2026` |
+| e | BTC / SEC / ETF / 機関買い | `Bitcoin ETF inflow SEC institutional 2026` |
+| f | NFP / CPI / FOMC 等主要指標予想ブレ | `NFP CPI forecast revision today 2026` |
+| g | リスクオン / オフセンチメント指標 | `VIX Fear Greed Put-Call ratio today 2026` |
 
 各クエリで最重要 URL を 3〜5 件選び **WebFetch でクロスチェック**。
 最終的に「データソース脚注」セクションに URL を列挙する。

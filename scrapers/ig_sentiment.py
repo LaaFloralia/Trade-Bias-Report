@@ -7,14 +7,10 @@
 import asyncio
 import re
 from playwright.async_api import async_playwright
-from config import BROWSER_TIMEOUT, USER_AGENT
+from config import BROWSER_TIMEOUT, IG_URLS, USER_AGENT
 
-# IG の銘柄別 URL マッピング
+# IG の銘柄別 URL マッピングは config.yaml（SSoT）の instruments.*.ig_url から供給される
 # 注: DXY と BTCUSD は IG International (ig.com/en) ではページが存在しない
-IG_URLS = {
-    "XAUUSD": "https://www.ig.com/en/commodities/markets-commodities/gold",
-    "USDJPY": "https://www.ig.com/en/forex/markets-forex/usd-jpy",
-}
 
 
 async def scrape_ig_sentiment(symbol: str) -> dict:

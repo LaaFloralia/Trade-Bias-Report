@@ -25,28 +25,25 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
-from config import BROWSER_TIMEOUT, TWELVEDATA_API_KEY, USER_AGENT
+from config import (
+    BROWSER_TIMEOUT,
+    PREMARKET_TD_SYMBOLS,
+    PREMARKET_YAHOO_CHART_SYMBOLS,
+    PREMARKET_YAHOO_URLS,
+    TWELVEDATA_API_KEY,
+    USER_AGENT,
+)
+
+# 指数定義は config.yaml（SSoT）の premarket_indices から供給される
 
 # Twelve Data 上の symbol
-SYMBOLS = {
-    "SPX": "SPX",
-    "NDX": "NDX",
-    "DJI": "DJI",
-}
+SYMBOLS = PREMARKET_TD_SYMBOLS
 
 # Yahoo Finance のシンボルとフォールバック URL
-YAHOO_URLS = {
-    "SPX": "https://finance.yahoo.com/quote/%5EGSPC/",
-    "NDX": "https://finance.yahoo.com/quote/%5ENDX/",
-    "DJI": "https://finance.yahoo.com/quote/%5EDJI/",
-}
+YAHOO_URLS = PREMARKET_YAHOO_URLS
 
 # Yahoo Chart API 用シンボル（公式・無料・無認証、HTML より安定）
-YAHOO_CHART_SYMBOLS = {
-    "SPX": "^GSPC",
-    "NDX": "^NDX",
-    "DJI": "^DJI",
-}
+YAHOO_CHART_SYMBOLS = PREMARKET_YAHOO_CHART_SYMBOLS
 
 
 def _yahoo_chart_api(label: str, retries: int = 3) -> Optional[dict]:

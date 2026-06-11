@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import INSTRUMENTS, FOMC_DATES_2026
+from config import INSTRUMENTS, OPEN_ORDER_SYMBOLS, FOMC_DATES_2026
 from scrapers.myfxbook import scrape_myfxbook
 from scrapers.fxssi import scrape_fxssi
 from scrapers.ig_sentiment import scrape_ig_sentiment
@@ -301,8 +301,8 @@ async def collect_all_data(weekly: bool = False) -> dict:
         results["vix_structure"] = {"error": str(e)}
         print(f"  [ERROR] vix_structure: {e}")
 
-    # --- MyFXBook Open Orders: XAUUSD / USDJPY 並列取得 (Deep Bias 強化) ---
-    open_order_targets = ["XAUUSD", "USDJPY"]
+    # --- MyFXBook Open Orders 並列取得 (Deep Bias 強化、対象は config.yaml の open_orders) ---
+    open_order_targets = OPEN_ORDER_SYMBOLS
     print(f"  MyFXBook Open Orders: {open_order_targets} を並列取得中...")
     oo_tasks = [scrape_myfxbook_open_orders(s) for s in open_order_targets]
     oo_results = await asyncio.gather(*oo_tasks, return_exceptions=True)
