@@ -61,15 +61,22 @@ def test_render_html_only(tmp_md: Path):
 
 
 def test_render_produces_pdf(tmp_md: Path):
-    """End-to-end: render_report.render() emits both HTML and PDF files."""
+    """End-to-end: render() はデフォルトで PDF のみ残す（HTML は中間生成→削除）。"""
     html_path, pdf_path = render(tmp_md, project_root=PROJECT_ROOT)
-    assert html_path.exists()
+    assert html_path is None, "HTML はデフォルトで削除され None が返る"
     assert pdf_path.exists()
     assert pdf_path.suffix == ".pdf"
 
     # The PDF should be non-trivial in size (header + content + style).
     pdf_size = pdf_path.stat().st_size
     assert pdf_size > 5_000, f"PDF unexpectedly small: {pdf_size} bytes"
+
+
+def test_render_keep_html(tmp_md: Path):
+    """keep_html=True なら HTML も保持される。"""
+    html_path, pdf_path = render(tmp_md, project_root=PROJECT_ROOT, keep_html=True)
+    assert html_path is not None and html_path.exists()
+    assert pdf_path.exists()
 
 
 def test_confidence_badge_explicit_marker_high():
