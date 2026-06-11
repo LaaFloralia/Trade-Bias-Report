@@ -49,4 +49,5 @@ def test_extended_fred_stale_thresholds(monkeypatch):
     assert oecd_stale["stale"] is True
     assert "series threshold 75 calendar days" in oecd_stale["note"]
 
-    assert fred.SERIES_IDS == ["DGS10", "DGS2", "DTWEXBGS"]
+    # main フロー取得系列は明示リスト管理（G2 で DFII10/T10YIE を追加）
+    assert fred.SERIES_IDS == ["DGS10", "DGS2", "DTWEXBGS", "DFII10", "T10YIE"]

@@ -195,6 +195,47 @@ def validate_dxy_data(dxy: dict) -> List[str]:
     return validate_price_data("DXY", dxy)
 
 
+# DGS10 ≒ DFII10 + T10YIE の恒等式許容差。
+# FRED は各系列を独立に小数 2 桁で公表するため丸め誤差 ±0.02 程度は正常。
+FRED_IDENTITY_TOLERANCE = 0.05
+
+
+def validate_fred_identity(fred: Optional[dict]) -> List[str]:
+    """B-5: FRED 名目金利の恒等式チェック（DGS10 ≒ DFII10 + T10YIE）。
+
+    3 系列すべての value が揃い、かつ as_of_date が一致している場合のみ検査する
+    （公表タイミング差で基準日がズレている時の偽陽性を避ける）。
+    """
+    if not isinstance(fred, dict):
+        return []
+
+    entries = {}
+    for sid in ("DGS10", "DFII10", "T10YIE"):
+        e = fred.get(sid)
+        if not isinstance(e, dict) or e.get("value") is None:
+            return []  # 系列欠落時は検査対象外（取得失敗は別途 error で報告される）
+        entries[sid] = e
+
+    as_of_dates = {e.get("as_of_date") for e in entries.values()}
+    if len(as_of_dates) != 1 or None in as_of_dates:
+        return []  # 基準日不一致は恒等式の前提が崩れるため検査しない
+
+    try:
+        dgs10 = float(entries["DGS10"]["value"])
+        dfii10 = float(entries["DFII10"]["value"])
+        t10yie = float(entries["T10YIE"]["value"])
+    except (TypeError, ValueError):
+        return ["FRED 恒等式チェック: 値の数値変換に失敗"]
+
+    diff = abs(dgs10 - (dfii10 + t10yie))
+    if diff > FRED_IDENTITY_TOLERANCE:
+        return [
+            f"FRED 恒等式違反: DGS10 {dgs10:.3f} ≠ DFII10 {dfii10:.3f} + "
+            f"T10YIE {t10yie:.3f}（差 {diff:.3f} > 許容 {FRED_IDENTITY_TOLERANCE}）"
+        ]
+    return []
+
+
 def validate_all(scraped_data: dict) -> Dict[str, List[str]]:
     """全データを一括バリデーションし、結果をログ出力する。
 
@@ -215,8 +256,10 @@ def validate_all(scraped_data: dict) -> Dict[str, List[str]]:
 
     # price_data は既にテキスト化されているため、
     # 元のquote/seriesデータがある場合にバリデーション
-    # (main.py側でquote/seriesを保持する必要あり)
-    for symbol in ["XAUUSD", "USDJPY", "BTCUSD"]:
+    # (main.py が _raw_quote_* / _raw_series_* キーで保持する)
+    from config import TWELVEDATA_SYMBOLS  # 銘柄は config.yaml（SSoT）由来
+
+    for symbol in TWELVEDATA_SYMBOLS:
         key = f"_raw_quote_{symbol}"
         series_key = f"_raw_series_{symbol}"
         if key in scraped_data:
@@ -227,6 +270,11 @@ def validate_all(scraped_data: dict) -> Dict[str, List[str]]:
             )
             if issues:
                 results[symbol] = issues
+
+    # FRED 恒等式チェック（DGS10 ≒ DFII10 + T10YIE）
+    fred_issues = validate_fred_identity(scraped_data.get("fred"))
+    if fred_issues:
+        results["FRED"] = fred_issues
 
     # ログ出力
     if results:

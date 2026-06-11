@@ -112,7 +112,7 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "coinglass": {},
         "cot": None,  # ウィークリー時のみ使用
         "dxy": None,
-        "fred": None,  # FRED: DGS10 (US10Y) / DGS2 (US2Y) / DTWEXBGS (Broad USD Index, ≠ DXY)
+        "fred": None,  # FRED: DGS10 / DGS2 / DTWEXBGS / DFII10 (実質金利) / T10YIE (インフレ期待)
         "economic_calendar": None,
         "fedwatch": None,
         "btc_etf": None,
@@ -442,6 +442,9 @@ def format_scraped_data(data: dict) -> str:
 
     _emit_fred_yield("US10Y", "DGS10")
     _emit_fred_yield("US2Y", "DGS2")
+    # XAUUSD マクロドライバー: 実質金利とインフレ期待（DGS10 ≒ DFII10 + T10YIE）
+    _emit_fred_yield("US10Y Real (TIPS)", "DFII10")
+    _emit_fred_yield("10Y Breakeven Inflation", "T10YIE")
 
     # --- Broad USD Index (FRED DTWEXBGS) — USD macro proxy。DXY とは別物として明示 ---
     dtwex = fred.get("DTWEXBGS") if isinstance(fred, dict) else None

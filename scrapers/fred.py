@@ -12,6 +12,10 @@ Fetched series:
   - DGS10:    US 10Y Treasury constant maturity rate
   - DGS2:     US  2Y Treasury constant maturity rate
   - DTWEXBGS: Broad USD Index (Goods & Services), USD macro proxy
+  - DFII10:   US 10Y TIPS yield (real rate) — XAUUSD の主ドライバー
+  - T10YIE:   10Y Breakeven Inflation Rate（DGS10 - DFII10 の派生系列）
+
+Identity: DGS10 ≒ DFII10 + T10YIE（validation.py が恒等式チェックを行う）
 
 Each result conforms to the project metadata schema:
   source / series_id / value / prev_value / change / timestamp /
@@ -50,6 +54,9 @@ SERIES_CONFIG = {
     "DGS10":    {"label": "US 10Y Treasury yield",          "stale_days": 5},
     "DGS2":     {"label": "US  2Y Treasury yield",          "stale_days": 5},
     "DTWEXBGS": {"label": "Broad USD Index (Goods+Services)", "stale_days": 14},
+    # Daily release（営業日）。XAUUSD バイアスの実質金利・インフレ期待ペア。
+    "DFII10":   {"label": "US 10Y TIPS yield (real)",       "stale_days": 5},
+    "T10YIE":   {"label": "10Y Breakeven Inflation",        "stale_days": 5},
     # OECD monthly + ~6-week publication lag; >1 cycle gap = stale.
     "IRLTLT01DEM156N": {"label": "Germany Long-term Government Bond Yield", "stale_days": 75},
     "IRLTLT01JPM156N": {"label": "Japan Long-term Government Bond Yield",   "stale_days": 75},
@@ -66,7 +73,8 @@ SERIES_CONFIG = {
     # Business-daily.
     "VXVCLS": {"label": "CBOE 3-Month Volatility Index", "stale_days": 5},
 }
-SERIES_IDS = ["DGS10", "DGS2", "DTWEXBGS"]
+# main フロー（fetch_fred_data）で取得する系列。他系列は各スクレイパーが個別取得。
+SERIES_IDS = ["DGS10", "DGS2", "DTWEXBGS", "DFII10", "T10YIE"]
 
 HTTP_TIMEOUT = 15
 RETRY_ATTEMPTS = 2
