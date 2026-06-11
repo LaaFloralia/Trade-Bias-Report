@@ -77,6 +77,16 @@ async def scrape_macro_liquidity() -> dict:
             continue
         result["series"][sid] = res
 
+    stale_series = [
+        sid for sid, series_data in result["series"].items()
+        if isinstance(series_data, dict) and series_data.get("stale")
+    ]
+    if stale_series:
+        result["stale"] = True
+        result["note"] = "stale series: " + ", ".join(stale_series)
+    else:
+        result["stale"] = False
+
     # Net Liquidity 計算
     walcl = result["series"].get("WALCL", {})
     rrp = result["series"].get("RRPONTSYD", {})

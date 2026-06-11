@@ -13,7 +13,7 @@
   FRED: IRLTLT01GBM156N (UK Long-term Government Bond Yield) — monthly
   FRED: IRLTLT01CAM156N (Canada Long-term Government Bond Yield) — monthly
 
-注意: 海外利回りは FRED OECD 系列で月次のため、stale 上限を 35 日まで許容。
+注意: 海外利回りは FRED OECD 系列で月次のため、stale 上限を 75 日まで許容。
 最新を優先しつつ、新鮮度をフラグで明示する。
 
 ICT 用途: 中期通貨方向の裏付け。スプレッド拡大 = USD bullish (ドル金利優位)。

@@ -50,8 +50,23 @@ SERIES_CONFIG = {
     "DGS10":    {"label": "US 10Y Treasury yield",          "stale_days": 5},
     "DGS2":     {"label": "US  2Y Treasury yield",          "stale_days": 5},
     "DTWEXBGS": {"label": "Broad USD Index (Goods+Services)", "stale_days": 14},
+    # OECD monthly + ~6-week publication lag; >1 cycle gap = stale.
+    "IRLTLT01DEM156N": {"label": "Germany Long-term Government Bond Yield", "stale_days": 75},
+    "IRLTLT01JPM156N": {"label": "Japan Long-term Government Bond Yield",   "stale_days": 75},
+    "IRLTLT01GBM156N": {"label": "UK Long-term Government Bond Yield",      "stale_days": 75},
+    "IRLTLT01CAM156N": {"label": "Canada Long-term Government Bond Yield",  "stale_days": 75},
+    # Weekly, Wednesday release.
+    "WALCL": {"label": "Fed Total Assets", "stale_days": 10},
+    # Business-daily.
+    "RRPONTSYD": {"label": "Overnight Reverse Repo Operations", "stale_days": 5},
+    # Weekly.
+    "WTREGEN": {"label": "Treasury General Account", "stale_days": 10},
+    # Business-daily.
+    "VIXCLS": {"label": "CBOE Volatility Index: VIX", "stale_days": 5},
+    # Business-daily.
+    "VXVCLS": {"label": "CBOE 3-Month Volatility Index", "stale_days": 5},
 }
-SERIES_IDS = list(SERIES_CONFIG.keys())
+SERIES_IDS = ["DGS10", "DGS2", "DTWEXBGS"]
 
 HTTP_TIMEOUT = 15
 RETRY_ATTEMPTS = 2
