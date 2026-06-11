@@ -15,7 +15,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import INSTRUMENTS, OPEN_ORDER_SYMBOLS, FOMC_DATES_2026
+from config import INSTRUMENTS, OPEN_ORDER_SYMBOLS, FOMC_DATES, FOMC_SCHEDULE_WARN_DAYS
 from scrapers.myfxbook import scrape_myfxbook
 from scrapers.fxssi import scrape_fxssi
 from scrapers.ig_sentiment import scrape_ig_sentiment
@@ -48,13 +48,24 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
             "is_fomc_week": bool,
             "next_fomc_date": str (YYYY-MM-DD),
             "days_until_fomc": int,
+            "schedule_warning": str | None,  # 日程テーブル枯渇 90 日前からの警告
         }
     """
     if today is None:
         today = datetime.now()
     today_date = today.date()
 
-    fomc_dates = sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in FOMC_DATES_2026)
+    fomc_dates = sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in FOMC_DATES)
+
+    # 日程テーブル枯渇の事前警告（最終登録日の FOMC_SCHEDULE_WARN_DAYS 日前から）
+    schedule_warning = None
+    last_fomc = fomc_dates[-1]
+    days_to_exhaustion = (last_fomc - today_date).days
+    if days_to_exhaustion <= FOMC_SCHEDULE_WARN_DAYS:
+        schedule_warning = (
+            f"FOMC 日程テーブルが残り {max(days_to_exhaustion, 0)} 日で枯渇します"
+            f"（最終登録日 {last_fomc}）。次年度日程を config.py に追加してください。"
+        )
 
     # 次回FOMC日を特定
     next_fomc = None
@@ -66,8 +77,9 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
     if next_fomc is None:
         return {
             "is_fomc_week": False,
-            "next_fomc_date": "未定（2026年日程終了）",
+            "next_fomc_date": f"未定（{last_fomc.year}年日程終了）",
             "days_until_fomc": -1,
+            "schedule_warning": schedule_warning,
         }
 
     days_until = (next_fomc - today_date).days
@@ -82,6 +94,7 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
         "is_fomc_week": is_fomc_week,
         "next_fomc_date": next_fomc.strftime("%Y-%m-%d"),
         "days_until_fomc": days_until,
+        "schedule_warning": schedule_warning,
     }
 
 
@@ -232,6 +245,8 @@ async def collect_all_data(weekly: bool = False) -> dict:
     # FOMC週判定（FedWatchスクレイピングの要否を決定）
     fomc_meta = _get_fomc_metadata()
     is_fomc_week = fomc_meta["is_fomc_week"]
+    if fomc_meta.get("schedule_warning"):
+        print(f"  [WARN]  {fomc_meta['schedule_warning']}")
     print(f"  FOMC判定: is_fomc_week={is_fomc_week}, next={fomc_meta['next_fomc_date']}, "
           f"days_until={fomc_meta['days_until_fomc']}")
 

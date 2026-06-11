@@ -102,7 +102,9 @@ VIX_YAHOO_URLS = {
 # BTC 現物 ETF ティッカー（btc_etf.py）
 BTC_ETF_TICKERS = list(_CFG["btc_etf_tickers"])
 
-# 2026年 FOMC 日程（開催日）
+# FOMC 日程（各会合の初日）
+# 一次情報: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+# 2026-12 は旧値 12-15 が公式日程 (Dec 8-9) と不一致だったため修正済み (2026-06-11)。
 FOMC_DATES_2026 = [
     "2026-01-27",
     "2026-03-17",
@@ -111,8 +113,23 @@ FOMC_DATES_2026 = [
     "2026-07-28",
     "2026-09-15",
     "2026-10-27",
-    "2026-12-15",
+    "2026-12-08",
 ]
+FOMC_DATES_2027 = [
+    "2027-01-26",
+    "2027-03-16",
+    "2027-04-27",
+    "2027-06-08",
+    "2027-07-27",
+    "2027-09-14",
+    "2027-10-26",
+    "2027-12-07",
+]
+# 全年程の結合リスト（main.py はこれを参照する）
+FOMC_DATES = FOMC_DATES_2026 + FOMC_DATES_2027
+
+# FOMC 日程テーブル枯渇の事前警告: 最終登録日まで残りこの日数を切ったら警告
+FOMC_SCHEDULE_WARN_DAYS = 90
 
 # Playwright 設定
 BROWSER_TIMEOUT = 30000  # ms
