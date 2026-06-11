@@ -459,6 +459,8 @@ def format_scraped_data(data: dict) -> str:
             line = f"- {symbol} ({source}): Long {long_pct}% / Short {short_pct}%"
             if d.get("avg_long_entry"):
                 line += f", 平均ロング {d['avg_long_entry']:,.4g}"
+            if d.get("avg_short_entry"):
+                line += f", 平均ショート {d['avg_short_entry']:,.4g}"
             lines.append(line)
             if fallback:
                 lines.append(f"  ※ MyFXBook取得不可のため{source}にフォールバック")
@@ -539,9 +541,15 @@ def format_scraped_data(data: dict) -> str:
             lines.append(f"ソース: {btc_etf.get('source', '不明')}")
             for day in btc_etf["daily_flows"]:
                 flows = day.get("flows", {})
-                flow_parts = [f"{etf}: {v:+.1f}M" for etf, v in flows.items() if v is not None]
+                # None は「未発表」と明示（ソース側で当該日の数値がまだ公開されていない）
+                flow_parts = []
+                for etf, v in flows.items():
+                    if v is not None:
+                        flow_parts.append(f"{etf}: {v:+.1f}M")
+                    else:
+                        flow_parts.append(f"{etf}: 未発表")
                 total = day.get("total")
-                total_str = f"合計: {total:+.1f}M" if total is not None else "合計: N/A"
+                total_str = f"合計: {total:+.1f}M" if total is not None else "合計: 未発表"
                 lines.append(f"- {day.get('date', 'N/A')}: {', '.join(flow_parts) + ', ' if flow_parts else ''}{total_str}")
         elif btc_etf.get("error"):
             lines.append(f"取得不可（{btc_etf['error']}）")
