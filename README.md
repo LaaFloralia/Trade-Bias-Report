@@ -19,8 +19,8 @@ Claude API にマスタープロンプトとデータを渡してレポートを
 
 ## 1. 前提条件
 
-- Python 3.11+
-- Anthropic API キー（https://console.anthropic.com/）
+- Python 3.9+
+- Claude Code CLI（サブスクログイン済み。LLM 分析はスラッシュコマンドまたは `claude -p` 経由、Anthropic API キーは不要）
 - Node.js 18+（Playwright 用）
 - Twelve Data API キー（価格取得用）
 - **FRED API キー**（Treasury yields + Broad USD Index、無料、https://fred.stlouisfed.org/）— **macOS Keychain 推奨**（service: `FRED_API_KEY`、account: `$USER`、`-A` silent access）
@@ -43,9 +43,10 @@ playwright install chromium
 ```bash
 cp .env.example .env
 # .env を編集して以下を設定:
-# - ANTHROPIC_API_KEY
 # - TWELVEDATA_API_KEY
 # - OBSIDIAN_VAULT_PATH（Brain へのローカルパス）
+# ※ ANTHROPIC_API_KEY は不要（LLM 分析は Claude Code サブスク経由。
+#    凍結中の scripts/archive/generate_xauusd_brief.py のみ要求するが未使用）
 
 # FRED API key は macOS Keychain (-A silent access) 推奨:
 # 1. https://fred.stlouisfed.org/ で API key を取得（無料）
@@ -62,8 +63,12 @@ cp .env.example .env
 ### 2-3. 実行
 
 ```bash
-python main.py                # Daily Bias
-python main.py --weekly       # Weekly Bias（実装に応じて）
+python main.py                # データ取得のみ（Daily 構成）
+python main.py --weekly       # データ取得のみ（Weekly 構成、COT 込み）
+
+# 分析込みの一気通貫（ヘッドレス、§ 8 参照）:
+python scripts/intel.py brief --daily    # 取得 → claude -p 分析 → MD + JSON 二重出力
+python scripts/intel.py brief --weekly
 ```
 
 ---
@@ -73,41 +78,50 @@ python main.py --weekly       # Weekly Bias（実装に応じて）
 ```
 fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート外分析」
 ├── README.md                 # このファイル
-├── MODERNIZATION_RESEARCH.md # 2026-05-09 調査: Anthropic 公式 financial-services プラグイン / FMP MCP による置換計画
-├── requirements.txt          # Python 依存パッケージ
+├── MODERNIZATION_RESEARCH.md # 2026-05-09 調査: FMP MCP 等の置換計画（FRED のみ採用）
+├── AUDIT.md                  # 2026-06-11 現状監査（フロー図 / 負債リスト / UNKNOWN）
+├── requirements.txt          # Python 依存（playwright / dotenv / requests / markdown / pyyaml）
 ├── .env.example              # 環境変数テンプレート
-├── main.py                   # メインオーケストレーター
-├── config.py                 # 設定読み込み
-├── master_prompt.md          # ICT Daily Bias マスタープロンプト（速報用）
-├── master_prompt_weekly.md   # ICT Weekly Bias マスタープロンプト（速報用）
-├── master_prompt_deep.md     # ICT Deep Bias マスタープロンプト（強化版、S0〜S14 / 信頼度 11 項目）
+├── config.yaml               # ★ 銘柄定義 SSoT（銘柄・シンボル・URL・ウェイトを一元管理）
+├── config.py                 # config.yaml ローダー + 派生テーブル + FOMC 日程（2026/2027）
+├── main.py                   # スクレイピングオーケストレーター（データ取得のみ）
+├── master_prompt.md          # 速報 Daily 用プロンプト
+├── master_prompt_weekly.md   # 速報 Weekly 用（COT 含む）
+├── master_prompt_deep.md     # Deep Daily 用（S0〜S14、信頼度 11 項目）
+├── master_prompt_deep_weekly.md # Deep Weekly 用（W0〜W15、先週レビュー込み）
 ├── .claude/
 │   └── commands/
-│       ├── daily-bias.md     # Routine から参照されるスラッシュコマンド（速報用、Mac/Routines 両対応）
-│       ├── weekly-bias.md    # 週次速報用（Mac/Routines 両対応）
-│       └── deep-bias.md      # Deep Bias 強化版（ローカル専用、Deep Research + 自己検証 + 3 形式出力）
+│       ├── daily-bias.md     # 速報 Daily（Mac/Routines 両対応）
+│       ├── weekly-bias.md    # 速報 Weekly（Mac/Routines 両対応）
+│       ├── deep-bias.md      # Deep Daily（ローカル専用、PDF はオプション）
+│       └── deep-bias-weekly.md # Deep Weekly（ローカル専用、PDF はオプション）
 ├── scripts/
-│   └── render_report.py      # MD → PDF レンダラ（markdown + Playwright、HTML は中間生成→削除）
-├── templates/
-│   ├── report.html           # PDF 用 A4 テンプレ（表紙 + 本文 + フッタ）
-│   └── style.css             # 印刷用 CSS（システムフォント、テーブル、バッジ、@page）
+│   ├── intel.py              # ★ ヘッドレス分析パイプライン（§ 8。二重出力 + JSONL ログ）
+│   ├── render_report.py      # MD → PDF レンダラ（HTML は中間生成→削除）
+│   └── archive/
+│       └── generate_xauusd_brief.py # 凍結（API 直叩き方式。後続フェーズで再実装予定）
+├── templates/                # PDF 用 A4 テンプレ + 印刷 CSS
+├── docs/                     # 設計入力（FRED 系列候補 / OSS MCP 机上検証）
 ├── scrapers/
-│   ├── __init__.py
-│   ├── myfxbook.py           # MyFXBook センチメント取得
-│   ├── fxssi.py              # FXSSI Current Ratio 取得
-│   ├── ig_sentiment.py       # IG Client Sentiment 取得
-│   ├── coinglass.py          # CoinGlass L/S Ratio + Funding Rate
-│   ├── economic_calendar.py  # 経済指標カレンダー（Investing.com）
-│   ├── dxy.py                # DXY スクレイピング（Investing.com / MarketWatch / Stooq）
-│   ├── twelvedata.py         # Twelve Data API（XAUUSD/USDJPY/BTCUSD OHLCV）
-│   ├── cot.py                # CFTC COT 公式 API
-│   ├── btc_etf.py            # BTC ETF フロー
-│   ├── fedwatch.py           # CME FedWatch（FOMC週のみ）
-│   ├── fred.py               # FRED: DGS10 (US10Y) / DGS2 (US2Y) / DTWEXBGS (Broad USD Index, ≠ DXY)
-│   ├── binance_btc_sentiment.py  # Binance Futures BTC Long/Short（MyFXBook 非対応の代替、2026-05-16 追加）
-│   └── validation.py         # データバリデーション
-└── output/                   # ローカル出力（Brain にも commit）
+│   ├── twelvedata.py         # Twelve Data API（価格 + PDH/PDL + IPDA 20/40/60）
+│   ├── dxy.py                # DXY（Investing.com → MarketWatch → EUR/USD 逆数推定）
+│   ├── fred.py               # FRED 5 系列: DGS10/DGS2/DTWEXBGS/DFII10/T10YIE + 系列別 stale 判定
+│   ├── myfxbook.py           # リテールセンチメント第 1 ソース
+│   ├── fxssi.py / ig_sentiment.py # センチメントフォールバック 1 / 2
+│   ├── coinglass.py / binance_btc_sentiment.py / crypto_funding.py # BTC センチメント・Funding 系
+│   ├── cot.py                # CFTC COT（Legacy Futures Only、--weekly 時のみ）
+│   ├── economic_calendar.py / fedwatch.py / btc_etf.py # カレンダー / FedWatch / ETF フロー
+│   ├── dxy_components.py / vix_structure.py / premarket.py # Deep 強化系
+│   ├── macro_liquidity.py / rate_spreads.py / myfxbook_open_orders.py # Deep 強化系
+│   ├── metadata_schema.py    # 共通メタデータ補完（非破壊・冪等）
+│   └── validation.py         # 価格バリデーション + FRED 恒等式チェック（DGS10 ≒ DFII10 + T10YIE）
+├── tests/                    # mock ベースのテスト群（実 API 疎通なし）
+├── logs/                     # intel.py 実行ログ（JSONL、gitignore 対象）
+└── output/                   # スクレイプ生データ + intel/（機械用 JSON）。gitignore 対象
 ```
+
+銘柄の追加・変更は `config.yaml` の編集だけで全スクレイパーに反映される
+（直書きの復活は `tests/test_config_ssot.py` が検出する）。
 
 ---
 
@@ -345,3 +359,51 @@ Routines 共通のトラブルは `~/HQ/infrastructure/runtime-setup.md` § 17 �
 
 - `LaaQuantumFund/Trade-Bias-Report` — 本リポジトリ（スクレイパー + プロンプト）
 - `LaaQuantumFund/Brain` — レポート出力先（master 直接 push）
+
+---
+
+## 8. ヘッドレスパイプライン（scripts/intel.py）
+
+スラッシュコマンド（対話セッション）を介さずに、データ取得 → LLM 分析 → 保存を
+一気通貫で実行する経路。cron / launchd / 外部システム（trading-bot 等）からの
+呼び出しを想定する。LLM 分析は `claude -p`（Claude Code CLI ヘッドレスモード）で
+実行し、Anthropic API 直叩きは行わない（サブスク運用方針）。
+
+### 8-1. 実行
+
+```bash
+python scripts/intel.py brief --daily            # 日次（master_prompt.md 使用）
+python scripts/intel.py brief --weekly           # 週次（master_prompt_weekly.md、COT 込み）
+python scripts/intel.py brief --daily --reuse-data  # 当日データがあれば再取得を省略
+```
+
+前提: `claude` CLI がログイン済み（サブスク認証）であること。API キーは不要。
+
+### 8-2. 二重出力
+
+| 出力 | パス | 用途 |
+|---|---|---|
+| 人間用 Markdown | `$BRAIN_PATH/Calendar/{Daily-Bias\|Weekly-Bias}/{Daily\|Weekly}_Bias_Report_YYYY-MM-DD.md` | 既存スラッシュコマンドと同じ保存先・形式 |
+| 機械用 JSON | `output/intel/intel_{daily\|weekly}_YYYY-MM-DD.json` | trading-bot / EA 等の機械判断入力 |
+
+機械用 JSON スキーマ:
+
+```json
+{
+  "bias": -1.0,                       // XAUUSD 日次バイアス（-1.0 強Bearish 〜 +1.0 強Bullish）
+  "no_trade": false,                  // 様子見 / プラン非提示 / 信頼度不足なら true
+  "no_trade_reason": null,            // no_trade=true の理由（false なら null）
+  "risk_events_next_24h": ["21:30 JST 米 CPI"],  // 24h 以内の高重要度イベント
+  "positioning_summary": "...",       // リテール / 機関ポジショニング要約
+  "confidence": 0.7                   // レポート信頼度の 0.0〜1.0 正規化
+}
+```
+
+JSON のパース / スキーマ検証に失敗した場合は**リトライ 1 回**（違反内容をフィードバック）、
+それでも失敗したら **`no_trade: true` の安全側 JSON にフォールバック**して exit 0 で完了する
+（トレードを止める方向にしか倒れない設計）。
+
+### 8-3. 実行ログ
+
+全実行の入出力（プロンプト全文・応答全文・所要時間・出力パス・フォールバック有無）を
+`logs/intel_runs.jsonl` に 1 行 1 実行で追記する。gitignore 対象。
