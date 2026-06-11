@@ -21,7 +21,7 @@ from scrapers.fxssi import scrape_fxssi
 from scrapers.ig_sentiment import scrape_ig_sentiment
 from scrapers.coinglass import scrape_coinglass
 from scrapers.cot import fetch_cot_data
-from scrapers.twelvedata import fetch_price_data
+from scrapers.twelvedata import fetch_price_data_with_raw
 from scrapers.dxy import scrape_dxy
 from scrapers.economic_calendar import scrape_economic_calendar
 from scrapers.fedwatch import scrape_fedwatch
@@ -117,8 +117,12 @@ async def collect_all_data(weekly: bool = False) -> dict:
     # --- Twelve Data: 価格データ取得 ---
     print("  Twelve Data: 価格データ取得中...")
     try:
-        price_text = fetch_price_data()
+        price_text, raw_quotes, raw_series = fetch_price_data_with_raw()
         results["price_data"] = price_text
+        for sym, quote in raw_quotes.items():
+            if quote:
+                results[f"_raw_quote_{sym}"] = quote
+                results[f"_raw_series_{sym}"] = raw_series.get(sym, [])
         print("  [OK]    Twelve Data: 価格データ取得完了")
     except Exception as e:
         results["price_data"] = f"Twelve Data 取得不可（{e}）"
@@ -234,7 +238,7 @@ async def collect_all_data(weekly: bool = False) -> dict:
     # Twelve Data /quote 競合回避のため 2 段階で取得する。
     # Phase A (Twelve Data 非依存): 全部並列で OK
     # Phase B (Twelve Data /quote 依存): 直列で 7 秒間隔
-    #   理由: TD 無料枠 8 calls/min。fetch_price_data() で既に /quote+/time_series=2 calls 消費、
+    #   理由: TD 無料枠 8 calls/min。fetch_price_data_with_raw() で既に /quote+/time_series=2 calls 消費、
     #         dxy_components / premarket でさらに 2 calls 必要。並列だと burst で 429 を踏む。
     # FedWatch は is_fomc_week 分岐を撤廃し常時取得 (Deep Bias 強化要件)
     phase_a_tasks = [
@@ -790,6 +794,9 @@ def save_scraped(scraped_data: dict, formatted_text: str) -> tuple[Path, Path]:
 
     json_path = output_dir / f"scraped_data_{today}.json"
     clean_data = json.loads(json.dumps(scraped_data, default=str))
+    for key in list(clean_data.keys()):
+        if key.startswith("_raw_quote_") or key.startswith("_raw_series_"):
+            clean_data.pop(key, None)
     for source in clean_data.values():
         if isinstance(source, dict):
             for symbol_data in source.values():

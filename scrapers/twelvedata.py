@@ -167,8 +167,8 @@ def _format_instrument(instrument: str, q: dict, series: List[dict]) -> List[str
     return lines
 
 
-def fetch_price_data() -> str:
-    """全銘柄の価格データを取得してテキスト形式で返す。"""
+def fetch_price_data_with_raw() -> Tuple[str, dict, dict]:
+    """全銘柄の価格データを取得し、テキストと検証用 raw データを返す。"""
     lines = ["=== Price Data (Twelve Data API) ===", ""]
 
     main_symbols = list(SYMBOL_MAP.values())  # ["XAU/USD", "USD/JPY", "BTC/USD"]
@@ -185,9 +185,13 @@ def fetch_price_data() -> str:
     )
     series_map = _parse_series_batch(series_raw, main_symbols)
 
+    quotes_by_instrument = {}
+    series_by_instrument = {}
     for instrument, td_symbol in SYMBOL_MAP.items():
         q = quotes.get(td_symbol, {})
         series = series_map.get(td_symbol, [])
+        quotes_by_instrument[instrument] = q
+        series_by_instrument[instrument] = series
         lines.extend(_format_instrument(instrument, q, series))
 
     # --- DXY: Twelve Data 非対応のため固定テキスト ---
@@ -195,7 +199,12 @@ def fetch_price_data() -> str:
     lines.append("DXY: Twelve Data非対応。EUR/USDの逆数またはチャートで確認してください")
     lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines), quotes_by_instrument, series_by_instrument
+
+
+def fetch_price_data() -> str:
+    """全銘柄の価格データを取得してテキスト形式で返す。"""
+    return fetch_price_data_with_raw()[0]
 
 
 if __name__ == "__main__":
