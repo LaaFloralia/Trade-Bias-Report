@@ -28,6 +28,7 @@ from scrapers.fedwatch import scrape_fedwatch
 from scrapers.btc_etf import scrape_btc_etf
 from scrapers.fred import fetch_fred_data
 from scrapers.validation import validate_all, apply_validation
+from scrapers.metadata_schema import normalize_scraper_results
 # Deep Bias 強化用スクレイパー (Daily / Weekly 速報用ラインには影響しない)
 from scrapers.dxy_components import scrape_dxy_components
 from scrapers.vix_structure import scrape_vix_structure
@@ -305,6 +306,10 @@ async def collect_all_data(weekly: bool = False) -> dict:
                     f"bids={res.get('bid_count', 0)} asks={res.get('ask_count', 0)} "
                     f"BSL clusters={bsl_n} SSL clusters={ssl_n} (current_price={cp})"
                 )
+
+    # 共通メタデータスキーマ補完（source/symbol/timestamp/as_of_date/
+    # stale/fallback_used/error/note）。既存キーは上書きしない。
+    normalize_scraper_results(results)
 
     return results
 
