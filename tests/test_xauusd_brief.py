@@ -17,7 +17,7 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.generate_xauusd_brief import (  # noqa: E402
+from scripts.archive.generate_xauusd_brief import (  # noqa: E402
     _count_body_chars,
     _extract_acquired_time,
     _resolve_report_date,
