@@ -240,7 +240,7 @@ scraped_data の `Deep: マクロ流動性` と `Deep: 国債利回りスプレ�
 
 ## セクション W7: COT (Commitment of Traders) — 最新公開週
 
-CFTC Disaggregated Report（毎週金曜公開、火曜時点データ）の最新を使用。
+CFTC Legacy Futures Only Report（毎週金曜公開、火曜時点データ、cot.py の実データと同一種別）の最新を使用。
 
 **公開日:** YYYY-MM-DD（火曜時点データ、金曜公開）
 

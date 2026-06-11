@@ -280,7 +280,7 @@ WebSearch で取得した Fed / ECB / BOJ 高官発言を 1〜2 行ずつ要約�
 
 ## セクション S6: COT (Commitment of Traders) — 最新公開週
 
-CFTC Disaggregated Report（毎週金曜公開、火曜時点データ）の最新を使用。
+CFTC Legacy Futures Only Report（毎週金曜公開、火曜時点データ、cot.py の実データと同一種別）の最新を使用。
 
 **公開日:** YYYY-MM-DD（火曜時点データ、金曜公開）
 
