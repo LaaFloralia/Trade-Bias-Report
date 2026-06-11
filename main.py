@@ -375,12 +375,16 @@ def format_scraped_data(data: dict) -> str:
                 lines.append(f"{label}: 取得不可")
 
         # IPDA レベル
-        for days, h_key, l_key in [(20, "ipda_20_high", "ipda_20_low"), (40, "ipda_40_high", "ipda_40_low")]:
+        for days, h_key, l_key in [
+            (20, "ipda_20_high", "ipda_20_low"),
+            (40, "ipda_40_high", "ipda_40_low"),
+            (60, "ipda_60_high", "ipda_60_low"),
+        ]:
             h, l = dxy.get(h_key), dxy.get(l_key)
             if h is not None and l is not None:
                 lines.append(f"IPDA {days}日: High {h:,.3f} / Low {l:,.3f}")
             else:
-                lines.append(f"IPDA {days}日: 取得不可")
+                lines.append(f"IPDA {days}日: 未取得")
 
         lines.append(f"ソース: {dxy.get('source', '不明')}")
         lines.append("")

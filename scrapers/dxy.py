@@ -56,6 +56,7 @@ def _calculate_levels(daily_ohlc: List[Dict]) -> Dict[str, Optional[float]]:
         "pmh": None, "pml": None,
         "ipda_20_high": None, "ipda_20_low": None,
         "ipda_40_high": None, "ipda_40_low": None,
+        "ipda_60_high": None, "ipda_60_low": None,
     }  # type: Dict[str, Optional[float]]
 
     if len(daily_ohlc) < 2:
@@ -108,6 +109,12 @@ def _calculate_levels(daily_ohlc: List[Dict]) -> Dict[str, Optional[float]]:
     if ipda_40:
         levels["ipda_40_high"] = max(d["high"] for d in ipda_40)
         levels["ipda_40_low"] = min(d["low"] for d in ipda_40)
+
+    # IPDA 60日: 直近60営業日のmax(high)/min(low)
+    ipda_60 = past_days[:60]
+    if ipda_60:
+        levels["ipda_60_high"] = max(d["high"] for d in ipda_60)
+        levels["ipda_60_low"] = min(d["low"] for d in ipda_60)
 
     return levels
 
@@ -332,6 +339,8 @@ async def _scrape_investing() -> Optional[dict]:
                 "ipda_20_low": None,
                 "ipda_40_high": None,
                 "ipda_40_low": None,
+                "ipda_60_high": None,
+                "ipda_60_low": None,
                 "estimated": False,
             }  # type: dict
 
@@ -409,6 +418,8 @@ async def _scrape_marketwatch() -> Optional[dict]:
                 "ipda_20_low": None,
                 "ipda_40_high": None,
                 "ipda_40_low": None,
+                "ipda_60_high": None,
+                "ipda_60_low": None,
                 "estimated": False,
             }  # type: dict
 
@@ -491,6 +502,8 @@ def _estimate_from_eurusd() -> Optional[dict]:
             "ipda_20_low": None,
             "ipda_40_high": None,
             "ipda_40_low": None,
+            "ipda_60_high": None,
+            "ipda_60_low": None,
             "estimated": True,
             "note": "EUR/USD逆数から推定",
         }  # type: dict
@@ -570,7 +583,8 @@ async def scrape_dxy() -> dict:
         if htf_levels:
             notes = []
             for key in ["pdh", "pdl", "pwh", "pwl", "pmh", "pml",
-                        "ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low"]:
+                        "ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low",
+                        "ipda_60_high", "ipda_60_low"]:
                 if data.get(key) is None and htf_levels.get(key) is not None:
                     data[key] = htf_levels[key]
                     if key.startswith("ipda"):
@@ -579,7 +593,8 @@ async def scrape_dxy() -> dict:
             if notes:
                 data["note"] = f"{'/'.join(notes)}はヒストリカルデータから算出"
             # IPDA は常にヒストリカルから設定
-            for ipda_key in ["ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low"]:
+            for ipda_key in ["ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low",
+                              "ipda_60_high", "ipda_60_low"]:
                 if htf_levels.get(ipda_key) is not None:
                     data[ipda_key] = htf_levels[ipda_key]
 
@@ -595,7 +610,8 @@ async def scrape_dxy() -> dict:
         if htf_levels:
             notes = []
             for key in ["pdh", "pdl", "pwh", "pwl", "pmh", "pml",
-                        "ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low"]:
+                        "ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low",
+                        "ipda_60_high", "ipda_60_low"]:
                 if data.get(key) is None and htf_levels.get(key) is not None:
                     data[key] = htf_levels[key]
                     if key.startswith("ipda"):
@@ -603,7 +619,8 @@ async def scrape_dxy() -> dict:
                     notes.append(key.upper())
             if notes:
                 data["note"] = f"{'/'.join(notes)}はヒストリカルデータから算出"
-            for ipda_key in ["ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low"]:
+            for ipda_key in ["ipda_20_high", "ipda_20_low", "ipda_40_high", "ipda_40_low",
+                              "ipda_60_high", "ipda_60_low"]:
                 if htf_levels.get(ipda_key) is not None:
                     data[ipda_key] = htf_levels[ipda_key]
         return data
@@ -627,6 +644,7 @@ async def scrape_dxy() -> dict:
         "pmh": None, "pml": None,
         "ipda_20_high": None, "ipda_20_low": None,
         "ipda_40_high": None, "ipda_40_low": None,
+        "ipda_60_high": None, "ipda_60_low": None,
         "estimated": False,
         "note": None,
         "error": "全ソースからの取得に失敗",
