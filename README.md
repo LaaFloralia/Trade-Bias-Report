@@ -32,11 +32,13 @@ Claude API にマスタープロンプトとデータを渡してレポートを
 ### 2-1. 依存パッケージ
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
+uv sync                          # 依存解決（Python 3.12、pyproject.toml が SSoT）
+uv run playwright install chromium
 ```
+
+uv が `.venv/` を `$PROJECT_DIR/.venv/bin/python3` に作るため、
+`.claude/commands/*.md` の `PYTHON_BIN` デフォルトはそのまま動く。
+旧 venv（Python 3.9）の最終状態は `docs/old_venv_freeze.txt` に凍結済み。
 
 ### 2-2. 環境変数
 
@@ -63,12 +65,12 @@ cp .env.example .env
 ### 2-3. 実行
 
 ```bash
-python main.py                # データ取得のみ（Daily 構成）
-python main.py --weekly       # データ取得のみ（Weekly 構成、COT 込み）
+uv run python main.py                # データ取得のみ（Daily 構成）
+uv run python main.py --weekly       # データ取得のみ（Weekly 構成、COT 込み）
 
 # 分析込みの一気通貫（ヘッドレス、§ 8 参照）:
-python scripts/intel.py brief --daily    # 取得 → claude -p 分析 → MD + JSON 二重出力
-python scripts/intel.py brief --weekly
+uv run python scripts/intel.py brief --daily    # 取得 → claude -p 分析 → MD + JSON 二重出力
+uv run python scripts/intel.py brief --weekly
 ```
 
 ---
@@ -80,7 +82,7 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 ├── README.md                 # このファイル
 ├── MODERNIZATION_RESEARCH.md # 2026-05-09 調査: FMP MCP 等の置換計画（FRED のみ採用）
 ├── AUDIT.md                  # 2026-06-11 現状監査（フロー図 / 負債リスト / UNKNOWN）
-├── requirements.txt          # Python 依存（playwright / dotenv / requests / markdown / pyyaml）
+├── pyproject.toml            # Python 依存 SSoT（uv 管理、playwright / dotenv / requests / markdown / pyyaml）
 ├── .env.example              # 環境変数テンプレート
 ├── config.yaml               # ★ 銘柄定義 SSoT（銘柄・シンボル・URL・ウェイトを一元管理）
 ├── config.py                 # config.yaml ローダー + 派生テーブル + FOMC 日程（2026/2027）
@@ -372,9 +374,10 @@ Routines 共通のトラブルは `~/HQ/infrastructure/runtime-setup.md` § 17 �
 ### 8-1. 実行
 
 ```bash
-python scripts/intel.py brief --daily            # 日次（master_prompt.md 使用）
-python scripts/intel.py brief --weekly           # 週次（master_prompt_weekly.md、COT 込み）
-python scripts/intel.py brief --daily --reuse-data  # 当日データがあれば再取得を省略
+uv run python scripts/intel.py brief --daily            # 日次（master_prompt.md 使用）
+uv run python scripts/intel.py brief --weekly           # 週次（master_prompt_weekly.md、COT 込み）
+uv run python scripts/intel.py brief --daily --reuse-data  # 当日データがあれば再取得を省略
+uv run python scripts/intel.py brief --daily --quick    # 新規取得をスキップし直近データで分析のみ再実行
 ```
 
 前提: `claude` CLI がログイン済み（サブスク認証）であること。API キーは不要。

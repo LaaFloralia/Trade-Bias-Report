@@ -1,0 +1,17 @@
+[project]
+name = "fundamental-macro-analysis"
+version = "1.0.0"
+description = "チャート外分析 — ICT Daily/Weekly Bias Report 生成 + ヘッドレス intel パイプライン"
+requires-python = ">=3.12"
+dependencies = [
+    "playwright>=1.48.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "markdown>=3.5",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+]
