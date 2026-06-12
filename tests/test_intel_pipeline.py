@@ -112,6 +112,48 @@ def test_generate_machine_json_double_failure_falls_back_safe():
 
 
 # ---------------------------------------------------------------------------
+# --quick: 直近 scraped_data の再利用（新規取得スキップ）
+# ---------------------------------------------------------------------------
+
+def test_find_latest_scraped_picks_newest_by_date(tmp_path, monkeypatch):
+    monkeypatch.setattr(intel, "OUTPUT_DIR", tmp_path)
+    assert intel.find_latest_scraped() is None
+
+    for d in ("2026-06-01", "2026-06-10", "2026-05-30"):
+        (tmp_path / f"scraped_data_{d}.txt").write_text("data", encoding="utf-8")
+    (tmp_path / "other_file.txt").write_text("noise", encoding="utf-8")
+
+    latest = intel.find_latest_scraped()
+    assert latest is not None
+    assert latest.name == "scraped_data_2026-06-10.txt"
+
+
+def test_collect_data_quick_uses_latest_without_scraping(tmp_path, monkeypatch):
+    monkeypatch.setattr(intel, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "scraped_data_2026-06-09.txt").write_text("old", encoding="utf-8")
+    (tmp_path / "scraped_data_2026-06-11.txt").write_text("new", encoding="utf-8")
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("--quick なのに main.py が起動された")
+
+    monkeypatch.setattr(intel.subprocess, "run", fail_run)
+
+    # 当日ファイルが存在しなくても直近（日付不問）を使う
+    path = intel.collect_data(False, False, "2026-06-12", quick=True)
+    assert path.name == "scraped_data_2026-06-11.txt"
+
+
+def test_collect_data_quick_fails_clearly_when_no_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(intel, "OUTPUT_DIR", tmp_path)
+    try:
+        intel.collect_data(False, False, "2026-06-12", quick=True)
+    except RuntimeError as exc:
+        assert "--quick" in str(exc)
+    else:
+        raise AssertionError("scraped_data が無いのに RuntimeError にならない")
+
+
+# ---------------------------------------------------------------------------
 # プロンプト組み立て / 出力先
 # ---------------------------------------------------------------------------
 

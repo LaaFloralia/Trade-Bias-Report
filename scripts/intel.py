@@ -10,6 +10,9 @@
     python scripts/intel.py brief --weekly           # 週次（COT 込み）
     python scripts/intel.py brief --daily --reuse-data
         # 当日の scraped_data_*.txt が既にあれば再スクレイピングを省略
+    python scripts/intel.py brief --daily --quick
+        # 新規取得を完全にスキップし、直近（日付不問）の scraped_data_*.txt で
+        # 分析のみ再実行する軽量モード。--reuse-data より優先される
 
 出力:
     1. 人間用 MD : $BRAIN_PATH/Calendar/{Daily-Bias|Weekly-Bias}/
@@ -199,8 +202,30 @@ def run_claude(prompt: str, timeout: int = None) -> str:
 # Step 1: データ取得
 # ---------------------------------------------------------------------------
 
-def collect_data(weekly: bool, reuse: bool, date_str: str) -> Path:
-    """main.py を実行して scraped_data_<date>.txt を生成し、そのパスを返す。"""
+def find_latest_scraped() -> Optional[Path]:
+    """output/ にある最新日付の scraped_data_*.txt を返す（なければ None）。
+
+    ファイル名が scraped_data_YYYY-MM-DD.txt 形式のため、名前順 = 日付順。
+    """
+    candidates = sorted(OUTPUT_DIR.glob("scraped_data_*.txt"))
+    return candidates[-1] if candidates else None
+
+
+def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) -> Path:
+    """main.py を実行して scraped_data_<date>.txt を生成し、そのパスを返す。
+
+    quick=True の場合は新規取得を完全にスキップし、直近（日付不問）の
+    scraped_data_*.txt をそのまま使う。1 件もなければ RuntimeError。
+    """
+    if quick:
+        latest = find_latest_scraped()
+        if latest is None:
+            raise RuntimeError(
+                "--quick: output/ に scraped_data_*.txt が 1 件もない（先に通常実行が必要）"
+            )
+        print(f"[intel] --quick: 新規取得をスキップし {latest.name} を使用")
+        return latest
+
     txt_path = OUTPUT_DIR / f"scraped_data_{date_str}.txt"
     if reuse and txt_path.exists():
         print(f"[intel] --reuse-data: 既存の {txt_path.name} を使用")
@@ -395,9 +420,12 @@ def cmd_brief(args) -> int:
     t0 = time.time()
     try:
         # Step 1: データ取得
-        txt_path = collect_data(cfg["weekly_flag"], args.reuse_data, date_str)
+        txt_path = collect_data(
+            cfg["weekly_flag"], args.reuse_data, date_str, quick=args.quick
+        )
         scraped_text = txt_path.read_text(encoding="utf-8")
         run_record["scraped_file"] = str(txt_path)
+        run_record["quick"] = bool(args.quick)
 
         # Step 2: 人間用 MD
         md_text, report_prompt = generate_report_md(mode, scraped_text, run_claude)
@@ -443,6 +471,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     brief.add_argument(
         "--reuse-data", action="store_true",
         help="当日の scraped_data_*.txt が既にあれば再スクレイピングを省略",
+    )
+    brief.add_argument(
+        "--quick", action="store_true",
+        help="新規取得を完全にスキップし、直近（日付不問）の scraped_data_*.txt で"
+             "分析のみ再実行する軽量モード（--reuse-data より優先）",
     )
     brief.set_defaults(func=cmd_brief)
 
