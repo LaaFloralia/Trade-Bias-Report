@@ -800,7 +800,7 @@ def format_scraped_data(data: dict) -> str:
     return result_text
 
 
-def save_scraped(scraped_data: dict, formatted_text: str) -> tuple[Path, Path]:
+def save_scraped(scraped_data: dict, formatted_text: str, weekly: bool = False) -> tuple[Path, Path]:
     """取得データを output/ に保存する。
 
     JSON (生データ) と TXT (formatted) の2種を出力する。
@@ -810,7 +810,11 @@ def save_scraped(scraped_data: dict, formatted_text: str) -> tuple[Path, Path]:
     output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(exist_ok=True)
 
-    json_path = output_dir / f"scraped_data_{today}.json"
+    # Daily は既存の slash command / master_prompt 参照との互換性のため旧名を維持し、
+    # weekly だけを分離する。この非対称は意図的。
+    prefix = "scraped_data_weekly_" if weekly else "scraped_data_"
+
+    json_path = output_dir / f"{prefix}{today}.json"
     clean_data = json.loads(json.dumps(scraped_data, default=str))
     for key in list(clean_data.keys()):
         if key.startswith("_raw_quote_") or key.startswith("_raw_series_"):
@@ -822,7 +826,7 @@ def save_scraped(scraped_data: dict, formatted_text: str) -> tuple[Path, Path]:
                     symbol_data.pop("raw_text", None)
     json_path.write_text(json.dumps(clean_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    txt_path = output_dir / f"scraped_data_{today}.txt"
+    txt_path = output_dir / f"{prefix}{today}.txt"
     txt_path.write_text(formatted_text, encoding="utf-8")
 
     return json_path, txt_path
@@ -842,7 +846,7 @@ async def main():
     print(f"\n[取得データサマリー]")
     print(formatted_data)
 
-    json_path, txt_path = save_scraped(scraped_data, formatted_data)
+    json_path, txt_path = save_scraped(scraped_data, formatted_data, weekly=weekly)
 
     print(f"\n{'=' * 60}")
     print(f"完了!")

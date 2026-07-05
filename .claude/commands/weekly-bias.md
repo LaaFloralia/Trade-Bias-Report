@@ -80,13 +80,13 @@ fi
 cd "$PROJECT_DIR" && "$PYTHON_BIN" main.py --weekly
 ```
 
-実行後、`$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.json` と `.txt` が生成される
+実行後、`$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.json` と `.txt` が生成される
 （週次は COT セクションが含まれる）。
 
 ## Step 2: マスタープロンプトとデータの読み込み
 
 - `$PROJECT_DIR/master_prompt_weekly.md` を Read
-- `$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt` を Read
+- `$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.txt` を Read
 
 ## Step 3: 分析・レポート生成
 

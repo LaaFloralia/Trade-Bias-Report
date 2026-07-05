@@ -109,7 +109,7 @@ exit code が 0 でなければ以降を中止し、stderr の内容をユーザ
 引数に応じて読み込むファイルを切り替える。`Read` ツールで両方を読み込む。
 
 - 引数なし: `$PROJECT_DIR/master_prompt.md` + `$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt`
-- `weekly`: `$PROJECT_DIR/master_prompt_weekly.md` + `$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt`
+- `weekly`: `$PROJECT_DIR/master_prompt_weekly.md` + `$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.txt`
 
 ## Step 3: 分析・レポート生成
 

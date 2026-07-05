@@ -6,7 +6,7 @@
 ローカル（Mac）環境専用、Stream timeout 対策の字数制限は適用しない。
 
 **データ取得に関する原則:**
-- 取得済みデータ（`scraped_data_YYYY-MM-DD.txt`、`--weekly` モード）を最優先で使用する
+- 取得済みデータ（`scraped_data_weekly_YYYY-MM-DD.txt`、`--weekly` モード）を最優先で使用する
 - WebSearch / WebFetch で取得した一次情報は本文内で必ず URL を明示する
 - 取得不可の項目は「取得不可」と明記する
 - 推測値には必ず「（推定）」と注記する

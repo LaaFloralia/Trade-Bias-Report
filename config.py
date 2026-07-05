@@ -138,3 +138,11 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/131.0.0.0 Safari/537.36"
 )
+
+
+def load_x_search_config() -> dict:
+    """Hermes X-Search 統合設定を返す。セクション欠落時は完全無効。"""
+    section = _CFG.get("x_search")
+    if not isinstance(section, dict):
+        return {"enabled": False}
+    return dict(section)

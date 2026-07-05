@@ -159,12 +159,17 @@ def test_collect_data_quick_fails_clearly_when_no_data(tmp_path, monkeypatch):
 
 def test_report_prompt_embeds_master_prompt_and_data():
     md, prompt = intel.generate_report_md(
-        "daily", "=== Price Data ===\nXAUUSD 4000", lambda p: "# ICT Daily Bias Report"
+        "daily",
+        "=== Price Data ===\nXAUUSD 4000",
+        lambda p: "# ICT Daily Bias Report",
+        "2026-06-11",
+        "2026-06-11",
     )
     assert md.startswith("# ICT Daily Bias Report")
     assert "ICT Daily Bias Report" in prompt          # master_prompt.md 本文
     assert "XAUUSD 4000" in prompt                    # scraped データ
     assert "取得済みデータ (最優先で使用すること)" in prompt
+    assert "データ基準日: 2026-06-11（パイプライン実行日: 2026-06-11）" in prompt
     assert "ツール（Read/Bash/WebSearch 等）は一切使わず" in prompt
 
 

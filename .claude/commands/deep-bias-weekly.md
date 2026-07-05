@@ -61,7 +61,7 @@ fi
 cd "$PROJECT_DIR" && "$PYTHON_BIN" main.py --weekly
 ```
 
-実行後、`$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.json` と `.txt` が生成される
+実行後、`$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.json` と `.txt` が生成される
 （`--weekly` で COT データを含む。Deep 強化スクレイパー群（DXY 構成 / VIX 構造 / 流動性 / Funding /
 Open Orders）も同時に取得される）。
 exit code が 0 でなければ以降中止し stderr を社長に報告する。
@@ -71,7 +71,7 @@ exit code が 0 でなければ以降中止し stderr を社長に報告する�
 `Read` ツールで以下を読み込む。
 
 - `$PROJECT_DIR/master_prompt_deep_weekly.md`
-- `$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt`（JST 日付）
+- `$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.txt`（JST 日付）
 
 ## Step 3: Deep Research（必須、WebSearch 8〜12 クエリ）
 
@@ -106,7 +106,7 @@ g. リスクオン / オフ系のセンチメント指標（VIX / Fear & Greed /
 
 ## 取得済みデータ（最優先で使用すること）
 
-{scraped_data_YYYY-MM-DD.txt の全文}
+{scraped_data_weekly_YYYY-MM-DD.txt の全文}
 
 ## 追加リサーチ結果（WebSearch / WebFetch）
 

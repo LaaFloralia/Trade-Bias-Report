@@ -20,7 +20,8 @@
     2. 機械用 JSON: output/intel/intel_{daily|weekly}_YYYY-MM-DD.json
        schema: { bias: -1.0〜+1.0, no_trade: bool, no_trade_reason: str|null,
                  risk_events_next_24h: [str], positioning_summary: str,
-                 confidence: 0.0〜1.0 }
+                 confidence: 0.0〜1.0, data_as_of: YYYY-MM-DD,
+                 generated_at: ISO8601 }
     3. 実行ログ : logs/intel_runs.jsonl（全実行の入出力を JSONL で追記）
 
 JSON パース/スキーマ検証に失敗した場合はリトライ 1 回 → なお失敗なら
@@ -37,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -46,6 +48,11 @@ from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# `python scripts/intel.py` 直接実行時は sys.path にプロジェクトルートが入らず
+# `from scrapers import ...` が ModuleNotFoundError になるため明示的に追加する
+# （pytest 経由では rootdir が入るため検出されない）。
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 OUTPUT_DIR = PROJECT_ROOT / "output"
 INTEL_DIR = OUTPUT_DIR / "intel"
 LOGS_DIR = PROJECT_ROOT / "logs"
@@ -61,6 +68,7 @@ MODES = {
         "brain_subdir": "Calendar/Daily-Bias",
         "md_prefix": "Daily_Bias_Report",
         "weekly_flag": False,
+        "scraped_prefix": "scraped_data_",
         "length_hint": "全体 2000-3500 字を目安",
     },
     "weekly": {
@@ -69,9 +77,17 @@ MODES = {
         "brain_subdir": "Calendar/Weekly-Bias",
         "md_prefix": "Weekly_Bias_Report",
         "weekly_flag": True,
+        "scraped_prefix": "scraped_data_weekly_",
         "length_hint": "全体 3000-5000 字を目安",
     },
 }
+
+SCRAPED_RE = re.compile(r"scraped_data(?:_weekly)?_(\d{4}-\d{2}-\d{2})\.txt$")
+STALE_DATA_BANNER = """> [!warning] STALE DATA
+> 本レポートは **{data_as_of} 時点の取得データ**から再生成された（実行日: {run_date}、--quick/--reuse-data モード）。
+> 価格・イベント情報が古い可能性があるため、執行判断には当日データでの通常実行を使うこと。
+
+"""
 
 # ---------------------------------------------------------------------------
 # 機械用 JSON スキーマ
@@ -154,6 +170,14 @@ def fallback_intel_json(reason: str) -> dict:
     }
 
 
+def attach_pipeline_metadata(obj: dict, data_as_of: str, generated_at: str) -> dict:
+    """LLM 由来ではないパイプライン管理メタデータを付加する。"""
+    enriched = dict(obj)
+    enriched["data_as_of"] = data_as_of
+    enriched["generated_at"] = generated_at
+    return enriched
+
+
 def extract_json_object(text: str) -> Optional[dict]:
     """LLM 応答からコードフェンス・前後の説明文を剥がして JSON object を抽出。"""
     if not text:
@@ -202,31 +226,43 @@ def run_claude(prompt: str, timeout: int = None) -> str:
 # Step 1: データ取得
 # ---------------------------------------------------------------------------
 
-def find_latest_scraped() -> Optional[Path]:
-    """output/ にある最新日付の scraped_data_*.txt を返す（なければ None）。
+def scraped_txt_path(mode: str, date_str: str) -> Path:
+    return OUTPUT_DIR / f"{MODES[mode]['scraped_prefix']}{date_str}.txt"
 
-    ファイル名が scraped_data_YYYY-MM-DD.txt 形式のため、名前順 = 日付順。
+
+def find_latest_scraped(mode: str = "daily") -> Optional[Path]:
+    """output/ にある最新日付のモード別 scraped_data *.txt を返す（なければ None）。
+
+    ファイル名が scraped_data(_weekly)_YYYY-MM-DD.txt 形式のため、名前順 = 日付順。
     """
-    candidates = sorted(OUTPUT_DIR.glob("scraped_data_*.txt"))
+    if mode == "daily":
+        candidates = [
+            p for p in OUTPUT_DIR.glob("scraped_data_*.txt")
+            if not p.name.startswith("scraped_data_weekly_")
+        ]
+    else:
+        candidates = list(OUTPUT_DIR.glob("scraped_data_weekly_*.txt"))
+    candidates = sorted(candidates)
     return candidates[-1] if candidates else None
 
 
 def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) -> Path:
-    """main.py を実行して scraped_data_<date>.txt を生成し、そのパスを返す。
+    """main.py を実行してモード別 scraped_data_<date>.txt を生成し、そのパスを返す。
 
     quick=True の場合は新規取得を完全にスキップし、直近（日付不問）の
-    scraped_data_*.txt をそのまま使う。1 件もなければ RuntimeError。
+    モード一致 scraped_data_*.txt をそのまま使う。1 件もなければ RuntimeError。
     """
+    mode = "weekly" if weekly else "daily"
     if quick:
-        latest = find_latest_scraped()
+        latest = find_latest_scraped(mode)
         if latest is None:
             raise RuntimeError(
-                "--quick: output/ に scraped_data_*.txt が 1 件もない（先に通常実行が必要）"
+                f"--quick: output/ に {mode} 用 scraped_data_*.txt が 1 件もない（先に通常実行が必要）"
             )
         print(f"[intel] --quick: 新規取得をスキップし {latest.name} を使用")
         return latest
 
-    txt_path = OUTPUT_DIR / f"scraped_data_{date_str}.txt"
+    txt_path = scraped_txt_path(mode, date_str)
     if reuse and txt_path.exists():
         print(f"[intel] --reuse-data: 既存の {txt_path.name} を使用")
         return txt_path
@@ -243,13 +279,31 @@ def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) 
     return txt_path
 
 
+def extract_data_date(path: Path) -> str:
+    """scraped_data ファイル名からデータ基準日を抽出する。"""
+    match = SCRAPED_RE.match(path.name)
+    if match:
+        return match.group(1)
+    fallback = datetime.now().strftime("%Y-%m-%d")
+    print(f"[WARN] scraped_data ファイル名から日付を抽出できないため実行日を使用: {path}")
+    return fallback
+
+
 # ---------------------------------------------------------------------------
 # Step 2: 人間用 Markdown レポート生成
 # ---------------------------------------------------------------------------
 
-def build_report_prompt(mode: str, master_prompt_text: str, scraped_text: str) -> str:
+def build_report_prompt(
+    mode: str,
+    master_prompt_text: str,
+    scraped_text: str,
+    data_as_of: str,
+    run_date: str,
+    extra_block: Optional[str] = None,
+) -> str:
     """slash command (/daily-bias) Step 3 のメンタルモデルをヘッドレスで再現する。"""
     cfg = MODES[mode]
+    extra = f"\n\n{extra_block}" if extra_block else ""
     return f"""あなたはヘッドレスパイプラインから起動された分析エージェントである。
 ツール（Read/Bash/WebSearch 等）は一切使わず、このプロンプト内の情報のみで完結すること。
 出力は Markdown レポート本文のみとし、前置き・後書き・コードフェンスで全体を包むことを禁止する。
@@ -262,8 +316,9 @@ def build_report_prompt(mode: str, master_prompt_text: str, scraped_text: str) -
 =============== マスタープロンプト ここまで ===============
 
 ## 取得済みデータ (最優先で使用すること)
+データ基準日: {data_as_of}（パイプライン実行日: {run_date}）
 
-{scraped_text}
+{scraped_text}{extra}
 
 ## 指示
 
@@ -276,11 +331,16 @@ def build_report_prompt(mode: str, master_prompt_text: str, scraped_text: str) -
 
 
 def generate_report_md(mode: str, scraped_text: str,
-                       runner: Callable[[str], str]) -> Tuple[str, str]:
+                       runner: Callable[[str], str],
+                       data_as_of: str,
+                       run_date: str,
+                       extra_block: Optional[str] = None) -> Tuple[str, str]:
     """MD レポートを生成して (md_text, prompt) を返す。"""
     cfg = MODES[mode]
     master_prompt_text = (PROJECT_ROOT / cfg["master_prompt"]).read_text(encoding="utf-8")
-    prompt = build_report_prompt(mode, master_prompt_text, scraped_text)
+    prompt = build_report_prompt(
+        mode, master_prompt_text, scraped_text, data_as_of, run_date, extra_block=extra_block
+    )
     print(f"[intel] Step 2: claude -p で {cfg['report_kind']} を生成中...")
     md = runner(prompt)
     return md, prompt
@@ -407,12 +467,14 @@ def append_run_log(record: dict) -> None:
 def cmd_brief(args) -> int:
     mode = "weekly" if args.weekly else "daily"
     cfg = MODES[mode]
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    run_dt = datetime.now().astimezone()
+    date_str = run_dt.strftime("%Y-%m-%d")
+    generated_at = run_dt.isoformat(timespec="seconds")
     run_record = {
         "run_id": uuid.uuid4().hex[:12],
         "command": "brief",
         "mode": mode,
-        "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "started_at": generated_at,
         "claude_calls": [],
         "outputs": {},
         "ok": False,
@@ -424,11 +486,28 @@ def cmd_brief(args) -> int:
             cfg["weekly_flag"], args.reuse_data, date_str, quick=args.quick
         )
         scraped_text = txt_path.read_text(encoding="utf-8")
+        data_as_of = extract_data_date(txt_path)
         run_record["scraped_file"] = str(txt_path)
         run_record["quick"] = bool(args.quick)
+        run_record["data_as_of"] = data_as_of
+
+        from scrapers import xsearch_ingest
+
+        xsearch_data = xsearch_ingest.load_xsearch(date_str)
+        extra_block = xsearch_ingest.format_xsearch_block(xsearch_data) if xsearch_data else None
+        run_record["xsearch_used"] = xsearch_data is not None
+        run_record["xsearch_file"] = xsearch_ingest.LAST_SOURCE_FILE
+        if xsearch_data is None:
+            run_record["xsearch_skip_reason"] = xsearch_ingest.LAST_SKIP_REASON
 
         # Step 2: 人間用 MD
-        md_text, report_prompt = generate_report_md(mode, scraped_text, run_claude)
+        md_text, report_prompt = generate_report_md(
+            mode, scraped_text, run_claude, data_as_of, date_str, extra_block=extra_block
+        )
+        if data_as_of != date_str:
+            md_text = STALE_DATA_BANNER.format(
+                data_as_of=data_as_of, run_date=date_str
+            ) + md_text
         run_record["claude_calls"].append(
             {"purpose": "report_md", "prompt": report_prompt, "response": md_text}
         )
@@ -438,6 +517,7 @@ def cmd_brief(args) -> int:
 
         # Step 3: 機械用 JSON（リトライ → フォールバック内蔵）
         intel_obj, fallback_used, json_calls = generate_machine_json(md_text, run_claude)
+        intel_obj = attach_pipeline_metadata(intel_obj, data_as_of, generated_at)
         run_record["claude_calls"].extend(json_calls)
         run_record["json_fallback_used"] = fallback_used
         json_path = save_intel_json(intel_obj, mode, date_str)
