@@ -1,0 +1,5 @@
+scripts:
+  setup: uv sync
+defaultTabs:
+  - title: test
+    command: uv run pytest
