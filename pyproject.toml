@@ -9,6 +9,7 @@ dependencies = [
     "requests>=2.31.0",
     "markdown>=3.5",
     "pyyaml>=6.0",
+    "openpyxl>=3.1.5",
 ]
 
 [dependency-groups]

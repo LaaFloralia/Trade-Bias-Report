@@ -38,6 +38,8 @@ from scrapers.rate_spreads import scrape_rate_spreads
 from scrapers.crypto_funding import scrape_crypto_funding
 from scrapers.myfxbook_open_orders import scrape_myfxbook_open_orders
 from scrapers.binance_btc_sentiment import fetch_binance_btc_sentiment
+from scrapers.gold_etf import scrape_gold_etf
+from scrapers.gold_cb import scrape_gold_cb, _label as _cb_label
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -125,6 +127,9 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "crypto_funding": None,
         "myfxbook_open_orders": {},  # 銘柄ごとに格納
         "binance_btc_sentiment": None,  # Binance Futures BTCUSDT Long/Short (MyFXBook 非対応の代替)
+        # XAUUSD ファンダ大局バイアス用 (master_prompt セクション1.5)
+        "gold_etf": None,  # GLD 保有トン数 (SPDR 公式 API)
+        "gold_cb": None,   # 中銀ゴールド購入 (IMF IRFCL 報告国ベース)
     }
 
     # --- Twelve Data: 価格データ取得 ---
@@ -266,6 +271,8 @@ async def collect_all_data(weekly: bool = False) -> dict:
         ("macro_liquidity", scrape_macro_liquidity()),
         ("rate_spreads", scrape_rate_spreads()),
         ("crypto_funding", scrape_crypto_funding()),
+        ("gold_etf", scrape_gold_etf()),
+        ("gold_cb", scrape_gold_cb()),
     ]
     print(f"  Phase A: {len(phase_a_tasks)} 系を並列取得中（DXY/FRED/Calendar/BTC ETF/FedWatch + Deep 強化大半）...")
     phase_a_results = await asyncio.gather(*[t[1] for t in phase_a_tasks], return_exceptions=True)
@@ -584,6 +591,58 @@ def format_scraped_data(data: dict) -> str:
                 lines.append(f"- {day.get('date', 'N/A')}: {', '.join(flow_parts) + ', ' if flow_parts else ''}{total_str}")
         elif btc_etf.get("error"):
             lines.append(f"取得不可（{btc_etf['error']}）")
+
+    # --- 金ETFフロー (GLD 保有量) — XAUUSD ファンダ大局用 ---
+    gold_etf = data.get("gold_etf")
+    if gold_etf and isinstance(gold_etf, dict):
+        lines.append("")
+        lines.append("### 金ETFフロー (GLD 保有量)")
+        if gold_etf.get("error"):
+            lines.append(f"取得不可（{gold_etf['error']}）")
+        else:
+            lines.append(
+                f"保有量: {gold_etf.get('tonnes')} t (as_of {gold_etf.get('as_of_date')}) | "
+                f"ソース: {gold_etf.get('source', '不明')}"
+            )
+            for f in gold_etf.get("daily_flows", []):
+                lines.append(f"- {f['date']}: {f['tonnes']} t ({f['change_t']:+.2f} t)")
+            c5, c20 = gold_etf.get("change_5d_t"), gold_etf.get("change_20d_t")
+            c5_str = f"{c5:+.2f} t" if c5 is not None else "N/A"
+            c20_str = f"{c20:+.2f} t" if c20 is not None else "N/A"
+            lines.append(f"- 5営業日累計: {c5_str} / 20営業日累計: {c20_str}")
+            if gold_etf.get("streak_direction"):
+                d_ja = "流入" if gold_etf["streak_direction"] == "inflow" else "流出"
+                lines.append(f"- 連続方向: {gold_etf['streak_days']}営業日連続{d_ja}")
+            lines.append("- 解釈: 保有増 = 機関の買い圧力 / 保有減 = 売り圧力")
+
+    # --- 中銀ゴールド購入 (IMF IRFCL) — XAUUSD ファンダ大局用 ---
+    gold_cb = data.get("gold_cb")
+    if gold_cb and isinstance(gold_cb, dict):
+        lines.append("")
+        lines.append("### 中銀ゴールド購入 (IMF IRFCL 報告国ベース)")
+        if gold_cb.get("error"):
+            lines.append(f"取得不可（{gold_cb['error']}）")
+        else:
+            for m in gold_cb.get("months", []):
+                movers = ", ".join(f"{_cb_label(c)} {v:+.1f}" for c, v in m.get("top_movers", []))
+                partial_tag = " [速報・報告国少]" if m.get("partial") else ""
+                lines.append(
+                    f"- {m['period']}: 純変化 {m['net_tonnes']:+.1f} t "
+                    f"(報告 {m['reporters']} カ国){partial_tag}"
+                    + (f" — 主な動き: {movers}" if movers else "")
+                )
+            regime_ja = {
+                "net_buying": "中銀は買い越し基調",
+                "net_selling": "中銀は売り越し基調",
+                "neutral": "中立",
+                "unknown": "確定月不足で判定不能",
+            }.get(gold_cb.get("regime"), "不明")
+            lines.append(
+                f"- 確定月3ヶ月累計: {gold_cb.get('cumulative_3m_t'):+.1f} t → "
+                f"レジーム: {gold_cb.get('regime')} ({regime_ja})"
+            )
+            if gold_cb.get("note"):
+                lines.append(f"※ {gold_cb['note']}")
 
     # --- 経済指標カレンダー ---
     calendar = data.get("economic_calendar")

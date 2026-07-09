@@ -115,6 +115,8 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │   ├── economic_calendar.py / fedwatch.py / btc_etf.py # カレンダー / FedWatch / ETF フロー
 │   ├── dxy_components.py / vix_structure.py / premarket.py # Deep 強化系
 │   ├── macro_liquidity.py / rate_spreads.py / myfxbook_open_orders.py # Deep 強化系
+│   ├── gold_etf.py           # 金ETFフロー: GLD 保有トン数（SPDR 公式 API、XAUUSD ファンダ大局用）
+│   ├── gold_cb.py            # 中銀ゴールド購入: IMF IRFCL 報告国ベース月次集計（同上）
 │   ├── metadata_schema.py    # 共通メタデータ補完（非破壊・冪等）
 │   └── validation.py         # 価格バリデーション + FRED 恒等式チェック（DGS10 ≒ DFII10 + T10YIE）
 ├── tests/                    # mock ベースのテスト群（実 API 疎通なし）
