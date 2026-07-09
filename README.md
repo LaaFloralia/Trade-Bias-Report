@@ -256,7 +256,7 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 
 ## 7.5. Deep Bias（強化版）
 
-`master_prompt.md` / `master_prompt_weekly.md` は **速報用**（1500〜3500 字、Routines / Mac 両対応）。
+`master_prompt.md` / `master_prompt_weekly.md` は **速報用**（1500〜3800 字、Routines / Mac 両対応）。
 これとは別に、10〜15 分かけて深層リサーチを行う **強化版** を並走させている。
 速報用ファイル群は変更せず温存し、Deep Bias は独立ファイルとして並走する。
 
@@ -266,12 +266,12 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 |---|---|---|
 | 実行コマンド | `/daily-bias` / `/weekly-bias` | **`/deep-bias`** |
 | 所要時間 | 2〜3 分 | **10〜15 分** |
-| 字数目安 | 1500〜3500 字 | **5000〜8000 字** |
+| 字数目安 | 1500〜3800 字 | **5000〜8000 字** |
 | 出力形式 | MD のみ | **MD のみ**（PDF は引数 `pdf` または明示要求時のみ追加生成、HTML は中間ファイル） |
 | WebSearch | なし | **7〜12 クエリ必須**（固定群 a〜g を最低 1 回ずつ） |
 | 自己検証 | なし | **スコア再計算 / 欠損検出 / 矛盾検出 を必須実施** |
 | 実行環境 | Mac / Routines 両対応 | **Mac ローカル専用** |
-| 信頼度スコア項目 | 6〜7 項目 | **11 項目（ニュース / 地政学 / 季節性を追加）** |
+| 信頼度スコア項目 | 7〜8 項目（Daily はファンダ大局整合 ±1 を含む） | **11 項目（ニュース / 地政学 / 季節性を追加）** |
 | Brain への push | 速報 MD | **MD のみ**（PDF は `output/` のみ保持） |
 | プロンプトファイル | `master_prompt.md` / `master_prompt_weekly.md` | `master_prompt_deep.md` |
 

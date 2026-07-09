@@ -136,6 +136,9 @@ def _empty_metadata(series_id: str) -> dict:
         "value": None,
         "prev_value": None,
         "change": None,
+        "value_20obs_ago": None,
+        "as_of_20obs_ago": None,
+        "change_20obs": None,
         "timestamp": _now_utc_iso(),
         "as_of_date": None,
         "prev_as_of_date": None,
@@ -168,14 +171,17 @@ def _load_last_known(series_id: str) -> Optional[dict]:
 def _fetch_series_observations(series_id: str, api_key: str) -> dict:
     """Fetch the latest valid observations for a series. Returns:
         {"value": float, "as_of_date": "YYYY-MM-DD",
-         "prev_value": float|None, "prev_as_of_date": str|None}
-    or {"error": "..."} on failure. Skips '.' (no-data marker)."""
+         "prev_value": float|None, "prev_as_of_date": str|None,
+         "value_20obs_ago": float|None, "as_of_20obs_ago": str|None}
+    or {"error": "..."} on failure. Skips '.' (no-data marker).
+    value_20obs_ago は有効観測 20 件前の値（daily 系列なら ≒20 営業日前）。
+    中期トレンド判定（ファンダ大局バイアス）用。"""
     params = {
         "series_id": series_id,
         "api_key": api_key,
         "file_type": "json",
         "sort_order": "desc",
-        "limit": 10,
+        "limit": 40,
     }
     last_err: Optional[str] = None
     for attempt in range(RETRY_ATTEMPTS):
@@ -196,17 +202,20 @@ def _fetch_series_observations(series_id: str, api_key: str) -> dict:
                     valid.append((float(raw), obs.get("date")))
                 except ValueError:
                     continue
-                if len(valid) >= 2:
+                if len(valid) >= 21:
                     break
             if not valid:
-                return {"error": "no valid observation in latest 10 (all '.')"}
+                return {"error": "no valid observation in latest 40 (all '.')"}
             value, as_of = valid[0]
             prev_value, prev_as_of = (valid[1] if len(valid) >= 2 else (None, None))
+            value_20, as_of_20 = (valid[20] if len(valid) >= 21 else (None, None))
             return {
                 "value": value,
                 "as_of_date": as_of,
                 "prev_value": prev_value,
                 "prev_as_of_date": prev_as_of,
+                "value_20obs_ago": value_20,
+                "as_of_20obs_ago": as_of_20,
             }
         except requests.HTTPError as exc:
             last_err = f"HTTP {exc.response.status_code if exc.response is not None else '?'}"
@@ -233,6 +242,9 @@ def fetch_fred_series(series_id: str, api_key: Optional[str] = None) -> dict:
             meta["value"] = cached.get("value")
             meta["prev_value"] = cached.get("prev_value")
             meta["change"] = cached.get("change")
+            meta["value_20obs_ago"] = cached.get("value_20obs_ago")
+            meta["as_of_20obs_ago"] = cached.get("as_of_20obs_ago")
+            meta["change_20obs"] = cached.get("change_20obs")
             meta["as_of_date"] = cached.get("as_of_date")
             meta["prev_as_of_date"] = cached.get("prev_as_of_date")
             meta["stale"] = True
@@ -248,6 +260,9 @@ def fetch_fred_series(series_id: str, api_key: Optional[str] = None) -> dict:
             meta["value"] = cached.get("value")
             meta["prev_value"] = cached.get("prev_value")
             meta["change"] = cached.get("change")
+            meta["value_20obs_ago"] = cached.get("value_20obs_ago")
+            meta["as_of_20obs_ago"] = cached.get("as_of_20obs_ago")
+            meta["change_20obs"] = cached.get("change_20obs")
             meta["as_of_date"] = cached.get("as_of_date")
             meta["prev_as_of_date"] = cached.get("prev_as_of_date")
             meta["stale"] = True
@@ -261,10 +276,15 @@ def fetch_fred_series(series_id: str, api_key: Optional[str] = None) -> dict:
     value = obs["value"]
     prev_value = obs.get("prev_value")
     change = (value - prev_value) if (prev_value is not None) else None
+    value_20 = obs.get("value_20obs_ago")
+    change_20 = (value - value_20) if (value_20 is not None) else None
     meta.update({
         "value": value,
         "prev_value": prev_value,
         "change": change,
+        "value_20obs_ago": value_20,
+        "as_of_20obs_ago": obs.get("as_of_20obs_ago"),
+        "change_20obs": change_20,
         "as_of_date": obs["as_of_date"],
         "prev_as_of_date": obs.get("prev_as_of_date"),
     })

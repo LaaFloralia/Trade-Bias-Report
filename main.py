@@ -431,8 +431,15 @@ def format_scraped_data(data: dict) -> str:
         change_str = f"{change:+.3f}" if change is not None else "N/A"
         stale_tag = " [STALE]" if series.get("stale") else ""
         lines.append(f"[{label}]{stale_tag}")
+        # 20 営業日比: ファンダ大局バイアス (master_prompt セクション1.5) の中期トレンド判定用
+        change_20 = series.get("change_20obs")
+        if change_20 is not None:
+            trend = "上昇" if change_20 > 0.05 else ("低下" if change_20 < -0.05 else "横ばい")
+            trend_str = f" | 20営業日比: {change_20:+.3f} (トレンド: {trend})"
+        else:
+            trend_str = ""
         lines.append(
-            f"現在利回り: {series['value']:.3f}% | 前日比: {change_str} | "
+            f"現在利回り: {series['value']:.3f}% | 前日比: {change_str}{trend_str} | "
             f"as_of: {series.get('as_of_date', 'N/A')}"
         )
         lines.append(f"ソース: FRED {series_id}")
@@ -452,9 +459,11 @@ def format_scraped_data(data: dict) -> str:
         change = dtwex.get("change")
         change_str = f"{change:+.3f}" if change is not None else "N/A"
         stale_tag = " [STALE]" if dtwex.get("stale") else ""
+        change_20 = dtwex.get("change_20obs")
+        trend_str = f" | 20営業日比: {change_20:+.3f}" if change_20 is not None else ""
         lines.append(f"[Broad USD Index]{stale_tag}")
         lines.append(
-            f"現在値: {dtwex['value']:.3f} | 前日比: {change_str} | "
+            f"現在値: {dtwex['value']:.3f} | 前日比: {change_str}{trend_str} | "
             f"as_of: {dtwex.get('as_of_date', 'N/A')}"
         )
         lines.append("ソース: FRED DTWEXBGS（Broad USD Index, USD macro proxy / NOT DXY）")
