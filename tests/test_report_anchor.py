@@ -1,0 +1,140 @@
+"""前回レポート アンカー (report_anchor) の抽出・鮮度判定・出力を検証する。
+オンデマンド運用で Daily を自己完結させるための機構 (README § 7.5)。"""
+from __future__ import annotations
+
+import sys
+from datetime import date
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from scrapers.report_anchor import (  # noqa: E402
+    _extract_section,
+    format_anchor_lines,
+    load_report_anchor,
+)
+from main import format_scraped_data  # noqa: E402
+
+TODAY = date(2026, 7, 9)
+
+WEEKLY_MD = """# ICT Weekly Bias Report — 2026-05-16
+
+## セクション0: エグゼクティブサマリー
+
+- DXY ウィークリーバイアス: Bullish（推定）
+- 最優先注目銘柄: USDJPY Long
+
+---
+
+## セクション1: 詳細
+
+長い本文。
+"""
+
+DAILY_WITH_15_MD = """# ICT Daily Bias Report — 2026-07-08
+
+## セクション0: エグゼクティブサマリー
+
+- DXYバイアス: Bearish
+
+## セクション1.5: ファンダメンタル大局バイアス（数週間〜数ヶ月）
+
+| 銘柄 | 大局バイアス | 主ドライバー | 確度 |
+|---|---|---|---|
+| XAUUSD | Bearish | 実質金利上昇 | 中 |
+
+## セクション2: 銘柄別
+
+本文。
+"""
+
+DAILY_WITHOUT_15_MD = """# ICT Daily Bias Report — 2026-07-05
+
+## セクション0: エグゼクティブサマリー
+
+- DXYバイアス: Bearish（短期・実データ）
+
+## セクション1: DXY
+
+本文。
+"""
+
+
+def _make_brain(tmp_path, monkeypatch, files: dict[str, str]) -> Path:
+    brain = tmp_path / "Brain"
+    for rel, content in files.items():
+        p = brain / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    monkeypatch.setenv("BRAIN_PATH", str(brain))
+    return brain
+
+
+def test_extract_section_stops_at_next_heading():
+    s = _extract_section(WEEKLY_MD, ["セクション0"])
+    assert "DXY ウィークリーバイアス" in s
+    assert "セクション1" not in s
+    assert "---" not in s
+
+
+def test_anchor_stale_and_fresh(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/Weekly-Bias/Weekly_Bias_Report_2026-05-16.md": WEEKLY_MD,
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-08.md": DAILY_WITH_15_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    w, d = a["weekly"], a["prev_daily"]
+    assert w["age_days"] == 54 and w["stale"] is True
+    assert d["age_days"] == 1 and d["stale"] is False
+    # 1.5 が優先抽出される
+    assert d["section_used"] == "セクション1.5"
+    assert "実質金利上昇" in d["summary"]
+
+
+def test_prev_daily_excludes_today_and_falls_back_to_section0(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        # 当日のレポートは「前回」対象外 (再生成時に自分を参照しない)
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-09.md": DAILY_WITH_15_MD,
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-05.md": DAILY_WITHOUT_15_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    d = a["prev_daily"]
+    assert d["file"] == "Daily_Bias_Report_2026-07-05.md"
+    assert d["stale"] is True  # 4 日前 > 3 日
+    # 1.5 セクションが無い旧レポート → セクション0 にフォールバック
+    assert d["section_used"] == "セクション0"
+    assert "Bearish（短期・実データ）" in d["summary"]
+
+
+def test_weekly_deep_preferred_on_same_date(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/Weekly-Bias/Weekly_Bias_Report_2026-07-07.md": WEEKLY_MD,
+        "Calendar/Weekly-Deep-Bias/Weekly_Deep_Bias_Report_2026-07-07.md": WEEKLY_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    assert a["weekly"]["kind"] == "Weekly-Deep"
+
+
+def test_missing_brain_is_graceful(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRAIN_PATH", str(tmp_path / "no-such-dir"))
+    a = load_report_anchor(today=TODAY)
+    assert a["weekly"] is None and a["prev_daily"] is None
+    assert a["error"] is None
+    assert "存在しない" in a["note"]
+    lines = format_anchor_lines(a)
+    assert any("アンカーなしで続行" in ln for ln in lines)
+
+
+def test_format_scraped_data_emits_anchor_first(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/Weekly-Bias/Weekly_Bias_Report_2026-05-16.md": WEEKLY_MD,
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-08.md": DAILY_WITH_15_MD,
+    })
+    anchor = load_report_anchor(today=TODAY)
+    text = format_scraped_data({"timestamp": "2026-07-09T09:00:00", "report_anchor": anchor})
+    assert "### 前回レポート アンカー (Brain 自動読み込み)" in text
+    assert "[Weekly 大局] Weekly_Bias_Report_2026-05-16.md (54日前) [STALE >9日: 参考扱い]" in text
+    assert "[前回 Daily] Daily_Bias_Report_2026-07-08.md (1日前)" in text
+    # アンカーは価格データより前 (冒頭) に出る
+    assert text.index("前回レポート アンカー") < 200

@@ -117,6 +117,7 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │   ├── macro_liquidity.py / rate_spreads.py / myfxbook_open_orders.py # Deep 強化系
 │   ├── gold_etf.py           # 金ETFフロー: GLD 保有トン数（SPDR 公式 API、XAUUSD ファンダ大局用）
 │   ├── gold_cb.py            # 中銀ゴールド購入: IMF IRFCL 報告国ベース月次集計（同上）
+│   ├── report_anchor.py      # 前回レポート アンカー: Brain の直近 Weekly/Daily 結論を自動差し込み
 │   ├── metadata_schema.py    # 共通メタデータ補完（非破壊・冪等）
 │   └── validation.py         # 価格バリデーション + FRED 恒等式チェック（DGS10 ≒ DFII10 + T10YIE）
 ├── tests/                    # mock ベースのテスト群（実 API 疎通なし）
@@ -261,6 +262,13 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 `master_prompt.md` / `master_prompt_weekly.md` は **速報用**（1500〜3800 字、Routines / Mac 両対応）。
 これとは別に、10〜15 分かけて深層リサーチを行う **強化版** を並走させている。
 速報用ファイル群は変更せず温存し、Deep Bias は独立ファイルとして並走する。
+
+**オンデマンド運用の自己完結化（前回レポート アンカー）**: Weekly / Deep は定期実行ではなく
+必要時のみ生成する運用のため、Daily 生成時に `scrapers/report_anchor.py` が Brain/Calendar の
+最新 Weekly 系レポート（結論 = セクション0）と前回 Daily（ファンダ大局バイアス = セクション1.5）を
+自動で scraped_data に差し込む。経過日数が許容鮮度（Weekly 9 日 / Daily 3 日）を超えると
+`[STALE]` が付き、プロンプト側は参考扱いに落とす（PO3 整合スコアには使わない）。
+Weekly を回していなくても Daily 単体で大局アンカー付きのレポートになる。
 
 ### 7.5-1. 既存 Daily / Weekly との違い
 

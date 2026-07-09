@@ -40,6 +40,7 @@ from scrapers.myfxbook_open_orders import scrape_myfxbook_open_orders
 from scrapers.binance_btc_sentiment import fetch_binance_btc_sentiment
 from scrapers.gold_etf import scrape_gold_etf
 from scrapers.gold_cb import scrape_gold_cb, _label as _cb_label
+from scrapers.report_anchor import load_report_anchor, format_anchor_lines
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -130,7 +131,24 @@ async def collect_all_data(weekly: bool = False) -> dict:
         # XAUUSD ファンダ大局バイアス用 (master_prompt セクション1.5)
         "gold_etf": None,  # GLD 保有トン数 (SPDR 公式 API)
         "gold_cb": None,   # 中銀ゴールド購入 (IMF IRFCL 報告国ベース)
+        # 前回レポート アンカー (Brain ローカル読み込み、オンデマンド運用の自己完結化)
+        "report_anchor": None,
     }
+
+    # --- 前回レポート アンカー (ローカル IO のみ、ネットワーク不要) ---
+    try:
+        results["report_anchor"] = load_report_anchor()
+        ra = results["report_anchor"]
+        w = ra.get("weekly")
+        d = ra.get("prev_daily")
+        print(
+            "  [OK]    report_anchor: "
+            f"Weekly={w['file'] + (' [STALE]' if w['stale'] else '') if w else 'なし'} / "
+            f"前回Daily={d['file'] + (' [STALE]' if d['stale'] else '') if d else 'なし'}"
+        )
+    except Exception as e:
+        results["report_anchor"] = {"error": str(e)}
+        print(f"  [WARN]  report_anchor: {e}")
 
     # --- Twelve Data: 価格データ取得 ---
     print("  Twelve Data: 価格データ取得中...")
@@ -368,6 +386,12 @@ def format_scraped_data(data: dict) -> str:
     lines = []
     lines.append(f"データ取得日時: {data['timestamp']}")
     lines.append("")
+
+    # --- 前回レポート アンカー (Weekly 大局 + 前回 Daily の継続性チェック用) ---
+    anchor = data.get("report_anchor")
+    if anchor and isinstance(anchor, dict):
+        lines.extend(format_anchor_lines(anchor))
+        lines.append("")
 
     # --- 価格データ（Twelve Data API）---
     price_data = data.get("price_data")
