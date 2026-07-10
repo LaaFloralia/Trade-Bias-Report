@@ -164,12 +164,15 @@ BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
 mkdir -p "$BRAIN_PATH/Calendar/Daily-Bias" "$BRAIN_PATH/Calendar/Weekly-Bias"
 ```
 
-## Step 5: Routines 環境のみ追加処理
+## Step 5: 追加処理
 
-環境変数 `CLAUDE_CODE_REMOTE` が `true` の場合のみ、以下を追加で実施する。
-ローカル (Mac) 実行ではこの Step を完全にスキップする。
+### 5-1. Brain リポジトリへのコミットと push（**全環境共通**）
 
-### 5-1. Brain リポジトリへのコミットと push
+**ローカル (Mac) でも必ず実施する。** Brain の同期は Git が正（他端末は
+launchd の auto-pull / Working Copy で git 経由取得）のため、コミットしない
+レポートは他端末の Obsidian に表示されない（2026-07-11 の「レポートがない」
+事象の原因）。コミット対象は生成したレポートファイルのみとし、vault 内の
+他の未コミットファイル（社長の個人メモ等）を `git add` に含めないこと。
 
 **重要**: Brain リポジトリへの push は必ず `master` ブランチに直接行うこと。
 新しい `claude/...` ブランチを作って push してはならない。社長の Mac は
@@ -201,8 +204,9 @@ git push が認証エラーで失敗した場合、Routine の Repositories 設�
 `Allow unrestricted branch pushes` が Brain リポジトリで有効化されているか
 確認する旨をユーザーに報告する (本来は ON のはず)。
 
-### 5-2. Slack へ通知
+### 5-2. Slack へ通知（Routines 環境 = `CLAUDE_CODE_REMOTE=true` のみ）
 
+ローカル (Mac) 実行ではこの 5-2 をスキップする。
 Slack MCP 経由で `#ceo` チャンネルに以下を投稿する
 (環境変数 `SLACK_NOTIFY_CHANNEL` が設定されていれば、その値を優先)。
 
