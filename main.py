@@ -141,10 +141,12 @@ async def collect_all_data(weekly: bool = False) -> dict:
         ra = results["report_anchor"]
         w = ra.get("weekly")
         d = ra.get("prev_daily")
+        x = ra.get("xau_tf")
         print(
             "  [OK]    report_anchor: "
             f"Weekly={w['file'] + (' [STALE]' if w['stale'] else '') if w else 'なし'} / "
-            f"前回Daily={d['file'] + (' [STALE]' if d['stale'] else '') if d else 'なし'}"
+            f"前回Daily={d['file'] + (' [STALE]' if d['stale'] else '') if d else 'なし'} / "
+            f"XAU-TF={x['file'] + (' [STALE]' if x['stale'] else '') if x else 'なし'}"
         )
     except Exception as e:
         results["report_anchor"] = {"error": str(e)}
