@@ -10,6 +10,7 @@ API呼び出し数の最小化:
 
 import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Tuple, List
 
@@ -88,7 +89,7 @@ def _parse_series_batch(data: Optional[dict], symbols: List[str]) -> dict:
 
 
 def _calc_range(values: List[dict], n: int) -> Tuple[Optional[float], Optional[float]]:
-    """直近 n 本の high/low の最大・最小を返す。"""
+    """直近 n 本の high/low の最大・最小を返す（IPDA ローリングレンジ用）。"""
     target = values[:n]
     if not target:
         return None, None
@@ -98,6 +99,56 @@ def _calc_range(values: List[dict], n: int) -> Tuple[Optional[float], Optional[f
         return max(highs), min(lows)
     except (KeyError, ValueError):
         return None, None
+
+
+def _calc_prev_periods(values: List[dict]) -> dict:
+    """真の前週 (月曜起点) / 前月 (カレンダー月) の高安を返す。
+
+    ICT の PWH/PWL/PMH/PML は「前の完結した週・月」のレンジを指す。
+    旧実装はローリング 5 本 / 22 本の高安を PWH/PMH と誤ラベルしており
+    (現行週を混入・前月高値の取り逃し)、xauusd-smc-quant (Dukascopy) の
+    カレンダー境界と乖離していた。dxy.py の _calculate_levels と同じ境界定義。
+
+    values: 新しい順の日足 ({"datetime": "YYYY-MM-DD", "high", "low"})。
+    """
+    out = {"pwh": None, "pwl": None, "pmh": None, "pml": None}
+    bars = []
+    for v in values:
+        try:
+            bars.append(
+                (
+                    datetime.strptime(str(v["datetime"])[:10], "%Y-%m-%d").date(),
+                    float(v["high"]),
+                    float(v["low"]),
+                )
+            )
+        except (KeyError, ValueError, TypeError):
+            continue
+    if not bars:
+        return out
+
+    today = bars[0][0]  # 最新バーの日付を基準にする
+
+    # 前週: 今週月曜より前の 7 日間 (月〜日)
+    this_monday = today - timedelta(days=today.weekday())
+    prev_monday = this_monday - timedelta(days=7)
+    prev_week = [(h, l) for d, h, l in bars if prev_monday <= d < this_monday]
+    if prev_week:
+        out["pwh"] = max(h for h, _ in prev_week)
+        out["pwl"] = min(l for _, l in prev_week)
+
+    # 前月: カレンダー前月の 1 日〜末日
+    first_of_this_month = today.replace(day=1)
+    last_of_prev_month = first_of_this_month - timedelta(days=1)
+    first_of_prev_month = last_of_prev_month.replace(day=1)
+    prev_month = [
+        (h, l) for d, h, l in bars
+        if first_of_prev_month <= d <= last_of_prev_month
+    ]
+    if prev_month:
+        out["pmh"] = max(h for h, _ in prev_month)
+        out["pml"] = min(l for _, l in prev_month)
+    return out
 
 
 def _fmt(h: Optional[float], l: Optional[float]) -> str:
@@ -149,8 +200,9 @@ def _format_instrument(instrument: str, q: dict, series: List[dict]) -> List[str
     else:
         lines.append("PDH/PDL: 取得不可")
 
-    wh, wl = _calc_range(prev, 5)
-    mh, ml = _calc_range(prev, 22)
+    periods = _calc_prev_periods(series)
+    wh, wl = periods["pwh"], periods["pwl"]
+    mh, ml = periods["pmh"], periods["pml"]
     i20h, i20l = _calc_range(prev, 20)
     i40h, i40l = _calc_range(prev, 40)
     i60h, i60l = _calc_range(prev, 60)

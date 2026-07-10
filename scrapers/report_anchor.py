@@ -31,10 +31,25 @@ WEEKLY_DIRS = [
 DAILY_DIRS = [
     ("Calendar/Daily-Bias", "Daily"),
 ]
+# XAUUSD テクニカル (xauusd-smc-quant / Dukascopy 検証済みパイプライン)。
+# XAUUSD の価格レベル (PWH/PWL/PMH/PML・FVG・流動性マップ) の SSoT。
+XAU_TF_DIRS = [
+    ("Calendar/XAU-TF", "XAU-TF"),
+]
 
 WEEKLY_STALE_DAYS = 9   # 週次アンカーの許容鮮度 (1 週間 + 猶予)
 DAILY_STALE_DAYS = 3    # 前回 Daily の許容鮮度
+XAU_TF_STALE_DAYS = 1   # レベル系は日次で失効 (前日付までを fresh 扱い)
 MAX_SUMMARY_CHARS = 1200
+
+# XAU-TF レポートから抽出するセクション (見出しに含まれるパターン, 表示ラベル)
+XAU_TF_SECTIONS = [
+    (["マルチタイムフレーム構造"], "構造"),
+    (["流動性マップ"], "流動性マップ"),
+    (["プレミアム"], "Premium/Discount"),
+    (["未充填インバランス", "FVG"], "未充填FVG"),
+]
+XAU_TF_SECTION_CHARS = 700  # セクションごとの上限
 
 _DATE_RE = re.compile(r"_(\d{4}-\d{2}-\d{2})\.md$")
 
@@ -74,7 +89,9 @@ def _latest_report(
     return best[2], best[0], best[3]
 
 
-def _extract_section(text: str, patterns: list[str]) -> Optional[str]:
+def _extract_section(
+    text: str, patterns: list[str], max_chars: int = MAX_SUMMARY_CHARS
+) -> Optional[str]:
     """`## ` 見出しに patterns のいずれかを含むセクション本文を抽出する。
     次の `## ` 見出しまでを取り、区切りの `---` は除外。"""
     lines = text.splitlines()
@@ -95,25 +112,48 @@ def _extract_section(text: str, patterns: list[str]) -> Optional[str]:
     section = "\n".join(body).strip()
     if not section:
         return None
-    if len(section) > MAX_SUMMARY_CHARS:
-        section = section[:MAX_SUMMARY_CHARS] + "…(截断)"
+    if len(section) > max_chars:
+        section = section[:max_chars] + "…(截断)"
     return section
+
+
+def _extract_xau_tf_summary(text: str) -> Optional[str]:
+    """XAU テクニカルレポートからレベル関連セクションを連結抽出する。
+    データ基準行 (`> データ: ... 最終バー ...`) を先頭に含め、ファイル日付が
+    新しくても元データが古いケース (Dukascopy 障害等) を判別可能にする。"""
+    parts = []
+    data_line = next(
+        (ln.lstrip("> ").strip() for ln in text.splitlines() if ln.startswith("> データ")),
+        None,
+    )
+    if data_line:
+        parts.append(f"[データ基準] {data_line}")
+    for patterns, label in XAU_TF_SECTIONS:
+        body = _extract_section(text, patterns, max_chars=XAU_TF_SECTION_CHARS)
+        if body:
+            parts.append(f"[{label}]\n{body}")
+    return "\n".join(parts) if parts else None
 
 
 def _build_anchor(
     found: tuple[Path, date, str],
     today: date,
     stale_days: int,
-    patterns: list[str],
+    patterns: Optional[list[str]] = None,
     fallback_patterns: Optional[list[str]] = None,
+    extractor=None,
 ) -> dict:
     path, fdate, kind = found
     text = path.read_text(encoding="utf-8")
-    summary = _extract_section(text, patterns)
-    used = patterns[0]
-    if summary is None and fallback_patterns:
-        summary = _extract_section(text, fallback_patterns)
-        used = fallback_patterns[0]
+    if extractor is not None:
+        summary = extractor(text)
+        used = "levels" if summary else None
+    else:
+        summary = _extract_section(text, patterns)
+        used = patterns[0]
+        if summary is None and fallback_patterns:
+            summary = _extract_section(text, fallback_patterns)
+            used = fallback_patterns[0]
     age = (today - fdate).days
     return {
         "file": path.name,
@@ -140,7 +180,7 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
     """
     today = today or date.today()
     base = {"source": "Brain/Calendar (前回レポート)", "weekly": None, "prev_daily": None,
-            "note": None, "error": None}
+            "xau_tf": None, "note": None, "error": None}
     brain = _resolve_brain_path()
     if not brain.is_dir():
         base["note"] = f"Brain パスが存在しない ({brain})。アンカーなしで続行"
@@ -159,9 +199,16 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
                 patterns=["セクション1.5", "ファンダメンタル大局"],
                 fallback_patterns=["セクション0", "エグゼクティブサマリー"],
             )
+        # XAUUSD レベル SSoT: 当日分があれば当日、無ければ直近 (stale 判定は 1 日)
+        xau_found = _latest_report(brain, XAU_TF_DIRS)
+        if xau_found:
+            base["xau_tf"] = _build_anchor(
+                xau_found, today, XAU_TF_STALE_DAYS,
+                extractor=_extract_xau_tf_summary,
+            )
     except Exception as e:  # noqa: BLE001 — アンカー失敗でパイプラインを止めない
         base["error"] = f"{type(e).__name__}: {e}"
-    if base["weekly"] is None and base["prev_daily"] is None and base["error"] is None:
+    if all(base[k] is None for k in ("weekly", "prev_daily", "xau_tf")) and base["error"] is None:
         base["note"] = base["note"] or "Brain/Calendar に参照可能なレポートが見つからない"
     return base
 
@@ -190,6 +237,20 @@ def format_anchor_lines(anchor: dict) -> list[str]:
     _emit("Weekly 大局", anchor.get("weekly"), WEEKLY_STALE_DAYS)
     lines.append("")
     _emit("前回 Daily", anchor.get("prev_daily"), DAILY_STALE_DAYS)
+    lines.append("")
+    xt = anchor.get("xau_tf")
+    if not xt:
+        lines.append("[XAU テクニカル] なし（XAUUSD レベルは TwelveData 値のみ）")
+    else:
+        stale_tag = (
+            f" [STALE >{XAU_TF_STALE_DAYS}日: PDH/PDL 等の日次レベルは失効、構造/FVG は参考]"
+            if xt["stale"] else ""
+        )
+        lines.append(
+            f"[XAU テクニカル] {xt['file']} ({xt['age_days']}日前){stale_tag} "
+            "— XAUUSD レベルの SSoT (Dukascopy 検証済み)"
+        )
+        lines.append(xt["summary"] if xt.get("summary") else "(レベルセクションを抽出できず)")
     return lines
 
 

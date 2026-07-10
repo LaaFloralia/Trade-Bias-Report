@@ -170,7 +170,14 @@
   - USDJPY: 0.05未満
   - BTCUSD: 200ドル未満
   - DXY: 0.1未満
+※**XAUUSDのレベルSSoT:** `### 前回レポート アンカー` の [XAU テクニカル]（Dukascopy検証済みパイプライン）が
+  STALEでない場合、PWH/PWL/PMH/PML・EQH/EQLはXAU-TF値を正とし、TwelveData値と乖離がある場合は
+  「乖離: TD ○○ / XAU-TF ○○（採用）」とDテーブル下に1行で明記する。
+  [XAU テクニカル] がSTALEの場合、日次レベル（PDH/PDL）はTwelveData値を使い、
+  週次・月次レベルと構造・FVGは「参考: XAU-TF（N日前）」として扱う。
 ※FVG・OBの具体的な価格帯はチャートで確認すること。レポートでは記載しない。
+  ただしXAUUSDのみ、[XAU テクニカル] アンカーに記載された検証済みのFVG・流動性帯は
+  出典明記（XAU-TF）の上で引用してよい。
 
 ---
 
@@ -282,6 +289,7 @@ DXYのIntraday PO3は記載不要。
 **ERL / IRL 判定基準:**
 - ERL（External Range Liquidity）: 直近Dealing RangeのHigh/Lowの外側にあるBSL/SSLが主要ターゲット
 - IRL（Internal Range Liquidity）: 直近Dealing Range内部の未到達FVG/OBが主要ターゲット
+- XAUUSDは [XAU テクニカル] アンカーの流動性マップ（スイープ済みイベント含む）を優先参照する
 - 判断に迷う場合は「ERL/IRL不明、チャートで確認」と記載
 
 **時間軸の明記:** ManipulationのDraw on LiquidityとDistributionのDraw on Liquidityが

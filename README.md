@@ -270,6 +270,13 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 `[STALE]` が付き、プロンプト側は参考扱いに落とす（PO3 整合スコアには使わない）。
 Weekly を回していなくても Daily 単体で大局アンカー付きのレポートになる。
 
+**XAUUSD レベルの SSoT（XAU-TF アンカー）**: XAUUSD の価格レベルは
+`xauusd-smc-quant` の XAU Technical Report（Dukascopy H1・検出定義がコードで検証済み）を正とする。
+アンカーが `Calendar/XAU-TF/` の最新レポートから構造・流動性マップ・Premium/Discount・未充填 FVG を
+差し込み、STALE（2 日以上前）でなければ週次・月次レベルは XAU-TF 値が TwelveData 値に優先する
+（乖離時はレポートに明記）。なお TwelveData 側の PWH/PWL・PMH/PML も、旧実装のローリング窓
+（5 本 / 22 本）から真のカレンダー境界（月曜起点の前週・暦月の前月）に修正済み。
+
 ### 7.5-1. 既存 Daily / Weekly との違い
 
 | 項目 | Daily / Weekly（速報） | **Deep Bias（強化版）** |

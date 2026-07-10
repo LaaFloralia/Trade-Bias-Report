@@ -116,6 +116,73 @@ def test_weekly_deep_preferred_on_same_date(tmp_path, monkeypatch):
     assert a["weekly"]["kind"] == "Weekly-Deep"
 
 
+XAU_TF_MD = """# XAU Technical Report (ICT/SMC × Retail) — 2026-07-09
+> データ: Dukascopy H1 bid (UTC)、最終バー 2026-07-06 23:00。
+
+## 1. マルチタイムフレーム構造 (Market Structure)
+
+| TF | 構造 | 直近の構造ブレイク |
+|---|---|---|
+| D1 | 下降 (LH+LL) | 下抜け ↓ 4121 (2026-06-24) |
+
+## 2. 流動性マップ (Liquidity Pools = ストップの在処)
+
+- 4545.69 (+9.35%) — PMH (前月高値)
+- 3941.53 (-5.18%) — PWL (前週安値)
+
+## 3. プレミアム / ディスカウント
+
+- 現在位置 **77%** → **プレミアム (売り側優位圏)**
+
+## 4. 未充填インバランス (FVG)
+
+- D1 下 (サポート帯): **4115–4123** (未充填)
+
+## 5. ボラティリティ / セッション
+
+- ATR20d: 80.6
+"""
+
+
+def test_xau_tf_anchor_extracts_level_sections(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/XAU-TF/XAU_Technical_Report_2026-07-09.md": XAU_TF_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    xt = a["xau_tf"]
+    assert xt["age_days"] == 0 and xt["stale"] is False
+    assert xt["section_used"] == "levels"
+    # データ基準行 + 構造・流動性マップ・Premium/Discount・FVG が連結抽出される
+    for expected in ("[データ基準] データ: Dukascopy H1 bid (UTC)、最終バー 2026-07-06 23:00",
+                     "[構造]", "[流動性マップ]", "PMH (前月高値)", "[Premium/Discount]",
+                     "[未充填FVG]", "4115–4123"):
+        assert expected in xt["summary"]
+    # 対象外セクション (ボラティリティ) は含めない
+    assert "ATR20d" not in xt["summary"]
+
+
+def test_xau_tf_anchor_stale_after_one_day(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/XAU-TF/XAU_Technical_Report_2026-07-07.md": XAU_TF_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    assert a["xau_tf"]["age_days"] == 2
+    assert a["xau_tf"]["stale"] is True
+    text = "\n".join(format_anchor_lines(a))
+    assert "[XAU テクニカル] XAU_Technical_Report_2026-07-07.md (2日前) [STALE" in text
+    assert "SSoT" in text
+
+
+def test_xau_tf_anchor_absent_message(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-08.md": DAILY_WITH_15_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    assert a["xau_tf"] is None
+    text = "\n".join(format_anchor_lines(a))
+    assert "[XAU テクニカル] なし" in text
+
+
 def test_missing_brain_is_graceful(tmp_path, monkeypatch):
     monkeypatch.setenv("BRAIN_PATH", str(tmp_path / "no-such-dir"))
     a = load_report_anchor(today=TODAY)
