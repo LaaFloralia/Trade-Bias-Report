@@ -23,7 +23,7 @@ Claude API にマスタープロンプトとデータを渡してレポートを
 - Claude Code CLI（サブスクログイン済み。LLM 分析はスラッシュコマンドまたは `claude -p` 経由、Anthropic API キーは不要）
 - Node.js 18+（Playwright 用）
 - Twelve Data API キー（価格取得用）
-- **FRED API キー**（Treasury yields + Broad USD Index、無料、https://fred.stlouisfed.org/）— **macOS Keychain 推奨**（service: `FRED_API_KEY`、account: `$USER`、`-A` silent access）
+- **FRED API キー**（Treasury yields + Broad USD Index、無料、https://fred.stlouisfed.org/）— 1Password の `op://Agents/Fred/credential` に保管し、`./scripts/run-with-secrets.sh` 経由で注入する
 
 ---
 
@@ -50,16 +50,13 @@ cp .env.example .env
 # ※ ANTHROPIC_API_KEY は不要（LLM 分析は Claude Code サブスク経由。
 #    凍結中の scripts/archive/generate_xauusd_brief.py のみ要求するが未使用）
 
-# FRED API key は macOS Keychain (-A silent access) 推奨:
+# API key は 1Password の Agents 保管庫が唯一の正本。ローカルに平文で置かない:
 # 1. https://fred.stlouisfed.org/ で API key を取得（無料）
-# 2. 1Password vault に「FRED API」item として保管（正本）
-# 3. ワンタイム bootstrap で Keychain へ転記（API key 値は echo しない）:
-#    op signin
-#    KEY=$(op item get "FRED API" --field credential --reveal 2>/dev/null \
-#          || op item get "FRED API" --field password   --reveal 2>/dev/null \
-#          || op item get "FRED API" --field "api key"  --reveal 2>/dev/null)
-#    [ -n "$KEY" ] && security add-generic-password -a "$USER" -s "FRED_API_KEY" -w "$KEY" -A -U && unset KEY
-# 4. ランタイムは Python が Keychain から自動取得（解決順: env → Keychain → .env）
+# 2. 1Password の Agents 保管庫に item「Fred」を作り、フィールド credential に値を入れる
+#    （Twelve Data も同様に item「TwelveData」/ フィールド credential）
+# 3. 参照は .env.tpl に記載済み。ランタイムへは op run が環境変数として注入する:
+#      ./scripts/run-with-secrets.sh uv run python main.py
+#    macOS Keychain / 平文 .env からの読み取りは廃止した。
 ```
 
 ### 2-3. 実行
@@ -152,7 +149,7 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 
 | 変数 | 値 | 出典 |
 |---|---|---|
-| `TWELVEDATA_API_KEY` | **Full** = Keychain `twelvedata-api-key` から `.zshrc` で export / **Bootstrap** = Routine ごとに UI で個別登録 | Twelve Data（価格 API）|
+| `TWELVEDATA_API_KEY` | `op://Agents/TwelveData/credential`（`.env.tpl` 経由で `op run` が注入）| Twelve Data（価格 API）|
 | `ANTHROPIC_API_KEY` | **Full** = `claude` CLI が自動解決 / **Bootstrap** = Routines が自動注入 | — |
 
 ### 4-3. Setup script（Bootstrap 期のみ）
@@ -427,3 +424,22 @@ JSON のパース / スキーマ検証に失敗した場合は**リトライ 1 �
 
 全実行の入出力（プロンプト全文・応答全文・所要時間・出力パス・フォールバック有無）を
 `logs/intel_runs.jsonl` に 1 行 1 実行で追記する。gitignore 対象。
+
+## シークレット管理（1Password）
+
+シークレットの値はリポジトリに置かない。1Password の `Agents` 保管庫に登録し、
+`.env.tpl` の `op://` 参照経由で実行時にのみ注入する。
+
+```bash
+# 初回セットアップ（pre-commit の gitleaks フックを有効化）
+git config core.hooksPath scripts/hooks
+
+# 実行（op run でシークレットを注入）
+./scripts/run-with-secrets.sh <command>
+
+# launchd / cron からの非対話実行（サービスアカウントトークンを使う）
+./scripts/run-with-secrets.sh --batch <command>
+```
+
+前提: `op`（1Password CLI）と `gitleaks` がインストール済みであること。
+`--batch` は `~/.config/laa/op-service-token` を読む。

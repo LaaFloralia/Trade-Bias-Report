@@ -3,10 +3,10 @@
 Replaces previous Investing.com / CNBC US10Y scraping. Adds DGS2 and DTWEXBGS
 (Broad USD Index, NOT a DXY substitute — emitted as separate USD macro proxy).
 
-API key resolution order (never logged):
-  1. Environment variable FRED_API_KEY
-  2. macOS Keychain (service: FRED_API_KEY, account: $USER)
-  3. .env file via python-dotenv
+API key resolution (never logged):
+  環境変数 FRED_API_KEY のみ。値は 1Password の op://Agents/Fred/credential に置き、
+  scripts/run-with-secrets.sh（op run --env-file=.env.tpl）経由で注入する。
+  macOS Keychain / .env 平文からの読み取りは廃止した。
 
 Fetched series:
   - DGS10:    US 10Y Treasury constant maturity rate
@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,7 +41,6 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
-from dotenv import load_dotenv
 
 FRED_BASE = "https://api.stlouisfed.org/fred"
 
@@ -83,46 +81,10 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 STALE_LOOKBACK_DAYS = 7  # how many recent JSON files to scan for fallback
 
 
-def _read_keychain(service: str, account: Optional[str] = None) -> Optional[str]:
-    """Read a secret from macOS Keychain. Returns None on miss / error.
-    NEVER prints the value."""
-    if account is None:
-        account = os.getenv("USER", "")
-    try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-s", service, "-a", account, "-w"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            value = result.stdout.strip()
-            return value or None
-    except Exception:
-        pass
-    return None
-
-
 def get_fred_api_key() -> Optional[str]:
-    """Resolve the FRED API key with the documented precedence.
-    Returns None if no source provides one. Never logs the value."""
-    # 1. environment variable (process inherited from shell)
-    key = os.getenv("FRED_API_KEY")
-    if key:
-        return key
-
-    # 2. macOS Keychain (silent access via -A registration)
-    key = _read_keychain("FRED_API_KEY")
-    if key:
-        return key
-
-    # 3. .env file (project root)
-    dotenv_path = PROJECT_ROOT / ".env"
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path, override=False)
-        key = os.getenv("FRED_API_KEY")
-        if key:
-            return key
-
-    return None
+    """Resolve the FRED API key from the environment.
+    Returns None if unset. Never logs the value."""
+    return os.getenv("FRED_API_KEY") or None
 
 
 def _now_utc_iso() -> str:
@@ -235,7 +197,7 @@ def fetch_fred_series(series_id: str, api_key: Optional[str] = None) -> dict:
     meta = _empty_metadata(series_id)
 
     if not api_key:
-        meta["error"] = "FRED_API_KEY not configured (env / Keychain / .env all empty)"
+        meta["error"] = "FRED_API_KEY not configured (環境変数が未設定)"
         # try stale fallback regardless
         cached = _load_last_known(series_id)
         if cached:
@@ -342,8 +304,9 @@ if __name__ == "__main__":
     print(f"FRED_API_KEY resolved: {bool(api_key)} (len={len(api_key) if api_key else 0})")
     if not api_key:
         print()
-        print("Setup: register FRED_API_KEY to macOS Keychain with silent access:")
-        print('  security add-generic-password -a "$USER" -s "FRED_API_KEY" -w "<key>" -A -U')
+        print("Setup: 1Password の op://Agents/Fred/credential に登録したうえで、")
+        print("       ./scripts/run-with-secrets.sh 経由で実行する:")
+        print("  ./scripts/run-with-secrets.sh uv run python scrapers/fred.py")
         print("Get a free key at https://fred.stlouisfed.org/")
         sys.exit(1)
     print()
