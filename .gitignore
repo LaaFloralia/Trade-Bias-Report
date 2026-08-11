@@ -4,3 +4,13 @@ __pycache__/
 output/
 logs/
 *.pyc
+
+# --- secrets (1Password 移行) ---
+.env
+.env.*
+!.env.tpl
+*.pem
+*.key
+*.p12
+credentials.json
+!.env.example
