@@ -9,6 +9,8 @@ Weekly / Deep レポートは定期実行されず、オンデマンド運用に
   2. 前回 Daily アンカー: 直近 (当日より前) の Daily レポートの
      セクション1.5 (ファンダ大局バイアス)。無ければセクション0 にフォールバック。
      レポート間に記憶がないため、大局バイアスの急変検知に使う。
+     加えてセクション0 (エグゼクティブサマリー) を `prev_daily_exec` キーに
+     格納し、[前回 Daily 結論] として前回レビュー (答え合わせ) に使う (additive)。
 
 パス解決: 環境変数 BRAIN_PATH > $HOME/Brain (daily-bias.md コマンドと同じ規約)。
 ローカルファイル読み込みのみでネットワークに出ない。Brain が無い環境
@@ -38,7 +40,7 @@ XAU_TF_DIRS = [
 ]
 
 WEEKLY_STALE_DAYS = 9   # 週次アンカーの許容鮮度 (1 週間 + 猶予)
-DAILY_STALE_DAYS = 3    # 前回 Daily の許容鮮度
+DAILY_STALE_DAYS = 7    # 前回 Daily の許容鮮度 (オンデマンド運用で生成間隔が不定のため 3→7)
 XAU_TF_STALE_DAYS = 1   # レベル系は日次で失効 (前日付までを fresh 扱い)
 MAX_SUMMARY_CHARS = 1200
 
@@ -172,15 +174,16 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
     Returns:
         {
             "source": "Brain/Calendar (前回レポート)",
-            "weekly": dict | None,      # 最新 Weekly 系のセクション0 (経過日数・stale 付き)
-            "prev_daily": dict | None,  # 当日より前の最新 Daily のセクション1.5 (無ければ0)
+            "weekly": dict | None,          # 最新 Weekly 系のセクション0 (経過日数・stale 付き)
+            "prev_daily": dict | None,      # 当日より前の最新 Daily のセクション1.5 (無ければ0)
+            "prev_daily_exec": dict | None, # 同じ前回 Daily のセクション0 (結論・additive)
             "note": str | None,
             "error": str | None,
         }
     """
     today = today or date.today()
     base = {"source": "Brain/Calendar (前回レポート)", "weekly": None, "prev_daily": None,
-            "xau_tf": None, "note": None, "error": None}
+            "prev_daily_exec": None, "xau_tf": None, "note": None, "error": None}
     brain = _resolve_brain_path()
     if not brain.is_dir():
         base["note"] = f"Brain パスが存在しない ({brain})。アンカーなしで続行"
@@ -199,6 +202,14 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
                 patterns=["セクション1.5", "ファンダメンタル大局"],
                 fallback_patterns=["セクション0", "エグゼクティブサマリー"],
             )
+            # additive: 同じ前回 Daily のセクション0 (結論)。失敗しても既存挙動を壊さない
+            try:
+                base["prev_daily_exec"] = _build_anchor(
+                    daily_found, today, DAILY_STALE_DAYS,
+                    patterns=["セクション0", "エグゼクティブサマリー"],
+                )
+            except Exception:  # noqa: BLE001
+                base["prev_daily_exec"] = None
         # XAUUSD レベル SSoT: 当日分があれば当日、無ければ直近 (stale 判定は 1 日)
         xau_found = _latest_report(brain, XAU_TF_DIRS)
         if xau_found:
@@ -238,6 +249,11 @@ def format_anchor_lines(anchor: dict) -> list[str]:
     lines.append("")
     _emit("前回 Daily", anchor.get("prev_daily"), DAILY_STALE_DAYS)
     lines.append("")
+    # additive: 前回 Daily のセクション0 (結論)。抽出できた場合のみ出力する
+    pe = anchor.get("prev_daily_exec")
+    if pe and pe.get("summary"):
+        _emit("前回 Daily 結論", pe, DAILY_STALE_DAYS)
+        lines.append("")
     xt = anchor.get("xau_tf")
     if not xt:
         lines.append("[XAU テクニカル] なし（XAUUSD レベルは TwelveData 値のみ）")

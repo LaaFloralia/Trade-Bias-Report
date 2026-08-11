@@ -62,7 +62,9 @@ def test_cmd_brief_stale_data_adds_md_banner_and_json_metadata(tmp_path, monkeyp
             return "# Report\nbody"
         return json.dumps(VALID_OBJ, ensure_ascii=False)
 
-    monkeypatch.setattr(intel, "run_claude", runner)
+    monkeypatch.setattr(intel, "run_llm", runner)
+    # PDF 発行 (subprocess → playwright → Drive コピー) はテストでは実行しない
+    monkeypatch.setattr(intel, "publish_report_pdf", lambda md_path, timeout=300: {})
 
     rc = intel.cmd_brief(argparse.Namespace(weekly=False, reuse_data=False, quick=True))
     assert rc == 0

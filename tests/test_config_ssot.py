@@ -44,6 +44,20 @@ def test_config_yaml_loads_expected_shape():
     assert config.EURUSD_DXY_FACTOR == 50.14348112
 
 
+def test_output_setting_accessor_safe_on_missing_keys():
+    """output セクションの安全アクセサ: 設定値を返し、キー欠落時は None。"""
+    gdrive_dir = config.get_output_setting("gdrive_pdf_dir")
+    assert isinstance(gdrive_dir, str) and "Bias-Reports" in gdrive_dir
+    assert config.get_output_setting("no_such_key") is None
+
+
+def test_x_search_disabled_off_switch():
+    """x_search はオフスイッチ契約で停止中 (enabled: false、キー構造は温存)。"""
+    cfg = config.load_x_search_config()
+    assert cfg["enabled"] is False
+    assert "input_glob" in cfg  # キー構造の温存 (再有効化は enabled だけで戻せる)
+
+
 def test_scraper_tables_come_from_config():
     from scrapers import (
         btc_etf,
@@ -99,19 +113,17 @@ def test_no_hardcoded_instrument_definitions_in_scrapers():
 
 def test_no_crude_oil_references_in_active_files():
     """原油関連の定義・参照が削除済みであること（AUDIT.md 等の時点記録は対象外）。"""
+    # 2 本体制 (2026-08 統合): アクティブなプロンプトとコマンドは Daily/Weekly 各 1 本。
+    # 旧 Deep プロンプトは archive/prompts/ に凍結済みのため走査対象外。
     targets = [
         "config.yaml",
         "config.py",
         "main.py",
         "master_prompt.md",
         "master_prompt_weekly.md",
-        "master_prompt_deep.md",
-        "master_prompt_deep_weekly.md",
         "README.md",
         ".claude/commands/daily-bias.md",
         ".claude/commands/weekly-bias.md",
-        ".claude/commands/deep-bias.md",
-        ".claude/commands/deep-bias-weekly.md",
     ] + [str(p.relative_to(PROJECT_ROOT)) for p in (PROJECT_ROOT / "scrapers").glob("*.py")]
 
     violations = []

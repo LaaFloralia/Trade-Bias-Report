@@ -134,9 +134,13 @@ btc_etf_tickers:
 # いつでも外せる: enabled: false にすると完全無効（プロンプトは統合前と同一になる）。
 # 入力ファイルは Hermes cron が書き込む（契約: docs/XSEARCH_INTEGRATION.md）。
 x_search:
-  enabled: true
+  enabled: false
   input_glob: "output/xsearch_*.json"   # xsearch_YYYY-MM-DD.json
   max_age_hours: 30                     # これより古い入力は使わない
   watch_accounts:                       # Tier 1: 一次報道アカウント（表示用メタ。検索自体は Hermes 側）
     - handle: NickTimiraos
       label: "Nick Timiraos (WSJ Fed 番記者)"
+
+# --- レポート出力（PDF / Google Drive）---
+output:
+  gdrive_pdf_dir: "/Users/laa/Library/CloudStorage/GoogleDrive-laalabx@gmail.com/マイドライブ/Trading/Bias-Reports"

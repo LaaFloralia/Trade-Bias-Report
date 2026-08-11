@@ -1,13 +1,15 @@
 """Intel pipeline — ヘッドレス Bias 分析
 
-データ取得 (main.py) → claude -p ヘッドレス分析 (既存 master_prompt 使用) →
-二重出力 (人間用 Markdown を Brain へ / 機械用 JSON を output/intel/ へ) を
-一気通貫で実行する。LLM 呼び出しは Claude Code CLI のヘッドレスモード
-(`claude -p`) を使用し、Anthropic API 直叩きは行わない（サブスク運用方針）。
+データ取得 (main.py) → LLM ヘッドレス分析 (既存 master_prompt 使用) →
+二重出力 (人間用 Markdown を Brain へ / 機械用 JSON を output/intel/ へ) →
+PDF 発行 (scripts/publish_report.py 経由で Google Drive へ、非致命) を
+一気通貫で実行する。LLM 呼び出しは既定で Claude Code CLI のヘッドレスモード
+(`claude -p`)。環境変数 INTEL_ENGINE=codex で Codex CLI (`codex exec`) に
+切り替えられる（エンジンシーム）。Anthropic API 直叩きは行わない（サブスク運用方針）。
 
 使い方:
-    python scripts/intel.py brief --daily            # 日次ブリーフ一式
-    python scripts/intel.py brief --weekly           # 週次（COT 込み）
+    python scripts/intel.py brief --daily            # 日次ブリーフ一式（COT 常時取得）
+    python scripts/intel.py brief --weekly           # 週次（scraped_data_weekly_ prefix）
     python scripts/intel.py brief --daily --reuse-data
         # 当日の scraped_data_*.txt が既にあれば再スクレイピングを省略
     python scripts/intel.py brief --daily --quick
@@ -22,15 +24,19 @@
                  risk_events_next_24h: [str], positioning_summary: str,
                  confidence: 0.0〜1.0, data_as_of: YYYY-MM-DD,
                  generated_at: ISO8601 }
-    3. 実行ログ : logs/intel_runs.jsonl（全実行の入出力を JSONL で追記）
+    3. PDF + Drive: output/*.pdf と config.yaml output.gdrive_pdf_dir へのコピー
+       （publish_report.py に委譲。失敗しても run 全体は成功のまま）
+    4. 実行ログ : logs/intel_runs.jsonl（全実行の入出力を JSONL で追記）
 
 JSON パース/スキーマ検証に失敗した場合はリトライ 1 回 → なお失敗なら
 no_trade=true の安全側 JSON にフォールバックする（exit 0 のまま）。
 
 環境変数:
     BRAIN_PATH           Brain リポジトリのルート（既定: ~/Brain）
+    INTEL_ENGINE         LLM エンジン: claude | codex（既定: claude）
     INTEL_CLAUDE_BIN     claude CLI のパス（既定: claude）
-    INTEL_CLAUDE_TIMEOUT claude 1 呼び出しのタイムアウト秒（既定: 900）
+    INTEL_CODEX_BIN      codex CLI のパス（既定: codex、INTEL_ENGINE=codex 時のみ使用）
+    INTEL_CLAUDE_TIMEOUT LLM 1 呼び出しのタイムアウト秒（既定: 900、両エンジン共通）
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime
@@ -69,7 +76,7 @@ MODES = {
         "md_prefix": "Daily_Bias_Report",
         "weekly_flag": False,
         "scraped_prefix": "scraped_data_",
-        "length_hint": "全体 2000-3500 字を目安",
+        "length_hint": "全体 2400-3800 字を目安",
     },
     "weekly": {
         "master_prompt": "master_prompt_weekly.md",
@@ -78,7 +85,7 @@ MODES = {
         "md_prefix": "Weekly_Bias_Report",
         "weekly_flag": True,
         "scraped_prefix": "scraped_data_weekly_",
-        "length_hint": "全体 3000-5000 字を目安",
+        "length_hint": "全体 4500-6500 字を目安",
     },
 }
 
@@ -193,7 +200,7 @@ def extract_json_object(text: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# claude -p ヘッドレス実行
+# LLM ヘッドレス実行（エンジンシーム: claude -p / codex exec）
 # ---------------------------------------------------------------------------
 
 def run_claude(prompt: str, timeout: int = None) -> str:
@@ -222,9 +229,87 @@ def run_claude(prompt: str, timeout: int = None) -> str:
     return out
 
 
+def run_codex(prompt: str, timeout: int = None) -> str:
+    """codex CLI を非対話 (`codex exec`) で実行し、最終メッセージを返す。失敗は RuntimeError。
+
+    プロンプトの受け渡し（`codex exec --help` で確認済み、2026-08-11）:
+      - 位置引数 [PROMPT]、または `-` 指定で stdin から読む。長文のため stdin を使う。
+      - 最終応答は `--output-last-message <FILE>` で回収する
+        （stdout はイベントログ混在のため信頼しない）。
+      - レポート生成にツール実行は不要なので `--sandbox read-only` で実行する。
+    """
+    codex_bin = os.environ.get("INTEL_CODEX_BIN", "codex")
+    timeout = timeout or CLAUDE_TIMEOUT
+    with tempfile.TemporaryDirectory(prefix="intel_codex_") as td:
+        out_file = Path(td) / "last_message.txt"
+        cmd = [
+            codex_bin, "exec",
+            "--sandbox", "read-only",
+            "--output-last-message", str(out_file),
+            "-",
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=str(PROJECT_ROOT),
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"codex CLI が見つかりません: {codex_bin}。"
+                "INTEL_ENGINE=claude（または unset INTEL_ENGINE）で Claude エンジンに"
+                "切り替えるか、INTEL_CODEX_BIN で codex のパスを指定してください"
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"codex exec がタイムアウト ({timeout}s)")
+
+        if proc.returncode != 0:
+            stderr_tail = (proc.stderr or "")[-500:]
+            raise RuntimeError(f"codex exec exit {proc.returncode}: {stderr_tail}")
+        out = ""
+        if out_file.exists():
+            out = out_file.read_text(encoding="utf-8").strip()
+        if not out:
+            # --output-last-message が書かれない異常系のみ stdout にフォールバック
+            out = (proc.stdout or "").strip()
+        if not out:
+            raise RuntimeError("codex exec の出力が空")
+        return out
+
+
+def run_llm(prompt: str, timeout: int = None) -> str:
+    """エンジンシーム: 環境変数 INTEL_ENGINE (claude|codex、既定 claude) で切り替える。"""
+    engine = os.environ.get("INTEL_ENGINE", "claude").strip().lower()
+    if engine == "codex":
+        return run_codex(prompt, timeout=timeout)
+    if engine != "claude":
+        print(f"[intel] [WARN] 未知の INTEL_ENGINE={engine!r} → claude を使用")
+    return run_claude(prompt, timeout=timeout)
+
+
 # ---------------------------------------------------------------------------
 # Step 1: データ取得
 # ---------------------------------------------------------------------------
+
+def secrets_wrapper_prefix() -> Optional[List[str]]:
+    """1Password 注入ラッパー (scripts/run-with-secrets.sh --batch) のコマンド接頭辞を返す。
+
+    2026-08-10 のシークレット 1Password 移行以降、TWELVEDATA_API_KEY / FRED_API_KEY は
+    環境変数のみで解決されるため、main.py の subprocess 実行時に op run で注入する。
+    使えない環境（wrapper なし / service token なし / INTEL_SECRETS_WRAPPER=0）では
+    None を返し、従来どおり素の実行にフォールバックする（該当スクレイパーは取得不可扱い）。
+    """
+    if os.environ.get("INTEL_SECRETS_WRAPPER", "1") == "0":
+        return None
+    wrapper = PROJECT_ROOT / "scripts" / "run-with-secrets.sh"
+    token = Path.home() / ".config" / "laa" / "op-service-token"
+    if wrapper.exists() and token.exists():
+        return [str(wrapper), "--batch"]
+    return None
+
 
 def scraped_txt_path(mode: str, date_str: str) -> Path:
     return OUTPUT_DIR / f"{MODES[mode]['scraped_prefix']}{date_str}.txt"
@@ -267,11 +352,20 @@ def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) 
         print(f"[intel] --reuse-data: 既存の {txt_path.name} を使用")
         return txt_path
 
-    cmd = [sys.executable, str(PROJECT_ROOT / "main.py")]
+    base_cmd = [sys.executable, str(PROJECT_ROOT / "main.py")]
     if weekly:
-        cmd.append("--weekly")
-    print(f"[intel] Step 1: データ取得を実行 ({' '.join(cmd)})")
+        base_cmd.append("--weekly")
+    wrap = secrets_wrapper_prefix()
+    cmd = (wrap + base_cmd) if wrap else base_cmd
+    if wrap:
+        print("[intel] Step 1: データ取得を実行（1Password 注入: run-with-secrets.sh --batch）")
+    else:
+        print(f"[intel] Step 1: データ取得を実行 ({' '.join(cmd)})")
     proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT), timeout=1200)
+    if proc.returncode != 0 and wrap:
+        # op 側の障害（トークン失効等）でデータ取得ごと死なないよう素の実行で 1 回再試行
+        print(f"[intel] [WARN] op 注入付き実行が exit {proc.returncode} → 注入なしで再試行")
+        proc = subprocess.run(base_cmd, cwd=str(PROJECT_ROOT), timeout=1200)
     if proc.returncode != 0:
         raise RuntimeError(f"main.py がexit {proc.returncode} で失敗")
     if not txt_path.exists():
@@ -445,6 +539,33 @@ def save_md_to_brain(md_text: str, mode: str, date_str: str) -> Path:
     return md_path
 
 
+def publish_report_pdf(md_path: Path, timeout: int = 300) -> dict:
+    """publish_report.py を subprocess で呼び、PDF 発行と Drive コピーを行う。
+
+    stdout の `PDF:` / `Drive:` 行をパースして {"pdf_path": ..., "drive_path": ...}
+    を返す（出なかったキーは含めない）。publish_report.py はソフト障害を exit 0 で
+    飲み込む設計だが、それ以外の失敗もここでは RuntimeError にして呼び出し側の
+    try/except（非致命）に委ねる。
+    """
+    proc = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "scripts" / "publish_report.py"), str(md_path)],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(PROJECT_ROOT),
+    )
+    result: dict = {}
+    for line in (proc.stdout or "").splitlines():
+        if line.startswith("PDF:"):
+            result["pdf_path"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Drive:"):
+            result["drive_path"] = line.split(":", 1)[1].strip()
+    if proc.returncode != 0:
+        stderr_tail = (proc.stderr or "")[-300:]
+        raise RuntimeError(f"publish_report.py exit {proc.returncode}: {stderr_tail}")
+    return result
+
+
 def save_intel_json(obj: dict, mode: str, date_str: str) -> Path:
     INTEL_DIR.mkdir(parents=True, exist_ok=True)
     json_path = INTEL_DIR / f"intel_{mode}_{date_str}.json"
@@ -502,7 +623,7 @@ def cmd_brief(args) -> int:
 
         # Step 2: 人間用 MD
         md_text, report_prompt = generate_report_md(
-            mode, scraped_text, run_claude, data_as_of, date_str, extra_block=extra_block
+            mode, scraped_text, run_llm, data_as_of, date_str, extra_block=extra_block
         )
         if data_as_of != date_str:
             md_text = STALE_DATA_BANNER.format(
@@ -515,8 +636,23 @@ def cmd_brief(args) -> int:
         run_record["outputs"]["md_path"] = str(md_path)
         print(f"[intel] MD 保存: {md_path}")
 
+        # Step 2.5: PDF 発行 + Google Drive コピー（非致命: 失敗しても run は続行）
+        try:
+            pub = publish_report_pdf(md_path)
+            if pub.get("pdf_path"):
+                run_record["outputs"]["pdf_path"] = pub["pdf_path"]
+                print(f"[intel] PDF 発行: {pub['pdf_path']}")
+            if pub.get("drive_path"):
+                run_record["outputs"]["drive_path"] = pub["drive_path"]
+                print(f"[intel] Drive コピー: {pub['drive_path']}")
+            if not pub:
+                print("[intel] [WARN] PDF 発行はスキップされた（publish_report.py の WARN を参照）")
+        except Exception as pub_exc:  # noqa: BLE001 — PDF はレポート本体を止めない
+            run_record["outputs"]["pdf_error"] = f"{type(pub_exc).__name__}: {pub_exc}"
+            print(f"[intel] [WARN] PDF 発行に失敗（非致命・続行）: {pub_exc}")
+
         # Step 3: 機械用 JSON（リトライ → フォールバック内蔵）
-        intel_obj, fallback_used, json_calls = generate_machine_json(md_text, run_claude)
+        intel_obj, fallback_used, json_calls = generate_machine_json(md_text, run_llm)
         intel_obj = attach_pipeline_metadata(intel_obj, data_as_of, generated_at)
         run_record["claude_calls"].extend(json_calls)
         run_record["json_fallback_used"] = fallback_used

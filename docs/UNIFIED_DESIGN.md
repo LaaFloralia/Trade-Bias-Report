@@ -1,0 +1,80 @@
+# UNIFIED_DESIGN — チャート外分析 4 本→2 本統合（2026-08-11）
+
+設計者: Claude (Fable 5)。前段調査: 4 プロンプトのセクション単位インベントリ + 起動フロー/データ供給の依存調査 + 独立 3 設計案の合議（2026-08-09〜10 実施）。
+
+## 1. 結論
+
+| 旧（4 本） | 新（2 本） |
+|---|---|
+| master_prompt.md（Daily 速報） | **master_prompt.md（統合 Daily）** — オンデマンドで「その瞬間の全体像」 |
+| master_prompt_deep.md（Deep Daily） | ↑ に価値要素を吸収して廃止（archive/prompts/ に凍結） |
+| master_prompt_weekly.md（Weekly 速報） | **master_prompt_weekly.md（統合 Weekly）** — 「前回レポート以降の振り返り + 来週の展望」 |
+| master_prompt_deep_weekly.md（Deep Weekly） | ↑ に W1 先週レビュー等を吸収して廃止（同上） |
+
+**深さ軸（速報/Deep）を廃止**し、時間軸 2 本のみ残す。理由:
+
+1. 定期実行の廃止（オンデマンド化）により「Daily/Weekly」の意味が「毎朝/毎週月曜」から「トレード直前/週末レビュー」に変わった。深さの使い分けは自然に時間軸に畳み込まれる（直前=速い Daily、週末=深い Weekly）
+2. Deep は Daily の上位互換ではなかった（セクション1.5 ファンダ大局は Daily 専有。Daily が 4 本中最も精錬されている——社長の認識と一致）
+3. データ層は既に統合済みだった（`--weekly` の実データ差分は COT のみ、+約4秒）
+
+## 2. 統合の主要判断
+
+| 判断 | 内容 | 根拠 |
+|---|---|---|
+| COT 常時取得化 | main.py の weekly ゲートを外す | 差分 +4 秒。Daily でも XAU-TF 百分位の裏付けに使う |
+| XAUUSD 価格レベルの委譲 | IPDA / 流動性マップ / PWH・PWL テーブル / COT 生値（XAU 分）を削除し XAU-TF アンカー引用に一本化 | 旧プロンプト自身が「検索ベースの参考値」と自認。Dukascopy 実データ（検証済みコード）に品質で負ける重複 |
+| 季節性 / Quarterly Shift 削除 | 全廃 | データパイプラインが存在せず LLM の記憶頼み（ハルシネーション源）。tradeability も low |
+| Weekly Profile 12 パターン / 曜日単位 PO3 予測 削除 | 全廃 | オンデマンド起動では予測対象の曜日の半分が既に過去 |
+| 先週レビューの再設計 | 「暦週」基準 → 「前回レポート発行日以降」基準。入力はアンカー + 前回レポート本文 + intel JSON | 旧 W1-3 は前回レポートを Read する手順が未定義で実質ハルシネーションだった（AUDIT.md L282）。dev 全体で唯一の自己フィードバック機構なので実データ駆動で存続 |
+| 信頼度スコアの一本化 | 7/8/11 項目の 3 体系 → 8 項目 1 体系（Daily/Weekly 共通） | 閾値: ≥7 High / 5-6 Med / 3-4 Med-cautious / ≤2 Low(様子見)。初期値であり実生成分布で調整 |
+| 銘柄の非対称化 | XAUUSD フル / DXY 準フル / USDJPY・BTC コンパクト | 社長のトレードは XAUUSD 中心・夜間 killzone。4 銘柄対称が字数を 4 倍にしていた |
+| WebSearch の削減（Daily） | 8〜12 → 基本 2 + 条件付き最大 4 | トレード直前の所要時間要件。scraped_data が 20 ラベル分の実データを既に持つ。深掘りは Weekly に集約（4〜8 クエリ） |
+| 自己検証の軽量化 | 4 本立て + 自動再生成ループ → 3 チェック 1 パス | 生成時間を倍にする割に判断を変えない。欠損列挙は維持（黙る欠損の検知はデータ充足の生命線） |
+| Routines / Slack 経路の削除 | コマンドから分岐を撤去 | STACK.md §23 で不採用決定済みの残骸 |
+| X-Search 停止 | config.yaml x_search.enabled=false + Hermes cron pause | 社長判断（X は手動で直接確認）。8/1 以降 xAI 認証切れで死んでいた |
+
+## 3. 出力（新運用）
+
+| 成果物 | 置き場所 |
+|---|---|
+| MD（正本） | Brain `Calendar/{Daily,Weekly}-Bias/`（master 直接 commit+push、従来どおり） |
+| PDF（常時生成） | `output/` + Google Drive ローカル同期 `マイドライブ/Trading/Bias-Reports/`（scripts/publish_report.py。Drive 未マウント時は WARN してスキップ） |
+| 機械用 JSON | `output/intel/intel_{daily,weekly}_YYYY-MM-DD.json`（logos-engine 契約、無変更） |
+| XAU-TF レポート | 従来どおり Brain `Calendar/XAU-TF/` + 同じ Drive フォルダに PDF |
+
+起動: `/daily-bias`（約 4〜5 分。Step 0 で XAU-TF レポートが古ければ自動再生成 → main.py → 生成 → MD+PDF+push）/ `/weekly-bias`（約 8〜12 分。前回レポート・intel JSON を Read して前回レビューを実データで実施）/ ヘッドレスは `scripts/intel.py brief --daily|--weekly`（Hermes 経由の Telegram 起動も従来どおり）。
+
+推論エンジン: 既定 Claude（サブスク枠、`claude -p`）。`INTEL_ENGINE=codex` で Codex CLI に切替可能なシームを intel.py に用意（実験的扱い）。
+
+## 4. 維持した外部契約
+
+1. H1 タイトル / `## セクション0: エグゼクティブサマリー` / `信頼度: High|Med|Med-cautious|Low`（render_report.py 表紙 + report_anchor 抽出）
+2. Daily の `## 〜ファンダメンタル大局〜` 見出し（report_anchor が次回へ大局を継承）
+3. XAUUSD レベル SSoT = XAU-TF アンカー（非 STALE 時。乖離時は「乖離: TD ○○ / XAU-TF ○○（採用）」）
+4. scraped_data ファイル名規約（`scraped_data(_weekly)_YYYY-MM-DD.*`）と intel JSON 6 キー（logos-engine gates.py）
+5. Brain 保存先ディレクトリ名・ファイル名規約（`*_Bias_Report_YYYY-MM-DD.md`）
+6. Twelve Data 呼び出し設計（レート制限回避の直列実行）に不介入
+
+変更した契約: report_anchor の DAILY_STALE_DAYS 3→7（オンデマンド間隔対応）、prev_daily にセクション0 抽出（`prev_daily_exec`）を追加（additive）。
+
+## 5. 捨てたものの完全リスト（復活させる場合は本ドキュメントを更新すること）
+
+- IPDA Data Range（20/40/60 日）テーブルと解釈 — XAU-TF §2/§3 が代替
+- 未到達 PD Array テーブル — 「価格はチャートで確認」と自認していた空欄表
+- 季節性 & Quarterly Shift（詳述・他銘柄サマリー・スコア項目）
+- Weekly Profile 12 パターン推定 / 曜日単位 Weekly PO3 予測
+- 週間パフォーマンステーブル / 先週イベント年表（→ セクション1 前回レビューに吸収）
+- ICT テクニカルフォーカスレベル表（XAUUSD 分。他銘柄は TwelveData 値をプラン内で使用）
+- COT 生テーブルの XAUUSD 行（XAU-TF 百分位を正とし、乖離時のみ併記）
+- 4 銘柄対称のフル詳細分析（A〜D × 4 銘柄の繰り返し）
+- Deep 系自己検証のフルセット（スコア再計算表 + 自動再生成ループ）
+- 「プラン 2 は別銘柄優先」制約（→ 同一銘柄の逆条件シナリオ）
+- Routines 環境分岐 / Slack 通知 / 字数制限の Routines 特例
+- Hermes X-Search 統合（enabled=false。契約と実装は温存、docs/XSEARCH_INTEGRATION.md 参照）
+
+## 6. 関連ファイル
+
+- 実装: main.py / config.yaml / config.py / scripts/{intel,publish_report,render_report}.py / scrapers/report_anchor.py / .claude/commands/{daily-bias,weekly-bias}.md / tests/
+- アーカイブ: archive/prompts/{master_prompt_deep,master_prompt_deep_weekly}.md
+- dev ルート: .claude/commands/xau-tf.md（PDF 発行ステップ追加）
+- 上流ドキュメント: ~/HQ/STACK.md §8（slash commands）/ §21（チャート外分析）を同日更新

@@ -6,7 +6,10 @@ LLM 分析・レポート生成・Brain 保存は `.claude/commands/daily-bias.m
 
 実行方法:
     python main.py            # 日次データ取得 (output/scraped_data_*.{json,txt} を保存)
-    python main.py --weekly   # 週次データ取得 (COT を含む)
+    python main.py --weekly   # 週次データ取得 (ファイル名 prefix が scraped_data_weekly_ になる)
+
+COT は Daily / Weekly を問わず常時取得する (2026-08 の 2 本体制統合以降)。
+--weekly はファイル名 prefix (scraped_data_ / scraped_data_weekly_) の分岐のみを担う。
 """
 
 import asyncio
@@ -103,7 +106,8 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
 
 async def collect_all_data(weekly: bool = False) -> dict:
     """MyFXBook優先でデータを取得し、失敗銘柄はFXSSI→IGの順でフォールバックする。
-    weekly=True のときは COT データも取得する。
+    COT データは weekly に関係なく常時取得する（weekly 引数はファイル名 prefix 用に
+    呼び出し側で使われるのみで、取得内容は Daily / Weekly で同一）。
     新規データソース: DXY, FRED (DGS10/DGS2/DTWEXBGS), 経済指標カレンダー, FedWatch, BTC ETFフロー
     """
     print("[1/4] データ取得を開始...")
@@ -113,7 +117,7 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "price_data": None,  # Twelve Data API
         "retail_sentiment": {},  # 銘柄ごとに1ソースのみ格納
         "coinglass": {},
-        "cot": None,  # ウィークリー時のみ使用
+        "cot": None,  # 常時取得（Daily でもポジショニング分析に使用）
         "dxy": None,
         "fred": None,  # FRED: DGS10 / DGS2 / DTWEXBGS / DFII10 (実質金利) / T10YIE (インフレ期待)
         "economic_calendar": None,
@@ -252,19 +256,18 @@ async def collect_all_data(weekly: bool = False) -> dict:
                     }
                     print(f"  [ERROR] ig/{symbol}: {err}")
 
-    # --- COT データ取得（ウィークリーのみ）---
-    if weekly:
-        print("  COT: CFTC APIからデータ取得中...")
-        try:
-            cot = fetch_cot_data()
-            results["cot"] = cot
-            if cot.get("error"):
-                print(f"  [WARN]  COT: 一部エラー: {cot['error']}")
-            else:
-                print(f"  [OK]    COT: Report Date {cot['report_date']}")
-        except Exception as e:
-            results["cot"] = {"text": None, "error": str(e)}
-            print(f"  [ERROR] COT: {e}")
+    # --- COT データ取得（常時。Daily でも機関ポジショニングに使う）---
+    print("  COT: CFTC APIからデータ取得中...")
+    try:
+        cot = fetch_cot_data()
+        results["cot"] = cot
+        if cot.get("error"):
+            print(f"  [WARN]  COT: 一部エラー: {cot['error']}")
+        else:
+            print(f"  [OK]    COT: Report Date {cot['report_date']}")
+    except Exception as e:
+        results["cot"] = {"text": None, "error": str(e)}
+        print(f"  [ERROR] COT: {e}")
 
     # --- 新規データソース（全実行で取得）---
     # FOMC週判定（FedWatchスクレイピングの要否を決定）
@@ -716,7 +719,8 @@ def format_scraped_data(data: dict) -> str:
         lines.append("- 取得不可（CME / Investing.com 両ソースから値抽出失敗）")
 
     # ============================================================
-    # Deep Bias 強化セクション (master_prompt_deep.md S2-X / S5-X / S6-X 用)
+    # Deep 強化セクション (旧 master_prompt_deep.md 由来。2026-08 の統合後は
+    # master_prompt.md / master_prompt_weekly.md が S2-X / S5-X / S6-X 相当を参照)
     # ============================================================
 
     # --- DXY 構成通貨スプレッド分解 (S2-X) ---
@@ -868,7 +872,7 @@ def format_scraped_data(data: dict) -> str:
                         f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')})"
                     )
 
-    # --- COT（ウィークリー時のみ）---
+    # --- COT（常時取得）---
     cot = data.get("cot")
     if cot is not None:
         lines.append("")

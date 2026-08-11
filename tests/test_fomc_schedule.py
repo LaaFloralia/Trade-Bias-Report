@@ -53,9 +53,12 @@ def test_fomc_exhaustion_warning_90_days():
 
 
 def test_cot_report_type_consistency():
-    """プロンプトの COT 種別が実装 (Legacy Futures Only) と一致していること。"""
-    for rel in ("master_prompt_deep.md", "master_prompt_deep_weekly.md",
-                "master_prompt.md", "master_prompt_weekly.md"):
+    """プロンプトの COT 種別が実装 (Legacy Futures Only) と一致していること。
+
+    2026-08 統合以降のアクティブプロンプトは Daily/Weekly の 2 本のみ
+    （旧 Deep プロンプトは archive/prompts/ に凍結済みで対象外）。
+    """
+    for rel in ("master_prompt.md", "master_prompt_weekly.md"):
         src = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
         assert "Disaggregated" not in src, f"{rel}: Disaggregated 表記が残存"
     cot_src = (PROJECT_ROOT / "scrapers" / "cot.py").read_text(encoding="utf-8")

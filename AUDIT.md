@@ -1,5 +1,10 @@
 # AUDIT.md — fundamental-macro-analysis 現状監査
 
+> **注（2026-08-11）**: 本監査は 2026-06-11 時点のスナップショットである。同日以降に
+> 「4 本→2 本統合」（Deep 系プロンプト・コマンドの廃止、COT 常時取得化、PDF/Google Drive 発行、
+> X-Search 停止）が実施されたため、Deep 系（master_prompt_deep*.md / deep-bias*.md）と
+> --weekly の COT 差分に関する記述は旧構成のもの。現行の設計は `docs/UNIFIED_DESIGN.md` を参照。
+
 監査日: 2026-06-11
 対象: `/Users/laa/dev/fundamental-macro-analysis`（GitHub: `LaaQuantumFund/Trade-Bias-Report`）
 方針: コードから確認できた事実のみを記載。変更・削除・リネームは一切実施していない。

@@ -1,122 +1,88 @@
 ---
-description: ICT Daily/Weekly Bias Report を生成 (Mac/Routines 両対応)
-argument-hint: [weekly]
+description: ICT Daily Bias Report を生成 (Mac ローカル専用、PDF + Google Drive 発行付き)
 allowed-tools: Bash, Read, Write
 ---
 
 # ICT Daily Bias Report 生成
 
-トレード分析の直前に、チャート外情報 (リテールセンチメント、経済指標、FedWatch、ETFフロー、COT 等)
-を体系的にまとめたレポートを生成し、Brain (Obsidian Vault) に保存する。
+トレード分析の直前に、チャート外情報 (リテールセンチメント、COT、経済指標、FedWatch、
+ETF フロー等) を体系的にまとめたレポートを生成し、Brain (Obsidian Vault) へ保存、
+PDF を Google Drive へ発行する。
 
-引数:
-- 引数なし: 日次レポート (`master_prompt.md` を使用)
-- `weekly`: 週次レポート (`master_prompt_weekly.md` を使用、COT データも含む)
-
-引数: $ARGUMENTS
+このコマンドは Mac ローカル専用。週次レポートは `/weekly-bias` を使う（引数分岐はない）。
 
 ## 環境変数
 
-このコマンドは以下の環境変数で挙動を切り替える。未定義時のデフォルト値は Mac ローカル前提。
-
 | 変数 | デフォルト | 用途 |
 |---|---|---|
-| `PROJECT_DIR` | `/Users/laa/dev/fundamental-macro-analysis` | チャート外分析リポジトリ（旧 ict-daily-bias）のパス |
+| `PROJECT_DIR` | `/Users/laa/dev/fundamental-macro-analysis` | チャート外分析リポジトリのパス |
 | `BRAIN_PATH` | `$HOME/Brain` | Brain リポジトリのパス |
 | `PYTHON_BIN` | `$PROJECT_DIR/.venv/bin/python3` | Python 実行コマンド |
-| `SLACK_NOTIFY_CHANNEL` | `#ceo` | Slack 通知先チャンネル |
-| `CLAUDE_CODE_REMOTE` | (未定義) | `true` なら Routines 環境と判定 |
-
-Routines 環境 (`CLAUDE_CODE_REMOTE=true`) では、Setup script が依存パッケージのみ
-インストールし、リポジトリの clone 先パスはこのコマンド側で動的に検出する
-(`find` を使う)。Setup script では `$CLAUDE_ENV_FILE` が未定義のため、
-環境変数の引き継ぎは Setup script ではなく当コマンド側の判定で行う。
 
 ## 実行ルール
 
-- 全ステップを順番に実行する。途中で失敗したら、原因をユーザーに報告して中止する。
+- 全ステップを順番に実行する。Step 0 と Step 5 (PDF) の失敗は警告して続行、
+  それ以外のステップで失敗したら原因をユーザーに報告して中止する。
 - レポート本文は推測で埋めず、データ取得不可の項目は `取得不可` と明記する。
 - 推測値には必ず `（推定）` と注記する。
 - 出力する Markdown 内に絵文字を使わない。
 
-## Step 1: スクレイピング実行
+## Step 0: XAU-TF 鮮度確認（main.py より先に完了させること）
 
-`Bash` ツールで以下を実行する。`$ARGUMENTS` が `weekly` の場合は末尾に ` --weekly` を付ける。
-
-環境判定とパスの解決を冒頭で行い、Routines 環境では `find` で動的にパスを検出する。
+`report_anchor` が main.py 実行時に `$BRAIN_PATH/Calendar/XAU-TF/` の最新レポートを
+読み込むため、**Step 1 の前に**鮮度を確認し、古ければ再生成する。
 
 ```bash
-# 一般的な clone 先パスを順に試して見つかったものを採用するヘルパー関数
-find_repo() {
-  local name="$1"
-  for base in /home/user /root /workspace /tmp; do
-    if [ -d "$base/$name" ]; then
-      echo "$base/$name"
-      return
-    fi
-  done
-  # フォールバック: /home /root /workspace を限定深度で検索 (高速)
-  find /home /root /workspace -maxdepth 4 -type d -name "$name" 2>/dev/null | head -1
-}
-
-if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
-  # Routines (クラウド) 環境: clone 先パスを動的検出
-  PROJECT_DIR="${PROJECT_DIR:-$(find_repo Trade-Bias-Report)}"
-  BRAIN_PATH="${BRAIN_PATH:-$(find_repo Brain)}"
-  PYTHON_BIN="${PYTHON_BIN:-python3}"
-else
-  # ローカル (Mac) 環境: 固定パス
-  PROJECT_DIR="${PROJECT_DIR:-/Users/laa/dev/fundamental-macro-analysis}"
-  BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
-  PYTHON_BIN="${PYTHON_BIN:-$PROJECT_DIR/.venv/bin/python3}"
-fi
+PROJECT_DIR="${PROJECT_DIR:-/Users/laa/dev/fundamental-macro-analysis}"
+BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
+PYTHON_BIN="${PYTHON_BIN:-$PROJECT_DIR/.venv/bin/python3}"
 export PROJECT_DIR BRAIN_PATH PYTHON_BIN
 
-if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR" ]; then
-  echo "ERROR: PROJECT_DIR not found: '$PROJECT_DIR'" >&2
-  exit 1
-fi
-if [ -z "$BRAIN_PATH" ] || [ ! -d "$BRAIN_PATH" ]; then
-  echo "ERROR: BRAIN_PATH not found: '$BRAIN_PATH'" >&2
-  exit 1
-fi
+TODAY=$(date +%Y-%m-%d)
+YESTERDAY=$(date -v-1d +%Y-%m-%d)
+XAU_TF_DIR="$BRAIN_PATH/Calendar/XAU-TF"
 
-# Routines 環境のみ: Playwright Chromium が存在するか確認し、無ければインストール
-# Setup script で入れていても、PLAYWRIGHT_BROWSERS_PATH の不一致等で
-# 見つからないことがあるため、念のため再インストール (idempotent)
-if [ "$CLAUDE_CODE_REMOTE" = "true" ]; then
-  if ! "$PYTHON_BIN" -c "from playwright.sync_api import sync_playwright; sync_playwright().__enter__().chromium.launch(headless=True).close()" >/dev/null 2>&1; then
-    echo "Playwright chromium not usable, installing..."
-    "$PYTHON_BIN" -m pip install playwright >/dev/null 2>&1 || true
-    "$PYTHON_BIN" -m playwright install chromium 2>&1 | tail -5
-  else
-    echo "Playwright chromium OK"
-  fi
+if [ ! -f "$XAU_TF_DIR/XAU_Technical_Report_${TODAY}.md" ] && \
+   [ ! -f "$XAU_TF_DIR/XAU_Technical_Report_${YESTERDAY}.md" ]; then
+  echo "XAU-TF レポートが当日/前日分とも無いため再生成する (約 1 分)..."
+  (cd /Users/laa/dev/xauusd-smc-quant && .venv/bin/python run_report.py --fetch) || \
+    echo "WARN: XAU-TF 生成に失敗。report_anchor は直近ファイル (stale) または無しで続行する"
+else
+  echo "XAU-TF レポートは新鮮 (当日または前日分あり)"
 fi
-
-cd "$PROJECT_DIR" && "$PYTHON_BIN" main.py
 ```
 
-実行後、`$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.json` と
-`$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt` が生成される。
-exit code が 0 でなければ以降を中止し、stderr の内容をユーザーに報告する。
+## Step 1: スクレイピング実行
 
-後続の Step 4 (Brain への保存) と Step 5 (git push) でも同じ `$BRAIN_PATH` /
-`$PROJECT_DIR` を再利用するため、上の export を活かしたまま進めること。
+TWELVEDATA_API_KEY / FRED_API_KEY は 1Password 経由（`run-with-secrets.sh`）でのみ注入される。
+
+```bash
+SECRETS_WRAPPER="$PROJECT_DIR/scripts/run-with-secrets.sh"
+if [ -x "$SECRETS_WRAPPER" ] && [ -f "$HOME/.config/laa/op-service-token" ]; then
+  cd "$PROJECT_DIR" && "$SECRETS_WRAPPER" --batch "$PYTHON_BIN" main.py
+else
+  echo "WARN: 1Password 注入が使えないため素の実行 (TwelveData/FRED は取得不可になる)"
+  cd "$PROJECT_DIR" && "$PYTHON_BIN" main.py
+fi
+```
+
+COT は常時取得化済みのため `--weekly` フラグは付けない。
+実行後、`$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.json` と `.txt` が生成される。
+exit code が 0 でなければ以降を中止し、stderr の内容をユーザーに報告する。
 
 ## Step 2: マスタープロンプトとデータの読み込み
 
-引数に応じて読み込むファイルを切り替える。`Read` ツールで両方を読み込む。
+`Read` ツールで以下の 2 ファイルを読み込む。
 
-- 引数なし: `$PROJECT_DIR/master_prompt.md` + `$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt`
-- `weekly`: `$PROJECT_DIR/master_prompt_weekly.md` + `$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.txt`
+- `$PROJECT_DIR/master_prompt.md`
+- `$PROJECT_DIR/output/scraped_data_YYYY-MM-DD.txt`（当日分）
 
 ## Step 3: 分析・レポート生成
 
-マスタープロンプトの指示 (セクション0〜7、出力ルール) に厳密に従って Markdown レポートを生成する。
-具体的には、以下のメンタルモデルで分析を進める。
+マスタープロンプトの指示 (セクション構成、テーブル形式、出力ルール、ICT 用語規則) に
+厳密に従って Markdown レポートを生成する。以下のメンタルモデルで分析を進める。
 
-「以下のデータを使用して、本日の ICT {Daily|Weekly} Bias Report を生成してください。
+「以下のデータを使用して、本日の ICT Daily Bias Report を生成してください。
 
 ## 取得済みデータ (最優先で使用すること)
 
@@ -129,60 +95,42 @@ exit code が 0 でなければ以降を中止し、stderr の内容をユーザ
 - 推測値には必ず『（推定）』と注記すること
 - マスタープロンプトのセクション順序、テーブル形式、出力ルール、ICT用語規則に厳密に従うこと」
 
-レポートは Markdown 形式、テーブル積極使用、絵文字禁止、時刻はすべて JST、
-全体 2200-3800 字を目安に、master_prompt の出力ルールに従って生成する。
-
-**重要 (Routines 環境 = `$CLAUDE_CODE_REMOTE` が `true` の場合のみ):**
-Anthropic API の stream idle timeout を回避するため、Routines 環境では
-以下の制約を **厳守** すること (master_prompt の字数目安より優先する):
-
-- 全体 1500-2000 字以内 (Mac 経路の 2000-3500 字目安より短く)
-- 各セクション 200-300 字以内
-- テーブルは最低限の重要項目のみ
-- 詳細な根拠説明は省略し、結論・数値・方向性のみ記載
-- セクション 1.5 (ファンダ大局バイアス) はテーブルのみ (補足行なし)。省略はしない
-- セクション 4 (FedWatch・中銀)、5 (インターマーケット)、6 (PO3) は
-  本日該当事項なしなら「該当なし」の 1 行で省略
-- セクション 7 (注目ポイント) のみ詳細に書いて良い (最大 400 字)
-
-簡潔化の目的は品質低下ではなく、Write tool の引数構築時間を短縮し
-タイムアウトを防ぐこと。詳細分析はローカル (Mac) 経路で行う想定。
+レポートは Markdown 形式、テーブル積極使用、絵文字禁止、時刻はすべて JST。
+字数は master_prompt.md の出力ルールに従う（目安: 全体 2400-3800 字）。
 
 ## Step 4: レポートを Brain に保存
 
-ファイル名は `Daily_Bias_Report_YYYY-MM-DD.md` (または `Weekly_Bias_Report_YYYY-MM-DD.md`)。
-日付は実行時の JST 日付を使う。
-
-出力先:
-- 日次: `$BRAIN_PATH/Calendar/Daily-Bias/Daily_Bias_Report_YYYY-MM-DD.md`
-- 週次: `$BRAIN_PATH/Calendar/Weekly-Bias/Weekly_Bias_Report_YYYY-MM-DD.md`
-
-ディレクトリが存在しなければ以下を実行してから、`Write` ツールでレポートを保存する。
+ファイル名は `Daily_Bias_Report_YYYY-MM-DD.md`（実行時の JST 日付）。
 
 ```bash
-BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
-mkdir -p "$BRAIN_PATH/Calendar/Daily-Bias" "$BRAIN_PATH/Calendar/Weekly-Bias"
+mkdir -p "$BRAIN_PATH/Calendar/Daily-Bias"
 ```
 
-## Step 5: 追加処理
+`Write` ツールで `$BRAIN_PATH/Calendar/Daily-Bias/Daily_Bias_Report_YYYY-MM-DD.md` に保存する。
 
-### 5-1. Brain リポジトリへのコミットと push（**全環境共通**）
+## Step 5: PDF 発行（Google Drive）
 
-**ローカル (Mac) でも必ず実施する。** Brain の同期は Git が正（他端末は
-launchd の auto-pull / Working Copy で git 経由取得）のため、コミットしない
-レポートは他端末の Obsidian に表示されない（2026-07-11 の「レポートがない」
-事象の原因）。コミット対象は生成したレポートファイルのみとし、vault 内の
-他の未コミットファイル（社長の個人メモ等）を `git add` に含めないこと。
+```bash
+cd "$PROJECT_DIR" && "$PROJECT_DIR/.venv/bin/python" scripts/publish_report.py \
+  "$BRAIN_PATH/Calendar/Daily-Bias/Daily_Bias_Report_$(date +%Y-%m-%d).md"
+```
+
+- stdout の `PDF:` / `Drive:` 行を控えて Step 7 の最終応答に含める。
+- publish_report.py はソフト障害 (Drive 未マウント等) を WARN + exit 0 で飲み込む設計。
+  WARN が出た場合はその旨を最終応答に含めて続行する。
+
+## Step 6: Brain リポジトリへのコミットと push
+
+Brain の同期は Git が正（他端末は launchd の auto-pull / Working Copy で git 経由取得）
+のため、コミットしないレポートは他端末の Obsidian に表示されない。コミット対象は
+生成したレポートファイルのみとし、vault 内の他の未コミットファイル（社長の個人メモ等）
+を `git add` に含めないこと。
 
 **重要**: Brain リポジトリへの push は必ず `master` ブランチに直接行うこと。
 新しい `claude/...` ブランチを作って push してはならない。社長の Mac は
 master ブランチを `git pull` するだけで取得できる運用のため。
 
 ```bash
-BRAIN_PATH="${BRAIN_PATH:-$HOME/Brain}"
-SUBDIR="Daily-Bias"  # weekly なら "Weekly-Bias"
-PREFIX="Daily_Bias_Report"  # weekly なら "Weekly_Bias_Report"
-TITLE="ICT Daily Bias"  # weekly なら "ICT Weekly Bias"
 TODAY=$(date +%Y-%m-%d)
 
 cd "$BRAIN_PATH"
@@ -193,47 +141,25 @@ git checkout master 2>/dev/null || git checkout main
 # リモートの最新を取り込んでから commit (競合回避)
 git pull --rebase origin master 2>/dev/null || git pull --rebase origin main
 
-git add "Calendar/$SUBDIR/${PREFIX}_${TODAY}.md"
-git commit -m "$TITLE $TODAY"
+git add "Calendar/Daily-Bias/Daily_Bias_Report_${TODAY}.md"
+# Step 0 で XAU-TF を再生成した場合はそれも同時にコミット（他端末の Obsidian 可視化のため）
+git add "Calendar/XAU-TF/XAU_Technical_Report_${TODAY}.md" 2>/dev/null || true
+git commit -m "ICT Daily Bias ${TODAY}"
 
 # 必ず master/main に直接 push (claude/... ブランチを作らない)
 git push origin HEAD:master 2>/dev/null || git push origin HEAD:main
 ```
 
-git push が認証エラーで失敗した場合、Routine の Repositories 設定で
-`Allow unrestricted branch pushes` が Brain リポジトリで有効化されているか
-確認する旨をユーザーに報告する (本来は ON のはず)。
+push が認証エラーで失敗した場合は、その旨をユーザーに報告する
+（レポート生成自体は完了扱いで良い）。
 
-### 5-2. Slack へ通知（Routines 環境 = `CLAUDE_CODE_REMOTE=true` のみ）
+## Step 7: ユーザーへの最終応答
 
-ローカル (Mac) 実行ではこの 5-2 をスキップする。
-Slack MCP 経由で `#ceo` チャンネルに以下を投稿する
-(環境変数 `SLACK_NOTIFY_CHANNEL` が設定されていれば、その値を優先)。
+以下を簡潔に提示する。
 
-**重要**: 投稿本文に含めるセッション URL は、必ず以下の bash で取得した実際の値を使用すること。
-プレースホルダー `${CLAUDE_CODE_REMOTE_SESSION_ID}` の文字列をそのまま投稿してはならない。
-
-```bash
-echo "https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
-```
-
-→ 出力された URL (例: `https://claude.ai/code/session_01HJK...`) を本文に埋め込む。
-
-投稿フォーマット:
-
-- ヘッダー: `ICT {Daily|Weekly} Bias Report - YYYY-MM-DD`
-- 本文:
-  - レポートのセクション0 (エグゼクティブサマリー) を抜粋 (5行)
-  - 保存先ファイル名 (例: `Calendar/Daily-Bias/Daily_Bias_Report_2026-04-19.md`)
-  - セッション URL (上記 bash の結果を文字列として埋め込み)
-  - データ取得失敗があった場合は警告として明示
-
-## Step 6: ユーザーへの最終応答
-
-以下の3点を簡潔に提示する。
-
-1. レポートのセクション0 (エグゼクティブサマリー) の5行
-2. 保存先のフルパス
-3. データ取得失敗があった場合は警告として明示
+1. レポートのセクション0 (エグゼクティブサマリー) の要点 5 行
+2. 保存先 MD のフルパス
+3. 生成した PDF のパスと Google Drive コピー先のパス（スキップされた場合はその理由）
+4. データ取得失敗があった場合は警告として明示
 
 長い本文の再掲示は不要。詳細は Brain 上のファイルで確認する前提。

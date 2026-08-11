@@ -1,5 +1,10 @@
 # Hermes X-Search 統合 — 契約仕様
 
+> **ステータス（2026-08-11）: 停止中**。社長判断により X 情報は手動で直接確認する運用に変更。
+> `config.yaml` の `x_search.enabled: false` + Hermes cron `xsearch-macro-daily` を pause 済み
+> （xAI 認証も 2026-08-01 から切れていた）。実装・契約・テストは温存しており、
+> `enabled: true` + `hermes cron resume xsearch-macro-daily` + xAI 再認証で復活できる。
+
 デイリー/ウィークリー Bias Report に X (Twitter) 補助データを注入する統合の正本。
 パイプライン側の実装は `scrapers/xsearch_ingest.py`、フックは `scripts/intel.py` の Step 2 直前 1 箇所のみ。
 

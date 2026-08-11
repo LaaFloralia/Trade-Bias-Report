@@ -90,6 +90,12 @@ def test_anchor_stale_and_fresh(tmp_path, monkeypatch):
     # 1.5 が優先抽出される
     assert d["section_used"] == "セクション1.5"
     assert "実質金利上昇" in d["summary"]
+    # additive: 同じ前回 Daily のセクション0 が prev_daily_exec に入る
+    pe = a["prev_daily_exec"]
+    assert pe is not None
+    assert pe["file"] == d["file"]
+    assert pe["section_used"] == "セクション0"
+    assert "DXYバイアス: Bearish" in pe["summary"]
 
 
 def test_prev_daily_excludes_today_and_falls_back_to_section0(tmp_path, monkeypatch):
@@ -101,10 +107,32 @@ def test_prev_daily_excludes_today_and_falls_back_to_section0(tmp_path, monkeypa
     a = load_report_anchor(today=TODAY)
     d = a["prev_daily"]
     assert d["file"] == "Daily_Bias_Report_2026-07-05.md"
-    assert d["stale"] is True  # 4 日前 > 3 日
+    assert d["stale"] is False  # 4 日前 <= 7 日 (オンデマンド運用で 3→7 に緩和)
     # 1.5 セクションが無い旧レポート → セクション0 にフォールバック
     assert d["section_used"] == "セクション0"
     assert "Bearish（短期・実データ）" in d["summary"]
+
+
+def test_prev_daily_stale_after_seven_days(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        # 8 日前 (> 7 日) → stale
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-01.md": DAILY_WITH_15_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    assert a["prev_daily"]["age_days"] == 8
+    assert a["prev_daily"]["stale"] is True
+    assert a["prev_daily_exec"]["stale"] is True
+
+
+def test_format_anchor_lines_emits_prev_daily_exec(tmp_path, monkeypatch):
+    _make_brain(tmp_path, monkeypatch, {
+        "Calendar/Daily-Bias/Daily_Bias_Report_2026-07-08.md": DAILY_WITH_15_MD,
+    })
+    a = load_report_anchor(today=TODAY)
+    text = "\n".join(format_anchor_lines(a))
+    assert "[前回 Daily] Daily_Bias_Report_2026-07-08.md (1日前)" in text
+    assert "[前回 Daily 結論] Daily_Bias_Report_2026-07-08.md (1日前)" in text
+    assert "DXYバイアス: Bearish" in text
 
 
 def test_weekly_deep_preferred_on_same_date(tmp_path, monkeypatch):

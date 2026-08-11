@@ -62,11 +62,11 @@ cp .env.example .env
 ### 2-3. 実行
 
 ```bash
-uv run python main.py                # データ取得のみ（Daily 構成）
-uv run python main.py --weekly       # データ取得のみ（Weekly 構成、COT 込み）
+uv run python main.py                # データ取得のみ（COT 含む。常時同一内容）
+uv run python main.py --weekly       # 同上（ファイル名 prefix が scraped_data_weekly_ になるのみ）
 
 # 分析込みの一気通貫（ヘッドレス、§ 8 参照）:
-uv run python scripts/intel.py brief --daily    # 取得 → claude -p 分析 → MD + JSON 二重出力
+uv run python scripts/intel.py brief --daily    # 取得 → LLM 分析 → MD + JSON + PDF(Drive) 出力
 uv run python scripts/intel.py brief --weekly
 ```
 
@@ -84,19 +84,17 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 ├── config.yaml               # ★ 銘柄定義 SSoT（銘柄・シンボル・URL・ウェイトを一元管理）
 ├── config.py                 # config.yaml ローダー + 派生テーブル + FOMC 日程（2026/2027）
 ├── main.py                   # スクレイピングオーケストレーター（データ取得のみ）
-├── master_prompt.md          # 速報 Daily 用プロンプト
-├── master_prompt_weekly.md   # 速報 Weekly 用（COT 含む）
-├── master_prompt_deep.md     # Deep Daily 用（S0〜S14、信頼度 11 項目）
-├── master_prompt_deep_weekly.md # Deep Weekly 用（W0〜W15、先週レビュー込み）
+├── master_prompt.md          # ★ 統合 Daily（オンデマンド「その瞬間の全体像」、2,400〜3,800 字）
+├── master_prompt_weekly.md   # ★ 統合 Weekly（前回以降の振り返り + 来週の展望、4,500〜6,500 字）
+├── archive/prompts/          # 旧 Deep 系プロンプト 2 本（2026-08-11 統合により凍結）
 ├── .claude/
 │   └── commands/
-│       ├── daily-bias.md     # 速報 Daily（Mac/Routines 両対応）
-│       ├── weekly-bias.md    # 速報 Weekly（Mac/Routines 両対応）
-│       ├── deep-bias.md      # Deep Daily（ローカル専用、PDF はオプション）
-│       └── deep-bias-weekly.md # Deep Weekly（ローカル専用、PDF はオプション）
+│       ├── daily-bias.md     # 統合 Daily（Mac ローカル専用。XAU-TF 自動鮮度確認 → MD+PDF+push）
+│       └── weekly-bias.md    # 統合 Weekly（同上 + 前回レポート/intel JSON を前回レビュー入力に）
 ├── scripts/
-│   ├── intel.py              # ★ ヘッドレス分析パイプライン（§ 8。二重出力 + JSONL ログ）
+│   ├── intel.py              # ★ ヘッドレス分析パイプライン（§ 8。MD + JSON + PDF。INTEL_ENGINE で claude/codex 切替）
 │   ├── render_report.py      # MD → PDF レンダラ（HTML は中間生成→削除）
+│   ├── publish_report.py     # MD → PDF → Google Drive（マイドライブ/Trading/Bias-Reports）発行
 │   └── archive/
 │       └── generate_xauusd_brief.py # 凍結（API 直叩き方式。後続フェーズで再実装予定）
 ├── templates/                # PDF 用 A4 テンプレ + 印刷 CSS
@@ -108,7 +106,7 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │   ├── myfxbook.py           # リテールセンチメント第 1 ソース
 │   ├── fxssi.py / ig_sentiment.py # センチメントフォールバック 1 / 2
 │   ├── coinglass.py / binance_btc_sentiment.py / crypto_funding.py # BTC センチメント・Funding 系
-│   ├── cot.py                # CFTC COT（Legacy Futures Only、--weekly 時のみ）
+│   ├── cot.py                # CFTC COT（Legacy Futures Only、常時取得）
 │   ├── economic_calendar.py / fedwatch.py / btc_etf.py # カレンダー / FedWatch / ETF フロー
 │   ├── dxy_components.py / vix_structure.py / premarket.py # Deep 強化系
 │   ├── macro_liquidity.py / rate_spreads.py / myfxbook_open_orders.py # Deep 強化系
@@ -248,102 +246,43 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 
 ## 7. カスタマイズ
 
-- **マスタープロンプト変更**: `master_prompt.md` / `master_prompt_weekly.md` / `master_prompt_deep.md` を編集
+- **マスタープロンプト変更**: `master_prompt.md` / `master_prompt_weekly.md` を編集（統合の設計判断は `docs/UNIFIED_DESIGN.md` を先に参照）
 - **銘柄追加・変更**: `config.py` の `INSTRUMENTS` を編集
 - **スクレイピング対象サイト変更**: 各 `scrapers/*.py` を編集
 
 ---
 
-## 7.5. Deep Bias（強化版）
+## 7.5. 統合 2 本体制（2026-08-11〜）
 
-`master_prompt.md` / `master_prompt_weekly.md` は **速報用**（1500〜3800 字、Routines / Mac 両対応）。
-これとは別に、10〜15 分かけて深層リサーチを行う **強化版** を並走させている。
-速報用ファイル群は変更せず温存し、Deep Bias は独立ファイルとして並走する。
+2026-08-11 に旧 4 本（速報 Daily / Deep Daily / 速報 Weekly / Deep Weekly）を **2 本に統合**した。
+深さ軸（速報 / Deep）は廃止し、時間軸のみ残す。設計判断の全記録は `docs/UNIFIED_DESIGN.md`。
+旧 Deep 系プロンプトは `archive/prompts/` に凍結（Brain の `Calendar/Deep-Bias/` / `Weekly-Deep-Bias/` は過去レポート置き場として残存）。
 
-**オンデマンド運用の自己完結化（前回レポート アンカー）**: Weekly / Deep は定期実行ではなく
-必要時のみ生成する運用のため、Daily 生成時に `scrapers/report_anchor.py` が Brain/Calendar の
-最新 Weekly 系レポート（結論 = セクション0）と前回 Daily（ファンダ大局バイアス = セクション1.5）を
-自動で scraped_data に差し込む。経過日数が許容鮮度（Weekly 9 日 / Daily 3 日）を超えると
-`[STALE]` が付き、プロンプト側は参考扱いに落とす（PO3 整合スコアには使わない）。
-Weekly を回していなくても Daily 単体で大局アンカー付きのレポートになる。
-
-**XAUUSD レベルの SSoT（XAU-TF アンカー）**: XAUUSD の価格レベルは
-`xauusd-smc-quant` の XAU Technical Report（Dukascopy H1・検出定義がコードで検証済み）を正とする。
-アンカーが `Calendar/XAU-TF/` の最新レポートから構造・流動性マップ・Premium/Discount・未充填 FVG を
-差し込み、STALE（2 日以上前）でなければ週次・月次レベルは XAU-TF 値が TwelveData 値に優先する
-（乖離時はレポートに明記）。なお TwelveData 側の PWH/PWL・PMH/PML も、旧実装のローリング窓
-（5 本 / 22 本）から真のカレンダー境界（月曜起点の前週・暦月の前月）に修正済み。
-
-### 7.5-1. 既存 Daily / Weekly との違い
-
-| 項目 | Daily / Weekly（速報） | **Deep Bias（強化版）** |
+| 項目 | **統合 Daily** | **統合 Weekly** |
 |---|---|---|
-| 実行コマンド | `/daily-bias` / `/weekly-bias` | **`/deep-bias`** |
-| 所要時間 | 2〜3 分 | **10〜15 分** |
-| 字数目安 | 1500〜3800 字 | **5000〜8000 字** |
-| 出力形式 | MD のみ | **MD のみ**（PDF は引数 `pdf` または明示要求時のみ追加生成、HTML は中間ファイル） |
-| WebSearch | なし | **7〜12 クエリ必須**（固定群 a〜g を最低 1 回ずつ） |
-| 自己検証 | なし | **スコア再計算 / 欠損検出 / 矛盾検出 を必須実施** |
-| 実行環境 | Mac / Routines 両対応 | **Mac ローカル専用** |
-| 信頼度スコア項目 | 7〜8 項目（Daily はファンダ大局整合 ±1 を含む） | **11 項目（ニュース / 地政学 / 季節性を追加）** |
-| Brain への push | 速報 MD | **MD のみ**（PDF は `output/` のみ保持） |
-| プロンプトファイル | `master_prompt.md` / `master_prompt_weekly.md` | `master_prompt_deep.md` |
+| 位置づけ | オンデマンドで「その瞬間の全体像」（トレード直前） | 「前回以降の振り返り + 来週の展望」（週末） |
+| 実行コマンド | `/daily-bias` | `/weekly-bias` |
+| 所要時間 | 約 4〜5 分（XAU-TF 自動更新込み） | 約 8〜12 分 |
+| 字数目安 | 2,400〜3,800 字 | 4,500〜6,500 字 |
+| WebSearch | 基本 2 + 条件付き最大 4（ツール利用可能環境のみ） | 4〜8 クエリ（マクロ環境・ニュースに集中） |
+| 固有セクション | 今夜の執行プラン / ファンダ大局バイアス（アンカー継承） | 前回レビュー（実データ照合）/ COT 分析 / 来週カレンダー |
+| 信頼度スコア | **統一 8 項目・閾値共通**（High ≥7 / Med 5-6 / Med-cautious 3-4 / Low ≤2 = 様子見） | 同一 |
+| 自己検証 | 軽量 3 チェック（1 パス・注記のみ） | 同一 |
+| 出力 | MD（Brain push）+ **PDF（Google Drive: マイドライブ/Trading/Bias-Reports）** | 同一 |
+| 実行環境 | Mac ローカル専用（Routines / Slack 経路は撤去） | 同一 |
 
-### 7.5-2. 実行
+**オンデマンド運用の自己完結化（前回レポート アンカー）**: Daily 生成時に `scrapers/report_anchor.py` が
+Brain/Calendar の最新 Weekly（結論 = セクション0）と前回 Daily（ファンダ大局 + 結論）を自動で
+scraped_data に差し込む。許容鮮度（Weekly 9 日 / Daily 7 日 / XAU-TF 1 日）超過は `[STALE]` が付き、
+プロンプト側は参考扱いに落とし統一スコア #5 を 0 固定にする。
 
-```bash
-# Claude Code セッション内で:
-/deep-bias
-```
+**XAUUSD レベルの SSoT（XAU-TF アンカー）**: XAUUSD の価格レベルは `xauusd-smc-quant` の
+XAU Technical Report（Dukascopy H1・検出定義がコードで検証済み）を正とする。`/daily-bias` /
+`/weekly-bias` は Step 0 で XAU-TF レポートが前日以前の場合に自動再生成する（失敗時は STALE 続行）。
+乖離時は「乖離: TD ○○ / XAU-TF ○○（採用）」形式でレポートに明記。
 
-または以下を直接実行（プロンプト経由）。
-
-```
-リポジトリ内の .claude/commands/deep-bias.md を Read で読み込み、その指示に従って実行せよ。
-```
-
-### 7.5-3. 出力の置き場所
-
-デフォルトは Markdown のみを生成し Brain に push する。PDF はオプションで、
-`/deep-bias pdf`（または `/deep-bias-weekly pdf`）のように引数を明示するか、
-社長が会話で「PDF も」「PDF 付き」等を要求した場合のみ追加生成される。
-
-HTML は PDF レンダリング時の中間ファイルとして一時生成し、PDF 生成後に削除する
-（`--keep-html` フラグで保持可能）。Browser test / プレビュー PNG の永続出力は廃止済み（2026-05-16）。
-
-| 形式 | パス | 備考 |
-|---|---|---|
-| Markdown | `output/Deep_Bias_Report_YYYY-MM-DD.md` | **常時生成**。Brain に master 直接 push |
-| PDF | `output/Deep_Bias_Report_YYYY-MM-DD.pdf` | **オプション**: 明示要求時のみ生成 / A4 / 5〜20 ページ目安 / Brain には置かない |
-| Brain 側 | `~/Brain/Calendar/Deep-Bias/Deep_Bias_Report_YYYY-MM-DD.md` | MD のみ commit + push |
-
-### 7.5-4. ネットリサーチ 7〜12 クエリの内訳
-
-必須群（a〜g、各 1 回以上、合計 7 クエリ。状況に応じて最大 12 まで追加可）:
-
-| # | カテゴリ | 例 |
-|---|---|---|
-| a | Fed / ECB / BOJ 高官発言（24h、タカ派 / ハト派） | `Fed FOMC member speech hawkish dovish 2026` |
-| b | SPX / VIX / NQ 前日比 + 当日プリマーケット | `SPX VIX NQ premarket today 2026` |
-| c | US10Y / US2Y 前日比 + Yield Curve | `US10Y US2Y yield curve slope 2026` |
-| d | 中東 / 台湾 / ウクライナの地政学 | `Middle East Taiwan Ukraine geopolitical news 2026` |
-| e | BTC / SEC / ETF / 機関買い | `Bitcoin ETF inflow SEC institutional 2026` |
-| f | NFP / CPI / FOMC 等主要指標予想ブレ | `NFP CPI forecast revision today 2026` |
-| g | リスクオン / オフセンチメント指標 | `VIX Fear Greed Put-Call ratio today 2026` |
-
-各クエリで最重要 URL を 3〜5 件選び **WebFetch でクロスチェック**。
-最終的に「データソース脚注」セクションに URL を列挙する。
-
-### 7.5-5. 自己検証ステップ
-
-レポート生成後、AI 自身が以下を実施し本文に結果を記載する:
-
-1. **スコア再計算**: S12 の信頼度スコアを項目別に再計算し、本文値と一致するか検算
-2. **空テーブル / 未入力セル走査**: 「取得不可」と空セルの残存を一覧化
-3. **セクション間矛盾検出**: DXY-XAUUSD 逆相関 / DXY-USDJPY 順相関 / Draw on Liquidity 整合 / PO3 整合 / ニュース整合 を機械的にチェック
-4. **矛盾検出時の自動修正**: 本文を **1 回まで** 自動再生成。残存矛盾があれば信頼度を Low に下げて完遂
-
----
+**推論エンジン**: 既定は Claude サブスク枠（`claude -p`）。`INTEL_ENGINE=codex` で Codex CLI
+（`codex exec`）に切替可能（実験的。CLI 呼び出し規約は検証済み、生成品質は未検証）。
 
 ---
 
@@ -389,19 +328,21 @@ Routines 共通のトラブルは `~/HQ/infrastructure/runtime-setup.md` § 17 �
 
 ```bash
 uv run python scripts/intel.py brief --daily            # 日次（master_prompt.md 使用）
-uv run python scripts/intel.py brief --weekly           # 週次（master_prompt_weekly.md、COT 込み）
+uv run python scripts/intel.py brief --weekly           # 週次（master_prompt_weekly.md 使用）
 uv run python scripts/intel.py brief --daily --reuse-data  # 当日データがあれば再取得を省略
 uv run python scripts/intel.py brief --daily --quick    # 新規取得をスキップし直近データで分析のみ再実行
 ```
 
 前提: `claude` CLI がログイン済み（サブスク認証）であること。API キーは不要。
+`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的）。
 
-### 8-2. 二重出力
+### 8-2. 出力（三重）
 
 | 出力 | パス | 用途 |
 |---|---|---|
 | 人間用 Markdown | `$BRAIN_PATH/Calendar/{Daily-Bias\|Weekly-Bias}/{Daily\|Weekly}_Bias_Report_YYYY-MM-DD.md` | 既存スラッシュコマンドと同じ保存先・形式 |
 | 機械用 JSON | `output/intel/intel_{daily\|weekly}_YYYY-MM-DD.json` | trading-bot / EA 等の機械判断入力 |
+| PDF | `output/*.pdf` + Google Drive `マイドライブ/Trading/Bias-Reports/` | スマホ閲覧用（publish_report.py。失敗しても run は成功のまま） |
 
 機械用 JSON スキーマ:
 

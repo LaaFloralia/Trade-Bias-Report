@@ -146,3 +146,15 @@ def load_x_search_config() -> dict:
     if not isinstance(section, dict):
         return {"enabled": False}
     return dict(section)
+
+
+def get_output_setting(key: str):
+    """config.yaml `output` セクションの設定値を返す。
+
+    セクションまたはキーが欠落している場合は None（呼び出し側でスキップ判断）。
+    例: get_output_setting("gdrive_pdf_dir") → PDF の Google Drive 同期先パス。
+    """
+    section = _CFG.get("output")
+    if not isinstance(section, dict):
+        return None
+    return section.get(key)
