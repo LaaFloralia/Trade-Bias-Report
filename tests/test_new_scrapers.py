@@ -292,3 +292,94 @@ def test_extract_current_price_from_market_depth_section():
     assert cp is not None
     # 中央値あたり (4697 付近) を期待
     assert 4696.0 < cp < 4698.0
+
+
+# ---- 2026-08 修理分: 妥当性フィルタ / share_pct / MyFXBook 文言変更対応 ----
+
+def test_orderbook_plausibility_filter_drops_far_clusters():
+    """現在価格 ±10% 超の異常値（軸ラベル混入等）はクラスタから除外される。
+
+    実例: 2026-08-11 の XAUUSD で現値 4411 に対し 5175.77 の BSL クラスタが出力された。
+    """
+    bids = [{"volume": 16, "price": 4346.12}]
+    asks = [
+        {"volume": 94, "price": 4372.04},
+        {"volume": 20, "price": 5175.77},   # +17.3% → 除外対象
+        {"volume": 13, "price": 5175.78},   # 同上
+        {"volume": 10, "price": 4400.00},
+    ]
+    cls = myfxbook_open_orders._cluster_and_classify(bids, asks, current_price=4396.0)
+    all_prices = [
+        c[k] for c in cls["bsl_candidates"] + cls["ssl_candidates"] for k in ("low", "high")
+    ]
+    assert all(p < 5000 for p in all_prices), f"5175 系の異常クラスタが残存: {all_prices}"
+    # 4400 (上方 +0.1%) は BSL として残る
+    assert any(c["low"] <= 4400.0 <= c["high"] for c in cls["bsl_candidates"])
+
+
+def test_orderbook_share_pct_is_true_percentage():
+    """share_pct はサイド内総ボリュームに対する百分率（旧実装は volume 生値を格納していた）。"""
+    bids = [
+        {"volume": 75, "price": 98.0},
+        {"volume": 25, "price": 95.0},
+    ]
+    asks = [{"volume": 60, "price": 103.0}]
+    cls = myfxbook_open_orders._cluster_and_classify(bids, asks, current_price=100.0)
+    ssl_top = cls["ssl_candidates"][0]
+    assert ssl_top["share_pct"] == 75.0  # 75 / (75+25) * 100
+    bsl_top = cls["bsl_candidates"][0]
+    assert bsl_top["share_pct"] == 100.0
+
+
+def test_myfxbook_parses_2026_08_copy_with_percent_sign():
+    """2026-08 の実ページ文言（% 付き）から pct / 平均価格 / 建玉実数を抽出できる。"""
+    from scrapers import myfxbook
+
+    page_text = (
+        "XAUUSD Forex Sentiment\n\n"
+        "59% of the forex traders are currently going short with XAU/USD, "
+        "with an average price of 4136.0708, meanwhile 41% of the forex traders "
+        "are going long with XAU/USD, with an average price of 4506.4624.\n\n"
+        "Current Metrics\n"
+        "Symbol\tAction\tPercentage\tVolume\tPositions\n"
+        "XAUUSD\n"
+        "Short\t59 %\t1,226.16 lots\t6,956\n"
+        "Long\t41 %\t841.40 lots\t7,775\n"
+    )
+    result = {
+        "short_pct": None, "long_pct": None,
+        "avg_short_entry": None, "avg_long_entry": None,
+        "short_volume_lots": None, "long_volume_lots": None,
+        "short_positions": None, "long_positions": None,
+    }
+    myfxbook._parse_outlook_text(page_text, result)
+    assert result["short_pct"] == 59.0
+    assert result["long_pct"] == 41.0
+    assert result["avg_short_entry"] == 4136.0708
+    assert result["avg_long_entry"] == 4506.4624
+    assert result["short_volume_lots"] == 1226.16
+    assert result["long_volume_lots"] == 841.40
+    assert result["short_positions"] == 6956
+    assert result["long_positions"] == 7775
+
+
+def test_myfxbook_parses_legacy_copy_without_percent_sign():
+    """旧文言（% なし）でも従来どおり抽出できる（後方互換）。"""
+    from scrapers import myfxbook
+
+    page_text = (
+        "62 of the forex traders are currently going short with USD/JPY, "
+        "with an average price of 155.1234, meanwhile 38 of the forex traders "
+        "are going long with USD/JPY, with an average price of 158.9876."
+    )
+    result = {
+        "short_pct": None, "long_pct": None,
+        "avg_short_entry": None, "avg_long_entry": None,
+        "short_volume_lots": None, "long_volume_lots": None,
+        "short_positions": None, "long_positions": None,
+    }
+    myfxbook._parse_outlook_text(page_text, result)
+    assert result["short_pct"] == 62.0
+    assert result["avg_short_entry"] == 155.1234
+    assert result["long_pct"] == 38.0
+    assert result["avg_long_entry"] == 158.9876

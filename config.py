@@ -102,6 +102,21 @@ VIX_YAHOO_URLS = {
 # BTC 現物 ETF ティッカー（btc_etf.py）
 BTC_ETF_TICKERS = list(_CFG["btc_etf_tickers"])
 
+# --- レポート構成（XAUUSD 特化 + 個別銘柄オンデマンド）---
+_REPORT_CFG = _CFG.get("report") or {}
+DEFAULT_SYMBOL = _REPORT_CFG.get("default_symbol", "XAUUSD")
+CONTEXT_SYMBOLS = list(_REPORT_CFG.get("context_symbols", []))
+ON_DEMAND_SYMBOLS = list(_REPORT_CFG.get("on_demand_symbols", []))
+
+# --- XAU-TF 計算エンジン（xauusd-smc-quant）---
+_XAU_TF_CFG = _CFG.get("xau_tf_engine") or {}
+XAU_TF_REPO_DIR = Path(_XAU_TF_CFG["repo_dir"]) if _XAU_TF_CFG.get("repo_dir") else None
+XAU_TF_H1_CSV = (
+    XAU_TF_REPO_DIR / _XAU_TF_CFG.get("h1_csv", "data/live-h1.csv")
+    if XAU_TF_REPO_DIR
+    else None
+)
+
 # FOMC 日程（各会合の初日）
 # 一次情報: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
 # 2026-12 は旧値 12-15 が公式日程 (Dec 8-9) と不一致だったため修正済み (2026-06-11)。

@@ -18,7 +18,14 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config import INSTRUMENTS, OPEN_ORDER_SYMBOLS, FOMC_DATES, FOMC_SCHEDULE_WARN_DAYS
+from config import (
+    INSTRUMENTS,
+    OPEN_ORDER_SYMBOLS,
+    FOMC_DATES,
+    FOMC_SCHEDULE_WARN_DAYS,
+    DEFAULT_SYMBOL,
+    XAU_TF_H1_CSV,
+)
 from scrapers.myfxbook import scrape_myfxbook
 from scrapers.fxssi import scrape_fxssi
 from scrapers.ig_sentiment import scrape_ig_sentiment
@@ -44,6 +51,8 @@ from scrapers.binance_btc_sentiment import fetch_binance_btc_sentiment
 from scrapers.gold_etf import scrape_gold_etf
 from scrapers.gold_cb import scrape_gold_cb, _label as _cb_label
 from scrapers.report_anchor import load_report_anchor, format_anchor_lines
+from scrapers.fedwatch_history import record_snapshot, compute_deltas, format_delta_lines
+from scrapers.retail_analytics import build_retail_analytics, format_retail_analytics_lines
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -313,6 +322,18 @@ async def collect_all_data(weekly: bool = False) -> dict:
             else:
                 print(f"  [OK]    {key}")
 
+    # --- FedWatch スナップショット履歴 + 前日比/前週比の決定論的計算 ---
+    fw = results.get("fedwatch")
+    if isinstance(fw, dict) and fw.get("target_rates"):
+        try:
+            saved = record_snapshot(fw)
+            fw["deltas"] = compute_deltas(fw)
+            print(f"  [OK]    fedwatch_history: snapshot={'saved' if saved else 'skipped'}, "
+                  f"前日比={'あり' if fw['deltas'].get('prev_day') else 'なし'}, "
+                  f"前週比={'あり' if fw['deltas'].get('prev_week') else 'なし'}")
+        except Exception as e:
+            print(f"  [WARN]  fedwatch_history: {e}")
+
     # Phase B: Twelve Data /quote 系 + CBOE Dashboard 直列実行
     # - Twelve Data: 8 calls/min 制限回避のため間隔を空ける
     # - CBOE Dashboard: 並列だと Playwright 競合で失敗するため直列実行する vix_structure
@@ -349,7 +370,19 @@ async def collect_all_data(weekly: bool = False) -> dict:
     # --- MyFXBook Open Orders 並列取得 (Deep Bias 強化、対象は config.yaml の open_orders) ---
     open_order_targets = OPEN_ORDER_SYMBOLS
     print(f"  MyFXBook Open Orders: {open_order_targets} を並列取得中...")
-    oo_tasks = [scrape_myfxbook_open_orders(s) for s in open_order_targets]
+
+    def _quote_close(sym: str):
+        """TwelveData quote から現在価格ヒントを取り出す（クロスチェック用）。"""
+        q = results.get(f"_raw_quote_{sym}")
+        try:
+            return float(q["close"]) if isinstance(q, dict) and q.get("close") else None
+        except (TypeError, ValueError):
+            return None
+
+    oo_tasks = [
+        scrape_myfxbook_open_orders(s, current_price_hint=_quote_close(s))
+        for s in open_order_targets
+    ]
     oo_results = await asyncio.gather(*oo_tasks, return_exceptions=True)
     for sym, res in zip(open_order_targets, oo_results):
         if isinstance(res, Exception):
@@ -369,6 +402,29 @@ async def collect_all_data(weekly: bool = False) -> dict:
                     f"bids={res.get('bid_count', 0)} asks={res.get('ask_count', 0)} "
                     f"BSL clusters={bsl_n} SSL clusters={ssl_n} (current_price={cp})"
                 )
+
+    # --- リテール分析 (デフォルト銘柄): P/L 構造 + リクイディティプール + スイープ検証 ---
+    target = DEFAULT_SYMBOL
+    try:
+        oo_target = results["myfxbook_open_orders"].get(target) or {}
+        cp = oo_target.get("current_price") or _quote_close(target)
+        results["retail_analytics"] = build_retail_analytics(
+            retail=results["retail_sentiment"].get(target) or {},
+            open_orders=oo_target,
+            current_price=cp,
+            h1_path=XAU_TF_H1_CSV,
+        )
+        ra = results["retail_analytics"]
+        print(
+            f"  [OK]    retail_analytics/{target}: "
+            f"ATR20d={ra.get('atr20d')} pools(BSL/SSL)="
+            f"{len(ra['top_pools']['bsl'])}/{len(ra['top_pools']['ssl'])} "
+            f"sweeps={len(ra.get('sweep_events', []))} "
+            f"baseline={ra.get('baseline_date') or '当日'}"
+        )
+    except Exception as e:
+        results["retail_analytics"] = {"error": str(e)}
+        print(f"  [WARN]  retail_analytics/{target}: {e}")
 
     # 共通メタデータスキーマ補完（source/symbol/timestamp/as_of_date/
     # stale/fallback_used/error/note）。既存キーは上書きしない。
@@ -529,6 +585,13 @@ def format_scraped_data(data: dict) -> str:
             if d.get("avg_short_entry"):
                 line += f", 平均ショート {d['avg_short_entry']:,.4g}"
             lines.append(line)
+            if d.get("long_volume_lots") is not None or d.get("long_positions") is not None:
+                lines.append(
+                    f"  建玉実数: Long {d.get('long_volume_lots', 'N/A')} lots / "
+                    f"{d.get('long_positions', 'N/A')} positions, "
+                    f"Short {d.get('short_volume_lots', 'N/A')} lots / "
+                    f"{d.get('short_positions', 'N/A')} positions"
+                )
             if fallback:
                 lines.append(f"  ※ MyFXBook取得不可のため{source}にフォールバック")
         else:
@@ -711,6 +774,10 @@ def format_scraped_data(data: dict) -> str:
             lines.append(f"- 50bp利下げ確率: {fedwatch['cut_50bp_pct']}%")
         if fedwatch.get("hike_25bp_pct") is not None:
             lines.append(f"- 25bp利上げ確率: {fedwatch['hike_25bp_pct']}%")
+        # レートレンジ別確率 + 前日比/前週比（fedwatch_history が計算済みの値を出力）
+        lines.extend(format_delta_lines(fedwatch))
+        if fedwatch.get("next_fomc_date"):
+            lines.append(f"- 次回FOMC（ソース表記）: {fedwatch['next_fomc_date']}")
         if fedwatch.get("source"):
             lines.append(f"- ソース: {fedwatch['source']}")
     elif fedwatch and isinstance(fedwatch, dict) and fedwatch.get("error"):
@@ -857,20 +924,33 @@ def format_scraped_data(data: dict) -> str:
             )
             bsl_list = d.get("bsl_candidates") or []
             ssl_list = d.get("ssl_candidates") or []
+            if d.get("note"):
+                lines.append(f"  ※ {d['note']}")
             if bsl_list:
                 lines.append("  - BSL 候補クラスタ (現在価格より上方、Ask 集中):")
                 for c in bsl_list:
+                    share = f", side内シェア {c['share_pct']}%" if c.get("share_pct") is not None else ""
                     lines.append(
                         f"    * {c.get('low')} – {c.get('high')} "
-                        f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')})"
+                        f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')}{share})"
                     )
             if ssl_list:
                 lines.append("  - SSL 候補クラスタ (現在価格より下方、Bid 集中):")
                 for c in ssl_list:
+                    share = f", side内シェア {c['share_pct']}%" if c.get("share_pct") is not None else ""
                     lines.append(
                         f"    * {c.get('low')} – {c.get('high')} "
-                        f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')})"
+                        f"(volume_sum={c.get('volume_sum')}, entries={c.get('entries')}{share})"
                     )
+
+    # --- リテール分析 (Retail P/L・Liquidity Pools・Sweep 検証) ---
+    ra = data.get("retail_analytics")
+    if ra and isinstance(ra, dict) and not (ra.get("error") and not ra.get("pl_structure")):
+        lines.append("")
+        lines.extend(format_retail_analytics_lines(ra))
+    elif ra and isinstance(ra, dict) and ra.get("error"):
+        lines.append("")
+        lines.append(f"### リテール分析 — 取得不可（{ra['error']}）")
 
     # --- COT（常時取得）---
     cot = data.get("cot")

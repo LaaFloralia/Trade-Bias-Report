@@ -9,8 +9,18 @@ command -v op >/dev/null 2>&1 || { echo "error: op not found" >&2; exit 127; }
 
 if [ "${1:-}" = "--batch" ]; then
   shift
-  [ -f "$TOKEN_FILE" ] || { echo "error: service token not found" >&2; exit 1; }
-  OP_SERVICE_ACCOUNT_TOKEN="$(cat "$TOKEN_FILE")" exec op run --env-file="$TPL" -- "$@"
+  # 旧方式: トークンファイル（2026-08-11 の 1Password 移行前の残置互換）
+  if [ -f "$TOKEN_FILE" ]; then
+    OP_SERVICE_ACCOUNT_TOKEN="$(cat "$TOKEN_FILE")" exec op run --env-file="$TPL" -- "$@"
+  fi
+  # 現行方式: 共通バッチラッパー（サービストークンは Keychain 管理、
+  # 2026-08-11 シークレット移行後の標準経路。launchd / Hermes cron 対応）
+  BATCH_WRAPPER="$HOME/.config/laa/op-run-batch.sh"
+  [ -x "$BATCH_WRAPPER" ] || {
+    echo "error: service token not found ($TOKEN_FILE も $BATCH_WRAPPER も無い)" >&2
+    exit 1
+  }
+  exec "$BATCH_WRAPPER" "$TPL" "$@"
 fi
 
 exec op run --env-file="$TPL" -- "$@"

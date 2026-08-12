@@ -126,13 +126,25 @@ def _cluster_and_classify(
     asks: List[dict],
     current_price: Optional[float],
     cluster_pct: float = 0.005,
+    max_distance_pct: float = 0.10,
 ) -> dict:
     """価格帯クラスタリング + BSL/SSL 分類。
 
     cluster_pct: 同じクラスタとみなす価格幅の割合（デフォルト 0.5%）。
+    max_distance_pct: 現在価格からの許容乖離（デフォルト ±10%）。
+        チャート軸ラベル等の混入による異常値（例: 現値 4411 に対し 5175 のクラスタ）を
+        排除する妥当性フィルタ。実オーダーでもこの距離のものは当面の流動性として無意味。
     """
     all_pairs = [{"side": "bid", **b} for b in bids] + [{"side": "ask", **a} for a in asks]
     if not all_pairs or current_price is None:
+        return {"bsl_candidates": [], "ssl_candidates": []}
+
+    # 妥当性フィルタ: 現在価格 ±max_distance_pct の範囲外は除外
+    all_pairs = [
+        p for p in all_pairs
+        if abs(p["price"] / current_price - 1.0) <= max_distance_pct
+    ]
+    if not all_pairs:
         return {"bsl_candidates": [], "ssl_candidates": []}
 
     above = [p for p in all_pairs if p["price"] > current_price]
@@ -162,6 +174,15 @@ def _cluster_and_classify(
     bsl_clusters = cluster(above)
     ssl_clusters = cluster(below)
 
+    # share_pct: 同サイド（現在価格の上/下）の総ボリュームに占める割合
+    def annotate_share(clusters: List[dict], side_pairs: List[dict]) -> None:
+        side_total = sum(p["volume"] for p in side_pairs)
+        for c in clusters:
+            c["share_pct"] = round(c["volume_sum"] / side_total * 100, 1) if side_total > 0 else None
+
+    annotate_share(bsl_clusters, above)
+    annotate_share(ssl_clusters, below)
+
     # 集中度上位 3 件
     bsl_top = sorted(bsl_clusters, key=lambda c: c["volume_sum"], reverse=True)[:3]
     ssl_top = sorted(ssl_clusters, key=lambda c: c["volume_sum"], reverse=True)[:3]
@@ -172,11 +193,14 @@ def _cluster_and_classify(
     }
 
 
-async def scrape_myfxbook_open_orders(symbol: str) -> dict:
+async def scrape_myfxbook_open_orders(symbol: str, current_price_hint: Optional[float] = None) -> dict:
     """MyFXBook の Order Book セクションから注文集中度を取得する。
 
     Args:
         symbol: 銘柄名 (例: "XAUUSD", "USDJPY")
+        current_price_hint: TwelveData 等で取得済みの現在価格。
+            ページ内 Market Depth 由来の推定中央値と 2% 以上乖離する場合は
+            hint を優先する（ページ側パースの異常検知用クロスチェック）。
 
     Returns:
         {
@@ -185,12 +209,14 @@ async def scrape_myfxbook_open_orders(symbol: str) -> dict:
             "current_price": float | None,
             "bid_count": int,
             "ask_count": int,
-            "bsl_candidates": [{"low": float, "high": float, "volume_sum": int, "entries": int}, ...],
+            "bsl_candidates": [{"low": float, "high": float, "volume_sum": int,
+                                "entries": int, "share_pct": float | None}, ...],
             "ssl_candidates": 同上,
             "bsl_concentration": dict | None,   # top-1 互換用
             "ssl_concentration": dict | None,   # top-1 互換用
             "summary": {"bid": int, "ask": int},  # 互換用
             "buckets": [],  # 旧スキーマ互換 (空 list、後方互換のため残置)
+            "note": str | None,
             "error": str | None,
         }
     """
@@ -206,6 +232,7 @@ async def scrape_myfxbook_open_orders(symbol: str) -> dict:
         "ssl_concentration": None,
         "summary": {},
         "buckets": [],
+        "note": None,
         "error": None,
     }
 
@@ -237,6 +264,19 @@ async def scrape_myfxbook_open_orders(symbol: str) -> dict:
         return result
 
     current_price = _extract_current_price(body_text, symbol)
+
+    # クロスチェック: ページ由来の推定値と hint が 2% 以上乖離したら hint を採用
+    if current_price_hint is not None:
+        if current_price is None:
+            current_price = current_price_hint
+            result["note"] = "現在価格はページから抽出できず、外部ヒント値を使用"
+        elif abs(current_price / current_price_hint - 1.0) > 0.02:
+            result["note"] = (
+                f"ページ推定価格 {current_price} が外部ヒント {current_price_hint} と "
+                f"2% 以上乖離 → ヒント値を採用"
+            )
+            current_price = current_price_hint
+
     result["current_price"] = current_price
 
     if current_price is None:
@@ -254,7 +294,8 @@ async def scrape_myfxbook_open_orders(symbol: str) -> dict:
             "type": "Ask cluster (BSL candidate)",
             "low": b["low"],
             "high": b["high"],
-            "share_pct": round(b["volume_sum"], 2),  # share_pct ではなく volume だが互換のため
+            "share_pct": b.get("share_pct"),
+            "volume_sum": b["volume_sum"],
         }
     if cls["ssl_candidates"]:
         s = cls["ssl_candidates"][0]
@@ -262,7 +303,8 @@ async def scrape_myfxbook_open_orders(symbol: str) -> dict:
             "type": "Bid cluster (SSL candidate)",
             "low": s["low"],
             "high": s["high"],
-            "share_pct": round(s["volume_sum"], 2),
+            "share_pct": s.get("share_pct"),
+            "volume_sum": s["volume_sum"],
         }
 
     return result

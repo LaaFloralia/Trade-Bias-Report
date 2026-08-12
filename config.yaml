@@ -141,6 +141,25 @@ x_search:
     - handle: NickTimiraos
       label: "Nick Timiraos (WSJ Fed 番記者)"
 
+# --- レポート構成（2026-08-12 XAUUSD 特化再設計）---
+# default_symbol   : 引数なし・定時実行時の対象銘柄（フル分析）
+# context_symbols  : 常時取得し「上流バイアス文脈」として組み込む銘柄
+# on_demand_symbols: /daily-bias <SYM> の個別指定時のみ取得・生成する銘柄（デイリー限定）
+report:
+  default_symbol: XAUUSD
+  context_symbols:
+    - DXY
+  on_demand_symbols:
+    - USDJPY
+    - BTCUSD
+
+# --- XAU-TF 計算エンジン（xauusd-smc-quant）---
+# 単体レポートは 2026-08-12 に廃止。run_report.py は Daily/Weekly への
+# 内部データ供給役（構造/流動性/ボラ百分位/COT百分位 + live-h1.csv）として存続。
+xau_tf_engine:
+  repo_dir: "/Users/laa/dev/xauusd-smc-quant"
+  h1_csv: "data/live-h1.csv"
+
 # --- レポート出力（PDF / Google Drive）---
 output:
   gdrive_pdf_dir: "/Users/laa/Library/CloudStorage/GoogleDrive-laalabx@gmail.com/マイドライブ/Trading/Bias-Reports"
