@@ -2,6 +2,23 @@
 
 設計者: Claude (Fable 5)。前段調査: 4 プロンプトのセクション単位インベントリ + 起動フロー/データ供給の依存調査 + 独立 3 設計案の合議（2026-08-09〜10 実施）。
 
+## 0. 2026-08-12/13 XAUUSD 特化再設計（本ドキュメントの上書き事項）
+
+社長指示による再設計。以下は §1〜5 の記述を**上書き**する現行仕様（詳細な経緯は git log 参照）。
+
+| 項目 | 現行仕様 |
+|---|---|
+| 銘柄範囲 | **XAUUSD 特化 + DXY 上流文脈のみ**（§2 の「非対称化」を置換）。USDJPY / BTCUSD は `/daily-bias <SYM>` / `intel.py brief --daily --symbol <SYM>` の個別指定時のみ、スリム版（master_prompt_symbol.md、`{{SYMBOL}}` 置換）で生成 |
+| 定時配信 | **復活**（§2「オンデマンド化」を置換。社長確定指示 2026-08-12）。平日デイリー 18:00 JST / 土曜ウィークリー 07:00 JST を Hermes cron（intel-daily / intel-weekly、no-agent script、Telegram 配信）で実行。オンデマンド実行も並存 |
+| チャート構造レベル | **FVG / EQH / EQL / Premium-Discount / OB のレベル一覧は本文非掲載**（社長の自力チャート認識訓練を阻害しないため）。XAU-TF アンカーは AI 内部判断専用（プラン価格帯・スコア #3・前回照合）。オーダーブック由来のリクイディティプールは掲載対象（チャートから見えない情報） |
+| /xau-tf 単体レポート | **廃止**（コマンド + `.agents` 重複コピー削除）。計算エンジン run_report.py は内部データ供給役として存続（Brain/Calendar/XAU-TF の MD = アンカー入力、live-h1.csv = スイープ検証入力）。アンカー抽出にボラ/ATR百分位・COT百分位を追加 |
+| リテール分析 | 新設 `scrapers/retail_analytics.py` — P/L 構造（損切り燃料判定）・プール距離・**前日プールに対するスイープ→反転検証**（0.5×ATR 閾値、`output/history/liquidity_pools.json`）。scraped_data に `### リテール分析` ブロックとして注入 |
+| FedWatch | `scrapers/fedwatch_history.py` — スナップショット履歴（`output/history/fedwatch.json`）+ 前日比/前週比の決定論的計算（FOMC 会合切替ガード付き）。Daily は前日比 / Weekly は前週比を常時記載 |
+| 振り返り蓄積 | 新設 `scrapers/bias_review.py` — Brain `Atlas/Bias-Review-Log.md` に構造化エントリを蓄積（同日同モード置換）。直近 5 件を report_anchor が `[Bias Review 直近5件]` として再注入（学習ループ）。PDF 本文の照合は Daily §8-1 = 3〜5 行 / Weekly §1 = コンパクト表 + 学び 3 点に圧縮 |
+| Weekly 前回レビュー入力 | 新設 `scrapers/weekly_review.py` — main.py --weekly が scraped_data に `### 前回レビュー入力` を自動注入（interactive / headless 同一入力。旧 headless の「照合不能」バグ解消） |
+| 追加契約 | 個別銘柄の出力は `scraped_data_{SYM}_DATE.*` + Brain `Calendar/Daily-Bias/{SYM}/`（既存 glob を汚染しない別名・別配置）。intel JSON に `review` フィールドを additive 追加（既存 6 キー不変）。intel.py は headless でも Brain git add/commit/push を行う |
+| シークレット | `run-with-secrets.sh --batch` は旧トークンファイル → Keychain 管理の `~/.config/laa/op-run-batch.sh` へフォールバック（2026-08-11 移行後の headless 破損を修正） |
+
 ## 1. 結論
 
 | 旧（4 本） | 新（2 本） |

@@ -62,12 +62,14 @@ cp .env.example .env
 ### 2-3. 実行
 
 ```bash
-uv run python main.py                # データ取得のみ（COT 含む。常時同一内容）
-uv run python main.py --weekly       # 同上（ファイル名 prefix が scraped_data_weekly_ になるのみ）
+uv run python main.py                # データ取得のみ（XAUUSD + DXY 文脈。COT 含む）
+uv run python main.py --weekly       # 同上（ファイル名 prefix が scraped_data_weekly_ になる + 前回レビュー入力注入）
+uv run python main.py --symbol USDJPY  # 個別銘柄スコープ（scraped_data_USDJPY_*.txt を出力）
 
 # 分析込みの一気通貫（ヘッドレス、§ 8 参照）:
-uv run python scripts/intel.py brief --daily    # 取得 → LLM 分析 → MD + JSON + PDF(Drive) 出力
+uv run python scripts/intel.py brief --daily    # 取得 → LLM 分析 → MD + JSON + PDF(Drive) + Brain push
 uv run python scripts/intel.py brief --weekly
+uv run python scripts/intel.py brief --daily --symbol USDJPY  # 個別銘柄スリム版（MD + PDF のみ）
 ```
 
 ---
@@ -260,10 +262,11 @@ SESSION_URL="https://claude.ai/code/${CLAUDE_CODE_REMOTE_SESSION_ID}"
 
 | 項目 | **統合 Daily** | **統合 Weekly** |
 |---|---|---|
-| 位置づけ | オンデマンドで「その瞬間の全体像」（トレード直前） | 「前回以降の振り返り + 来週の展望」（週末） |
-| 実行コマンド | `/daily-bias` | `/weekly-bias` |
+| 位置づけ | 「その瞬間の全体像」（定時 平日 18:00 JST + トレード直前オンデマンド） | 「前回以降の振り返り + 来週の展望」（定時 土曜 07:00 JST + オンデマンド） |
+| 対象銘柄 | **XAUUSD 特化 + DXY 上流文脈**（2026-08-12〜。個別銘柄は `/daily-bias <SYM>` のスリム版） | 同左 |
+| 実行コマンド | `/daily-bias`（Hermes cron: intel-daily） | `/weekly-bias`（Hermes cron: intel-weekly） |
 | 所要時間 | 約 4〜5 分（XAU-TF 自動更新込み） | 約 8〜12 分 |
-| 字数目安 | 2,400〜3,800 字 | 4,500〜6,500 字 |
+| 字数目安 | 2,400〜3,800 字 | 3,500〜5,000 字 |
 | WebSearch | 基本 2 + 条件付き最大 4（ツール利用可能環境のみ） | 4〜8 クエリ（マクロ環境・ニュースに集中） |
 | 固有セクション | 今夜の執行プラン / ファンダ大局バイアス（アンカー継承） | 前回レビュー（実データ照合）/ COT 分析 / 来週カレンダー |
 | 信頼度スコア | **統一 8 項目・閾値共通**（High ≥7 / Med 5-6 / Med-cautious 3-4 / Low ≤2 = 様子見） | 同一 |
@@ -331,6 +334,12 @@ uv run python scripts/intel.py brief --daily            # 日次（master_prompt
 uv run python scripts/intel.py brief --weekly           # 週次（master_prompt_weekly.md 使用）
 uv run python scripts/intel.py brief --daily --reuse-data  # 当日データがあれば再取得を省略
 uv run python scripts/intel.py brief --daily --quick    # 新規取得をスキップし直近データで分析のみ再実行
+uv run python scripts/intel.py brief --daily --symbol USDJPY  # 個別銘柄スリム版（intel JSON なし）
+
+# デフォルト実行に含まれる追加ステップ（2026-08-13〜）:
+#   Step 0 相当: XAU-TF エンジン再生成（古い場合。live-h1.csv 更新込み）
+#   Step 3.5: Bias-Review-Log エントリ生成 → Brain Atlas/Bias-Review-Log.md へ蓄積
+#   Step 4: Brain git add/commit/push（他端末の Obsidian / スマホ閲覧のため）
 ```
 
 前提: `claude` CLI がログイン済み（サブスク認証）であること。API キーは不要。
