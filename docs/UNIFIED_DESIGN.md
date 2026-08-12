@@ -18,6 +18,10 @@
 | Weekly 前回レビュー入力 | 新設 `scrapers/weekly_review.py` — main.py --weekly が scraped_data に `### 前回レビュー入力` を自動注入（interactive / headless 同一入力。旧 headless の「照合不能」バグ解消） |
 | 追加契約 | 個別銘柄の出力は `scraped_data_{SYM}_DATE.*` + Brain `Calendar/Daily-Bias/{SYM}/`（既存 glob を汚染しない別名・別配置）。intel JSON に `review` フィールドを additive 追加（既存 6 キー不変）。intel.py は headless でも Brain git add/commit/push を行う |
 | シークレット | `run-with-secrets.sh --batch` は旧トークンファイル → Keychain 管理の `~/.config/laa/op-run-batch.sh` へフォールバック（2026-08-11 移行後の headless 破損を修正） |
+| 生成モデル | 定時配信は **Opus 5 / effort high** に明示ピン（`INTEL_CLAUDE_MODEL` / `INTEL_CLAUDE_EFFORT`）。未指定だとセッション既定を継承し `/model` 切り替えが定時配信に波及するため。Fable 5 は Max の週次プールを共有消費するので毎営業日の自動生成には使わない。手動 `/daily-bias` はセッションのモデルをそのまま使う |
+| ニュース検索 | headless でもレポート本文生成時のみ `WebSearch` / `WebFetch` を許可（`INTEL_CLAUDE_ALLOWED_TOOLS`）。許可がないとセクション5 が常時「検索不可環境」で空になっていた |
+| チャート外要素の拡充（2026-08-13） | ①**Disaggregated COT**（`scrapers/cot_disaggregated.py`、CFTC `72hh-3qpy`）— Managed Money / Swap Dealer / Producer 内訳と業者数。Legacy の "Large Spec" は Managed Money と Other Reportables を混ぜるため投機の実体が読めなかった ②**相関定量**（`scrapers/correlation.py`）— 20日/60日ローリング相関係数を日次リターンで計算し、無相関化時はスコア #1 を 0 にする規則をプロンプトに明記（水準相関は見せかけ相関になるため使わない）③**セッション統計**（`scrapers/session_stats.py`）— アジアレンジ スイープ率・刈り取り後の反転率・PDH/PDL スイープ率を H1 250 営業日から決定論計算。旧「季節性」は LLM 記憶頼みで廃止したが、本統計は実データ計算のためその問題を持たない。②③はネットワーク呼び出しを増やさない |
+| 見送った要素 | オプション GEX / 上海プレミアム（無料で安定的に取れる公開ソースがなくスクレイパーが脆くなる）、米債入札結果（金への効果は実質金利経由で FRED DFII10 が既に捕捉しており重複） |
 
 ## 1. 結論
 

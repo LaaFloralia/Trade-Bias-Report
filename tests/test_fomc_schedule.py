@@ -53,13 +53,28 @@ def test_fomc_exhaustion_warning_90_days():
 
 
 def test_cot_report_type_consistency():
-    """プロンプトの COT 種別が実装 (Legacy Futures Only) と一致していること。
+    """プロンプトが騙る COT 種別に、必ず対応する実装があること。
+
+    元々は「実装は Legacy なのにプロンプトが TFF を騙る」誤記（2026-05-15 訂正）を
+    防ぐガード。2026-08-13 に Disaggregated を実装したため、
+    「Disaggregated 表記の禁止」から「表記と実装の対応の検証」へ趣旨を保って更新した。
 
     2026-08 統合以降のアクティブプロンプトは Daily/Weekly の 2 本のみ
     （旧 Deep プロンプトは archive/prompts/ に凍結済みで対象外）。
     """
+    scrapers_dir = PROJECT_ROOT / "scrapers"
+    legacy_src = (scrapers_dir / "cot.py").read_text(encoding="utf-8")
+    assert "Legacy Futures Only" in legacy_src
+
+    disagg_path = scrapers_dir / "cot_disaggregated.py"
+
     for rel in ("master_prompt.md", "master_prompt_weekly.md"):
         src = (PROJECT_ROOT / rel).read_text(encoding="utf-8")
-        assert "Disaggregated" not in src, f"{rel}: Disaggregated 表記が残存"
-    cot_src = (PROJECT_ROOT / "scrapers" / "cot.py").read_text(encoding="utf-8")
-    assert "Legacy Futures Only" in cot_src
+        # 未実装の TFF（Traders in Financial Futures）を騙らないこと
+        assert "TFF" not in src, f"{rel}: 未実装の TFF 表記"
+        assert "Traders in Financial Futures" not in src, f"{rel}: 未実装の TFF 表記"
+        # Disaggregated を書くなら実装が存在すること
+        if "Disaggregated" in src:
+            assert disagg_path.exists(), f"{rel}: Disaggregated 表記に対応する実装がない"
+            disagg_src = disagg_path.read_text(encoding="utf-8")
+            assert "72hh-3qpy" in disagg_src, "Disaggregated の API エンドポイントが不一致"

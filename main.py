@@ -54,6 +54,13 @@ from scrapers.gold_cb import scrape_gold_cb, _label as _cb_label
 from scrapers.report_anchor import load_report_anchor, format_anchor_lines
 from scrapers.fedwatch_history import record_snapshot, compute_deltas, format_delta_lines
 from scrapers.retail_analytics import build_retail_analytics, format_retail_analytics_lines
+from scrapers.cot_disaggregated import fetch_cot_disaggregated, format_disaggregated_lines
+from scrapers.correlation import (
+    build_correlations,
+    daily_closes_from_h1,
+    format_correlation_lines,
+)
+from scrapers.session_stats import compute_session_stats, format_session_stats_lines
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -153,6 +160,10 @@ async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
         # XAUUSD ファンダ大局バイアス用 (master_prompt セクション1.5)
         "gold_etf": None,  # GLD 保有トン数 (SPDR 公式 API)
         "gold_cb": None,   # 中銀ゴールド購入 (IMF IRFCL 報告国ベース)
+        # 2026-08-13 追加: 機関内訳・相関定量・セッション統計
+        "cot_disaggregated": None,  # Managed Money / Swap Dealer / Producer 内訳
+        "correlation": None,        # ローリング相関係数 (ネットワーク不要、既存データの再計算)
+        "session_stats": None,      # アジアレンジ / PDH-PDL スイープ率 (H1 から決定論計算)
         # 前回レポート アンカー (Brain ローカル読み込み、オンデマンド運用の自己完結化)
         "report_anchor": None,
     }
@@ -440,6 +451,39 @@ async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
                     f"bids={res.get('bid_count', 0)} asks={res.get('ask_count', 0)} "
                     f"BSL clusters={bsl_n} SSL clusters={ssl_n} (current_price={cp})"
                 )
+
+    # --- 機関ポジショニング内訳 (Disaggregated COT、XAUUSD スコープ時のみ) ---
+    if "XAUUSD" in scope:
+        gold_market = INSTRUMENTS["XAUUSD"]["cot"]["market"]
+        print("  COT Disaggregated: Managed Money / Swap Dealer 内訳を取得中...")
+        try:
+            results["cot_disaggregated"] = fetch_cot_disaggregated(gold_market)
+            err = results["cot_disaggregated"].get("error")
+            print(f"  [{'WARN' if err else 'OK'}]  cot_disaggregated: {err or 'OK'}")
+        except Exception as e:
+            results["cot_disaggregated"] = {"error": str(e)}
+            print(f"  [ERROR] cot_disaggregated: {e}")
+
+    # --- 相関定量 + セッション統計 (ネットワーク不要、既存データからの決定論計算) ---
+    if symbol == DEFAULT_SYMBOL:
+        try:
+            xau_closes = daily_closes_from_h1(XAU_TF_H1_CSV)
+            results["correlation"] = build_correlations(xau_closes, results.get("fred") or {})
+            pairs = results["correlation"].get("pairs", [])
+            print(f"  [OK]    correlation: {len(pairs)} ペア算出"
+                  f"（{', '.join(p['verdict'] for p in pairs)}）")
+        except Exception as e:
+            results["correlation"] = {"error": str(e)}
+            print(f"  [WARN]  correlation: {e}")
+
+        try:
+            results["session_stats"] = compute_session_stats(XAU_TF_H1_CSV)
+            st = results["session_stats"]
+            status = st.get("error") or f"標本 {st.get('sample_days')}日"
+            print(f"  [{'WARN' if st.get('error') else 'OK'}]  session_stats: {status}")
+        except Exception as e:
+            results["session_stats"] = {"error": str(e)}
+            print(f"  [WARN]  session_stats: {e}")
 
     # --- リテール分析 (デフォルト銘柄 = XAUUSD 実行時のみ):
     #     P/L 構造 + リクイディティプール + スイープ検証 ---
@@ -1009,6 +1053,24 @@ def format_scraped_data(data: dict) -> str:
             err = cot.get("error", "取得不可")
             lines.append(f"COTデータ取得不可（{err}）")
 
+    # --- COT Disaggregated（機関ポジショニング内訳）---
+    cot_dis = data.get("cot_disaggregated")
+    if cot_dis:
+        lines.append("")
+        lines.extend(format_disaggregated_lines(cot_dis))
+
+    # --- 相関レジーム定量 ---
+    corr = data.get("correlation")
+    if corr:
+        lines.append("")
+        lines.extend(format_correlation_lines(corr))
+
+    # --- セッション統計 ---
+    sess = data.get("session_stats")
+    if sess:
+        lines.append("")
+        lines.extend(format_session_stats_lines(sess))
+
     # --- バリデーション結果サマリー ---
     if validation_results:
         lines.append("")
@@ -1059,6 +1121,9 @@ def save_scraped(scraped_data: dict, formatted_text: str, weekly: bool = False,
             for symbol_data in source.values():
                 if isinstance(symbol_data, dict):
                     symbol_data.pop("raw_text", None)
+                    # FRED の観測列は相関計算のみに使う中間データ。
+                    # 系列 40 本 × 6 系列で JSON が肥大するため保存しない。
+                    symbol_data.pop("observations", None)
     json_path.write_text(json.dumps(clean_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     txt_path = output_dir / f"{prefix}{today}.txt"

@@ -64,8 +64,8 @@ STALE でない場合、PWH/PWL/PMH/PML は XAU-TF 値を正とし、TwelveData 
 |---|---|
 | 1 | `### 前回レビュー入力（前回想定との答え合わせ用）`（前回 Weekly / 直近 Daily の抜粋 + intel JSON 群）、`### 前回レポート アンカー`（[Weekly 大局] / [前回 Daily] / [XAU テクニカル]）、`=== Price Data (Twelve Data API) ===` |
 | 2 | `[DXY (スクレイピング)]`、`### Deep: DXY 構成通貨分解` |
-| 3 | `=== COT Data (CFTC Legacy Futures Only) ===`、`### リテールポジション`、`### Deep: MyFXBook Order Book`、`### リテール分析 (Retail P/L・Liquidity Pools・Sweep 検証)` |
-| 4 | `### FedWatch`（レンジ別確率と前週比の行を含む）、`[US10Y]` `[US2Y]` `[US10Y Real (TIPS)]` `[10Y Breakeven Inflation]`、`### Deep: マクロ流動性`、`### Deep: 国債利回りスプレッド`、`### 金ETFフロー (GLD 保有量)`、`### 中銀ゴールド購入`、`### Deep: VIX ターム構造`、`### Deep: US 株指数プリマーケット` |
+| 3 | `=== COT Data (CFTC Legacy Futures Only) ===`、`### COT Disaggregated (XAUUSD / 機関ポジショニング内訳)`、`### リテールポジション`、`### Deep: MyFXBook Order Book`、`### リテール分析 (Retail P/L・Liquidity Pools・Sweep 検証)` |
+| 4 | `### 相関レジーム定量（ローリング相関係数、日次リターンベース）`、`### セッション統計（XAUUSD 実データ、ICT 時間概念の頻度裏付け）`、`### FedWatch`（レンジ別確率と前週比の行を含む）、`[US10Y]` `[US2Y]` `[US10Y Real (TIPS)]` `[10Y Breakeven Inflation]`、`### Deep: マクロ流動性`、`### Deep: 国債利回りスプレッド`、`### 金ETFフロー (GLD 保有量)`、`### 中銀ゴールド購入`、`### Deep: VIX ターム構造`、`### Deep: US 株指数プリマーケット` |
 | 5 | `### 経済指標カレンダー（ハイインパクト）` |
 | 6 | WebSearch（検索不可環境では「検索不可環境」注記のみ） |
 | 7〜8 | セクション1〜6 の統合 + `=== Price Data ===` + [XAU テクニカル] アンカー（内部利用） |
@@ -201,6 +201,11 @@ CFTC Legacy Futures Only Report（毎週金曜公開、火曜時点データ）�
 | DXY (DX) | Commercials | | | | |
 | DXY (DX) | Small Spec | | | | |
 
+**機関内訳（Disaggregated、必須 2〜3 行）:** `### COT Disaggregated` から Managed Money のネット・前週比・OI比、
+Swap Dealer のショート比率、業者数の偏り（Long 社数 : Short 社数）を記載する。Legacy の "Large Spec" は
+Managed Money と Other Reportables を混ぜるため、**投機の実体は Disaggregated 側を正とする**。
+Swap Dealer の大量ショートは OTC 需要の裏返しであり弱気材料として解釈しないこと。
+
 **XAUUSD（Gold GC）の百分位:** XAU-TF アンカーの `[COT百分位]`（3年百分位・前週比）が非 STALE で存在する場合、
 テーブルの直下に 1〜2 行で必ず引用する（生値の水準感を過去レンジで補正する Weekly の中核情報）。
 百分位の方向感と CFTC 生値（GC）の前週比方向が乖離する場合はその旨を 1 行で明記する。
@@ -294,7 +299,10 @@ scraped_data の `### FedWatch` ブロックにはレンジ別確率と**計算�
 
 - VIX ターム構造 1 行: 「VIX <値> (<level>) / <term_structure> / 通常域逸脱 <あり/なし>」
 - US 株指数のリスクレジーム（risk-on / risk-off）1 行
-- 監視ペア（DXY-XAU / US10Y-XAU）の乖離有無を 1 行。乖離ありの場合のみペア名と解釈を追記（統一スコア #7 の判定根拠）
+- 相関は `### 相関レジーム定量` の計算済み係数（20日 / 60日、日次リターンベース）を必ず数値で引用する。
+  「反転」「無相関化」判定のペアがあればペア名・r 値・解釈を追記（統一スコア #7 の判定根拠）。
+  **DXY 系が無相関化している場合はスコア #1 を 0 とする**（相関が効いていないのに DXY で裏付けない）
+- `### セッション統計` から、来週の待ち方に効く数値（アジアレンジ スイープ率・刈り取り後の反転率・PDH/PDL スイープ率）を 1 行
 
 ### 4-6. ファンダ大局バイアステーブル（週次更新）
 

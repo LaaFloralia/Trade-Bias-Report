@@ -78,6 +78,9 @@ CLAUDE_TIMEOUT = int(os.environ.get("INTEL_CLAUDE_TIMEOUT", "900"))
 # 手動の /daily-bias はセッションのモデルをそのまま使う（この定数の影響を受けない）。
 CLAUDE_MODEL = os.environ.get("INTEL_CLAUDE_MODEL", "opus")
 CLAUDE_EFFORT = os.environ.get("INTEL_CLAUDE_EFFORT", "high")
+# レポート本文生成時のみ許可するツール（カンマ区切り。空文字で完全無効化）。
+# 金は地政学プレミアムと要人発言で動くため、ニュースセクションを埋めるには検索が要る。
+CLAUDE_ALLOWED_TOOLS = os.environ.get("INTEL_CLAUDE_ALLOWED_TOOLS", "WebSearch,WebFetch")
 
 MODES = {
     "daily": {
@@ -219,11 +222,16 @@ def extract_json_object(text: str) -> Optional[dict]:
 # LLM ヘッドレス実行（エンジンシーム: claude -p / codex exec）
 # ---------------------------------------------------------------------------
 
-def run_claude(prompt: str, timeout: int = None) -> str:
+def run_claude(prompt: str, timeout: int = None, allow_tools: bool = False) -> str:
     """claude CLI をヘッドレス (-p) で実行し、stdout を返す。失敗は RuntimeError。
 
     モデルと推論強度は明示ピンする（CLAUDE_MODEL / CLAUDE_EFFORT の定義コメント参照）。
     空文字を渡すとフラグ自体を省略し、セッション既定の継承に戻せる。
+
+    allow_tools=True のときのみ WebSearch / WebFetch を許可する（レポート本文生成のみ）。
+    これを渡さないと headless では検索系ツールが使えず、ニュース・地政学セクションが
+    常時「検索不可環境」で空になる。JSON 変換・振り返り生成は入力テキストの変換に
+    過ぎないためツールを与えない（余計な外部アクセスと実行時間を避ける）。
     """
     timeout = timeout or CLAUDE_TIMEOUT
     cmd = [CLAUDE_BIN, "-p", "--output-format", "text"]
@@ -231,6 +239,8 @@ def run_claude(prompt: str, timeout: int = None) -> str:
         cmd += ["--model", CLAUDE_MODEL]
     if CLAUDE_EFFORT:
         cmd += ["--effort", CLAUDE_EFFORT]
+    if allow_tools and CLAUDE_ALLOWED_TOOLS:
+        cmd += ["--allowedTools", *CLAUDE_ALLOWED_TOOLS.split(",")]
     try:
         proc = subprocess.run(
             cmd,
@@ -305,14 +315,20 @@ def run_codex(prompt: str, timeout: int = None) -> str:
         return out
 
 
-def run_llm(prompt: str, timeout: int = None) -> str:
+def run_llm(prompt: str, timeout: int = None, allow_tools: bool = False) -> str:
     """エンジンシーム: 環境変数 INTEL_ENGINE (claude|codex、既定 claude) で切り替える。"""
     engine = os.environ.get("INTEL_ENGINE", "claude").strip().lower()
     if engine == "codex":
+        # codex exec は read-only sandbox 固定のため allow_tools は無視される
         return run_codex(prompt, timeout=timeout)
     if engine != "claude":
         print(f"[intel] [WARN] 未知の INTEL_ENGINE={engine!r} → claude を使用")
-    return run_claude(prompt, timeout=timeout)
+    return run_claude(prompt, timeout=timeout, allow_tools=allow_tools)
+
+
+def run_llm_with_tools(prompt: str, timeout: int = None) -> str:
+    """レポート本文生成用: 検索ツールを許可した runner。"""
+    return run_llm(prompt, timeout=timeout, allow_tools=True)
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +507,10 @@ def build_report_prompt(
     cfg = MODES[mode]
     extra = f"\n\n{extra_block}" if extra_block else ""
     return f"""あなたはヘッドレスパイプラインから起動された分析エージェントである。
-ツール（Read/Bash/WebSearch 等）は一切使わず、このプロンプト内の情報のみで完結すること。
+ファイル操作・コマンド実行系のツール（Read / Write / Edit / Bash）は使わない。
+**WebSearch / WebFetch は利用可能**で、マスタープロンプトのニュース・地政学セクションの
+検索ポリシー（クエリ数上限を含む）に従ってのみ使うこと。それ以外の事実は
+このプロンプト内の取得済みデータだけで完結させる。
 出力は Markdown レポート本文のみとし、前置き・後書き・コードフェンスで全体を包むことを禁止する。
 
 以下のマスタープロンプトの指示（セクション構成、テーブル形式、出力ルール、ICT 用語規則）に厳密に従い、
@@ -866,9 +885,9 @@ def cmd_brief(args) -> int:
             if xsearch_data is None:
                 run_record["xsearch_skip_reason"] = xsearch_ingest.LAST_SKIP_REASON
 
-        # Step 2: 人間用 MD
+        # Step 2: 人間用 MD（本文生成のみ検索ツールを許可）
         md_text, report_prompt = generate_report_md(
-            mode, scraped_text, run_llm, data_as_of, date_str,
+            mode, scraped_text, run_llm_with_tools, data_as_of, date_str,
             extra_block=extra_block, symbol=symbol,
         )
         if data_as_of != date_str:

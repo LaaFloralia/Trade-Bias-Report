@@ -284,6 +284,16 @@ XAU Technical Report（Dukascopy H1・検出定義がコードで検証済み）
 `/weekly-bias` は Step 0 で XAU-TF レポートが前日以前の場合に自動再生成する（失敗時は STALE 続行）。
 乖離時は「乖離: TD ○○ / XAU-TF ○○（採用）」形式でレポートに明記。
 
+**チャート外要素（2026-08-13 拡充）**: 機関ポジショニング内訳（CFTC Disaggregated: Managed Money /
+Swap Dealer / Producer。Legacy の "Large Spec" では判別できない投機の実体）、相関レジームの定量化
+（20日/60日ローリング相関係数・日次リターンベース。スコア #1/#7 の重み判断に使う）、
+セッション統計（アジアレンジのスイープ率・刈り取り後の反転率・PDH/PDL スイープ率を Dukascopy H1 250 営業日から
+決定論計算。ICT の時間概念を頻度で裏付ける）。後 2 者は追加のネットワーク呼び出しなしで既存データから計算する。
+
+**ニュース検索**: ヘッドレス実行でもレポート本文生成時のみ `WebSearch` / `WebFetch` を許可する
+（`INTEL_CLAUDE_ALLOWED_TOOLS`、既定 `WebSearch,WebFetch`）。許可しないとニュース・地政学セクションが
+常時「検索不可環境」で空になる。JSON 変換・振り返り生成はツールなしで実行する。
+
 **推論エンジン**: 既定は Claude サブスク枠（`claude -p`）。**モデルは Opus 5・推論強度 high に明示ピン**
 （`INTEL_CLAUDE_MODEL` / `INTEL_CLAUDE_EFFORT`、既定 `opus` / `high`）。ピンする理由は
 (1) 未指定だとセッション既定（`~/.claude/settings.json`）を継承し、`/model` 切り替えが定時配信にも波及する

@@ -159,7 +159,8 @@ def test_collect_data_quick_fails_clearly_when_no_data(tmp_path, monkeypatch):
 
 def test_run_llm_defaults_to_claude(monkeypatch):
     monkeypatch.delenv("INTEL_ENGINE", raising=False)
-    monkeypatch.setattr(intel, "run_claude", lambda prompt, timeout=None: f"claude:{prompt}")
+    monkeypatch.setattr(intel, "run_claude",
+                        lambda prompt, timeout=None, allow_tools=False: f"claude:{prompt}")
     assert intel.run_llm("hi") == "claude:hi"
 
 
@@ -171,7 +172,8 @@ def test_run_llm_dispatches_to_codex(monkeypatch):
 
 def test_run_llm_unknown_engine_falls_back_to_claude(monkeypatch):
     monkeypatch.setenv("INTEL_ENGINE", "gpt9")
-    monkeypatch.setattr(intel, "run_claude", lambda prompt, timeout=None: "claude-out")
+    monkeypatch.setattr(intel, "run_claude",
+                        lambda prompt, timeout=None, allow_tools=False: "claude-out")
     assert intel.run_llm("hi") == "claude-out"
 
 
@@ -204,7 +206,9 @@ def test_report_prompt_embeds_master_prompt_and_data():
     assert "XAUUSD 4000" in prompt                    # scraped データ
     assert "取得済みデータ (最優先で使用すること)" in prompt
     assert "データ基準日: 2026-06-11（パイプライン実行日: 2026-06-11）" in prompt
-    assert "ツール（Read/Bash/WebSearch 等）は一切使わず" in prompt
+    # 2026-08-13: ニュースセクションを埋めるため検索系だけ許可し、ファイル操作系は禁止
+    assert "ファイル操作・コマンド実行系のツール（Read / Write / Edit / Bash）は使わない" in prompt
+    assert "WebSearch / WebFetch は利用可能" in prompt
 
 
 def test_save_outputs_use_expected_paths(tmp_path, monkeypatch):

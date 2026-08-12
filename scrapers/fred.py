@@ -143,7 +143,9 @@ def _fetch_series_observations(series_id: str, api_key: str) -> dict:
         "api_key": api_key,
         "file_type": "json",
         "sort_order": "desc",
-        "limit": 40,
+        # 60 日ローリング相関（correlation.py）に必要な観測数を確保するため 40 → 100。
+        # 祝日・欠損（'.'）で有効値が減るため余裕を持たせている。
+        "limit": 100,
     }
     last_err: Optional[str] = None
     for attempt in range(RETRY_ATTEMPTS):
@@ -164,10 +166,10 @@ def _fetch_series_observations(series_id: str, api_key: str) -> dict:
                     valid.append((float(raw), obs.get("date")))
                 except ValueError:
                     continue
-                if len(valid) >= 21:
+                if len(valid) >= 70:
                     break
             if not valid:
-                return {"error": "no valid observation in latest 40 (all '.')"}
+                return {"error": "no valid observation in latest 100 (all '.')"}
             value, as_of = valid[0]
             prev_value, prev_as_of = (valid[1] if len(valid) >= 2 else (None, None))
             value_20, as_of_20 = (valid[20] if len(valid) >= 21 else (None, None))
@@ -178,6 +180,9 @@ def _fetch_series_observations(series_id: str, api_key: str) -> dict:
                 "prev_as_of_date": prev_as_of,
                 "value_20obs_ago": value_20,
                 "as_of_20obs_ago": as_of_20,
+                # 相関計算用の観測列（新しい順 [(date, value), ...]）。
+                # scrapers/correlation.py がローリング相関の入力に使う。
+                "observations": [(d, v) for v, d in valid],
             }
         except requests.HTTPError as exc:
             last_err = f"HTTP {exc.response.status_code if exc.response is not None else '?'}"
@@ -249,6 +254,9 @@ def fetch_fred_series(series_id: str, api_key: Optional[str] = None) -> dict:
         "change_20obs": change_20,
         "as_of_date": obs["as_of_date"],
         "prev_as_of_date": obs.get("prev_as_of_date"),
+        # 相関計算用（correlation.py が消費）。scraped_data JSON からは
+        # main.save_scraped が容量削減のため落とす（実行中のみ在る）。
+        "observations": obs.get("observations", []),
     })
 
     # 系列別 stale 判定: as_of_date が SERIES_CONFIG[series_id]["stale_days"] を超えたら stale=true

@@ -66,6 +66,7 @@ def test_cmd_brief_stale_data_adds_md_banner_and_json_metadata(tmp_path, monkeyp
         return json.dumps(VALID_OBJ, ensure_ascii=False)
 
     monkeypatch.setattr(intel, "run_llm", runner)
+    monkeypatch.setattr(intel, "run_llm_with_tools", runner)
     # PDF 発行 (subprocess → playwright → Drive コピー) はテストでは実行しない
     monkeypatch.setattr(intel, "publish_report_pdf", lambda md_path, timeout=300: {})
 
