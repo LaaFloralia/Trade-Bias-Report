@@ -10,8 +10,9 @@ allowed-tools: Bash, Read, Write
 PDF を Google Drive へ発行する。
 
 本コマンドは `/daily-bias` の週次バリアント（Mac ローカル専用）。構造は同一で、
-差分は Step 1 の `--weekly`、Step 2 の追加 Read（前回レビュー入力）、
-`master_prompt_weekly.md` の使用、出力先 `Calendar/Weekly-Bias/`。
+差分は Step 1 の `--weekly`、`master_prompt_weekly.md` の使用、出力先 `Calendar/Weekly-Bias/`。
+
+**銘柄引数は非対応**（Weekly は XAUUSD + DXY 文脈 + マクロ専用。個別銘柄は `/daily-bias <銘柄>` を使う）。
 
 ## 環境変数
 
@@ -53,7 +54,7 @@ fi
 
 ```bash
 SECRETS_WRAPPER="$PROJECT_DIR/scripts/run-with-secrets.sh"
-if [ -x "$SECRETS_WRAPPER" ] && [ -f "$HOME/.config/laa/op-service-token" ]; then
+if [ -x "$SECRETS_WRAPPER" ] && { [ -f "$HOME/.config/laa/op-service-token" ] || [ -x "$HOME/.config/laa/op-run-batch.sh" ]; }; then
   cd "$PROJECT_DIR" && "$SECRETS_WRAPPER" --batch "$PYTHON_BIN" main.py --weekly
 else
   echo "WARN: 1Password 注入が使えないため素の実行 (TwelveData/FRED は取得不可になる)"
@@ -65,7 +66,7 @@ fi
 生成される（COT は Daily と同様に常時取得。`--weekly` はファイル名 prefix 用）。
 exit code が 0 でなければ以降を中止し、stderr の内容をユーザーに報告する。
 
-## Step 2: マスタープロンプト・データ・前回レビュー入力の読み込み
+## Step 2: マスタープロンプトとデータの読み込み
 
 `Read` ツールで以下を読み込む。
 
@@ -73,29 +74,23 @@ exit code が 0 でなければ以降を中止し、stderr の内容をユーザ
 - `$PROJECT_DIR/master_prompt_weekly.md`
 - `$PROJECT_DIR/output/scraped_data_weekly_YYYY-MM-DD.txt`（当日分）
 
-前回レビュー入力（存在するものだけで良い。無ければスキップして続行）:
-1. **前回 Weekly レポート**: `$BRAIN_PATH/Calendar/Weekly-Bias/` の最新
-   `Weekly_Bias_Report_*.md`。無ければ `$BRAIN_PATH/Calendar/Weekly-Deep-Bias/` の
-   最新も探す（`ls -t` で特定して Read）
-2. **直近 Daily レポート**: `$BRAIN_PATH/Calendar/Daily-Bias/` のうち直近 7 日以内の
-   `Daily_Bias_Report_*.md` を新しい順に最大 2 本
-3. **機械用 JSON**: `ls -t $PROJECT_DIR/output/intel/ | head` で直近の
-   `intel_*.json` を最大 5 件 Read（bias / no_trade / confidence の推移確認用）
+**前回レビュー入力は scraped_data に自動注入済み**（`### 前回レビュー入力（前回想定との答え合わせ用）`
+ブロック。main.py --weekly が `scrapers/weekly_review.py` で前回 Weekly / 直近 Daily の抜粋と
+intel JSON 群を組み立てる。interactive / headless 両フローで同一入力）。
+
+補助（scraped_data のブロックが欠損・不足している場合のみ）:
+- `$BRAIN_PATH/Calendar/Weekly-Bias/` の最新 `Weekly_Bias_Report_*.md` を直接 Read してよい
 
 ## Step 3: 分析・レポート生成
 
 `master_prompt_weekly.md` のセクション構成・テーブル形式・出力ルールに厳密に従って
-Markdown レポートを生成する。生成時のプロンプト（メンタルモデル）には、
-scraped データに加えて Step 2 で読んだ前回レビュー入力を「## 前回レビュー入力
-（先週の想定と実際の答え合わせに使用）」ブロックとして文中に含めること。
+Markdown レポートを生成する。
 
-- 前回 Weekly の週次バイアス・シナリオと今週の実際の値動きを突き合わせ、
-  マスタープロンプトの前回レビュー系セクションの材料にする
-- 直近 Daily と intel JSON は、週中のバイアス推移（切り替わり・確度変化）の根拠にする
-- 前回レビュー入力が 1 つも無い場合は、その旨をレポート内に明記して初回として生成する
+- scraped_data 内の `### 前回レビュー入力` を前回レビュー系セクションの材料にする
+- 前回レビュー入力が無い場合は、その旨をレポート内に明記して初回として生成する
 
 レポートは Markdown 形式、テーブル積極使用、絵文字禁止、時刻はすべて JST。
-字数は master_prompt_weekly.md の出力ルールに従う（目安: 全体 4500-6500 字）。
+字数は master_prompt_weekly.md の出力ルールに従う（目安: 全体 3500-5000 字）。
 
 ## Step 4: レポートを Brain に保存
 
@@ -104,6 +99,13 @@ mkdir -p "$BRAIN_PATH/Calendar/Weekly-Bias"
 ```
 
 `Write` ツールで `$BRAIN_PATH/Calendar/Weekly-Bias/Weekly_Bias_Report_YYYY-MM-DD.md` に保存する。
+
+## Step 4.5: Bias-Review-Log への振り返り記録
+
+生成したレポートのセクション1（前回レビュー）の内容から振り返りエントリを組み立て、
+`$BRAIN_PATH/Atlas/Bias-Review-Log.md` に追記する。形式・手順は `scrapers/bias_review.py` の
+docstring に定義された標準形式に従い、`bias_review.append_entry()` を呼ぶか同形式で直接 Edit する。
+セクション1 が「照合不能」のみの場合はスキップする。
 
 ## Step 5: PDF 発行（Google Drive）
 
@@ -129,6 +131,8 @@ git pull --rebase origin master 2>/dev/null || git pull --rebase origin main
 git add "Calendar/Weekly-Bias/Weekly_Bias_Report_${TODAY}.md"
 # Step 0 で XAU-TF を再生成した場合はそれも同時にコミット（他端末の Obsidian 可視化のため）
 git add "Calendar/XAU-TF/XAU_Technical_Report_${TODAY}.md" 2>/dev/null || true
+# Step 4.5 の振り返りログ（存在すれば）
+git add "Atlas/Bias-Review-Log.md" 2>/dev/null || true
 git commit -m "ICT Weekly Bias ${TODAY}"
 git push origin HEAD:master 2>/dev/null || git push origin HEAD:main
 ```

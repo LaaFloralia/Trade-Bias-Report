@@ -226,6 +226,12 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
                 xau_found, today, XAU_TF_STALE_DAYS,
                 extractor=_extract_xau_tf_summary,
             )
+        # Bias-Review-Log 直近エントリ (学習ループ: 抜けていた視点を次回に継承)
+        try:
+            from scrapers.bias_review import load_recent_entries
+            base["review_log"] = load_recent_entries(5)
+        except Exception:  # noqa: BLE001 — additive、失敗しても既存挙動を壊さない
+            base["review_log"] = None
     except Exception as e:  # noqa: BLE001 — アンカー失敗でパイプラインを止めない
         base["error"] = f"{type(e).__name__}: {e}"
     if all(base[k] is None for k in ("weekly", "prev_daily", "xau_tf")) and base["error"] is None:
@@ -276,6 +282,11 @@ def format_anchor_lines(anchor: dict) -> list[str]:
             "— XAUUSD レベルの SSoT (Dukascopy 検証済み)"
         )
         lines.append(xt["summary"] if xt.get("summary") else "(レベルセクションを抽出できず)")
+    # additive: Bias-Review-Log 直近エントリ (存在する場合のみ)
+    if anchor.get("review_log"):
+        lines.append("")
+        lines.append("[Bias Review 直近5件]（過去の当たり外れと学び。重み付けの継承に使い、本文へ再掲しない）")
+        lines.append(anchor["review_log"])
     return lines
 
 

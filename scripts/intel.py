@@ -89,7 +89,12 @@ MODES = {
     },
 }
 
-SCRAPED_RE = re.compile(r"scraped_data(?:_weekly)?_(\d{4}-\d{2}-\d{2})\.txt$")
+# デフォルト銘柄: scraped_data_(weekly_)DATE.txt / 個別銘柄: scraped_data_{SYM}_DATE.txt
+# いずれも日付は group(1) で取れる。日付直結を強制することで、個別銘柄ファイルが
+# デフォルト銘柄の glob (--quick / --reuse-data) を汚染しないようにする。
+SCRAPED_RE = re.compile(r"scraped_data(?:_weekly|_[A-Z0-9]{3,12})?_(\d{4}-\d{2}-\d{2})\.txt$")
+_SCRAPED_DEFAULT_DAILY_RE = re.compile(r"scraped_data_\d{4}-\d{2}-\d{2}\.txt$")
+_SCRAPED_WEEKLY_RE = re.compile(r"scraped_data_weekly_\d{4}-\d{2}-\d{2}\.txt$")
 STALE_DATA_BANNER = """> [!warning] STALE DATA
 > 本レポートは **{data_as_of} 時点の取得データ**から再生成された（実行日: {run_date}、--quick/--reuse-data モード）。
 > 価格・イベント情報が古い可能性があるため、執行判断には当日データでの通常実行を使うこと。
@@ -361,35 +366,44 @@ def ensure_xau_tf_fresh(timeout: int = 300) -> None:
         print(f"[intel] [WARN] XAU-TF 再生成失敗（非致命・続行）: {exc}")
 
 
-def scraped_txt_path(mode: str, date_str: str) -> Path:
+def scraped_txt_path(mode: str, date_str: str, symbol: Optional[str] = None) -> Path:
+    if symbol:
+        return OUTPUT_DIR / f"scraped_data_{symbol}_{date_str}.txt"
     return OUTPUT_DIR / f"{MODES[mode]['scraped_prefix']}{date_str}.txt"
 
 
-def find_latest_scraped(mode: str = "daily") -> Optional[Path]:
+def find_latest_scraped(mode: str = "daily", symbol: Optional[str] = None) -> Optional[Path]:
     """output/ にある最新日付のモード別 scraped_data *.txt を返す（なければ None）。
 
-    ファイル名が scraped_data(_weekly)_YYYY-MM-DD.txt 形式のため、名前順 = 日付順。
+    ファイル名の日付部分は接頭辞直結を強制する（正規表現で検証）。
+    個別銘柄ファイル (scraped_data_USDJPY_*.txt) がデフォルト銘柄の
+    候補に混入しないためのガード。名前順 = 日付順。
     """
-    if mode == "daily":
-        candidates = [
-            p for p in OUTPUT_DIR.glob("scraped_data_*.txt")
-            if not p.name.startswith("scraped_data_weekly_")
-        ]
+    if symbol:
+        pattern = re.compile(rf"scraped_data_{re.escape(symbol)}_\d{{4}}-\d{{2}}-\d{{2}}\.txt$")
+        candidates = [p for p in OUTPUT_DIR.glob(f"scraped_data_{symbol}_*.txt")
+                      if pattern.match(p.name)]
+    elif mode == "daily":
+        candidates = [p for p in OUTPUT_DIR.glob("scraped_data_*.txt")
+                      if _SCRAPED_DEFAULT_DAILY_RE.match(p.name)]
     else:
-        candidates = list(OUTPUT_DIR.glob("scraped_data_weekly_*.txt"))
+        candidates = [p for p in OUTPUT_DIR.glob("scraped_data_weekly_*.txt")
+                      if _SCRAPED_WEEKLY_RE.match(p.name)]
     candidates = sorted(candidates)
     return candidates[-1] if candidates else None
 
 
-def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) -> Path:
+def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False,
+                 symbol: Optional[str] = None) -> Path:
     """main.py を実行してモード別 scraped_data_<date>.txt を生成し、そのパスを返す。
 
     quick=True の場合は新規取得を完全にスキップし、直近（日付不問）の
     モード一致 scraped_data_*.txt をそのまま使う。1 件もなければ RuntimeError。
+    symbol 指定時（個別銘柄デイリー）は scraped_data_{SYM}_ 系列を使う。
     """
     mode = "weekly" if weekly else "daily"
     if quick:
-        latest = find_latest_scraped(mode)
+        latest = find_latest_scraped(mode, symbol=symbol)
         if latest is None:
             raise RuntimeError(
                 f"--quick: output/ に {mode} 用 scraped_data_*.txt が 1 件もない（先に通常実行が必要）"
@@ -397,18 +411,22 @@ def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) 
         print(f"[intel] --quick: 新規取得をスキップし {latest.name} を使用")
         return latest
 
-    txt_path = scraped_txt_path(mode, date_str)
+    txt_path = scraped_txt_path(mode, date_str, symbol=symbol)
     if reuse and txt_path.exists():
         print(f"[intel] --reuse-data: 既存の {txt_path.name} を使用")
         return txt_path
 
     # Step 0 相当: 新規スクレイプ前に XAU-TF エンジンの鮮度を確保
-    # (report_anchor の [XAU テクニカル] と retail_analytics の H1 が依存)
-    ensure_xau_tf_fresh()
+    # (report_anchor の [XAU テクニカル] と retail_analytics の H1 が依存。
+    #  個別銘柄レポートは XAU-TF 非依存のためスキップ)
+    if symbol is None:
+        ensure_xau_tf_fresh()
 
     base_cmd = [sys.executable, str(PROJECT_ROOT / "main.py")]
     if weekly:
         base_cmd.append("--weekly")
+    if symbol:
+        base_cmd.extend(["--symbol", symbol])
     wrap = secrets_wrapper_prefix()
     cmd = (wrap + base_cmd) if wrap else base_cmd
     if wrap:
@@ -482,14 +500,23 @@ def generate_report_md(mode: str, scraped_text: str,
                        runner: Callable[[str], str],
                        data_as_of: str,
                        run_date: str,
-                       extra_block: Optional[str] = None) -> Tuple[str, str]:
-    """MD レポートを生成して (md_text, prompt) を返す。"""
+                       extra_block: Optional[str] = None,
+                       symbol: Optional[str] = None) -> Tuple[str, str]:
+    """MD レポートを生成して (md_text, prompt) を返す。
+
+    symbol 指定時は個別銘柄用スリムプロンプト (master_prompt_symbol.md) を使い、
+    {{SYMBOL}} プレースホルダを置換する。
+    """
     cfg = MODES[mode]
-    master_prompt_text = (PROJECT_ROOT / cfg["master_prompt"]).read_text(encoding="utf-8")
+    mp_file = "master_prompt_symbol.md" if symbol else cfg["master_prompt"]
+    master_prompt_text = (PROJECT_ROOT / mp_file).read_text(encoding="utf-8")
+    if symbol:
+        master_prompt_text = master_prompt_text.replace("{{SYMBOL}}", symbol)
     prompt = build_report_prompt(
         mode, master_prompt_text, scraped_text, data_as_of, run_date, extra_block=extra_block
     )
-    print(f"[intel] Step 2: claude -p で {cfg['report_kind']} を生成中...")
+    print(f"[intel] Step 2: claude -p で {cfg['report_kind']}"
+          f"{f' ({symbol})' if symbol else ''} を生成中...")
     md = runner(prompt)
     return md, prompt
 
@@ -577,6 +604,129 @@ def generate_machine_json(md_text: str, runner: Callable[[str], str],
 
 
 # ---------------------------------------------------------------------------
+# Step 3.5: Bias-Review-Log エントリ生成（振り返りナレッジベース）
+# ---------------------------------------------------------------------------
+
+def build_review_prompt(md_text: str, mode: str, date_str: str,
+                        feedback: Optional[str] = None) -> str:
+    mode_label = mode.capitalize()
+    section_ref = "セクション8-1（前回照合）" if mode == "daily" else "セクション1（前回レビュー）"
+    feedback_block = f"\n## 前回出力の問題点（必ず修正すること）\n\n{feedback}\n" if feedback else ""
+    return f"""あなたはヘッドレスパイプラインの振り返り記録エージェントである。
+ツールは一切使わず、出力はエントリ本文のみ（`## ` 見出し行から始める）。前置き・コードフェンス禁止。
+{feedback_block}
+以下の Bias Report (Markdown) の{section_ref}を読み、Bias-Review-Log のエントリを次の形式で生成せよ:
+
+## {date_str} {mode_label}
+- 判定: 当たり | 外れ | 未決着 | 照合不能
+- 前回想定: （前回レポートのバイアス・信頼度・注目ゾーンを1行）
+- 実際: （実際の値動きとスイープ実績を1行。リテール分析の sweep 検証があれば必ず含める）
+- 外し要因: （外れ・未決着時のみ具体的に。それ以外は「-」）
+- 学び: （次回の分析に継承すべき視点を1〜2行。「どの視点が抜けていたか」を優先して書く）
+<!-- review-json: {{"date": "{date_str}", "mode": "{mode}", "verdict": "hit|miss|open|n/a のいずれか"}} -->
+
+ルール:
+- 事実はレポート本文のみに依拠し、推測で補わない
+- 照合不能（前回レポート未提供）の場合は verdict を "n/a" とする
+
+## 対象レポート
+
+{md_text}
+"""
+
+
+def generate_review_entry(md_text: str, mode: str, date_str: str,
+                          runner: Callable[[str], str]) -> Tuple[Optional[str], List[dict]]:
+    """振り返りエントリを生成する。(entry_md | None, call_records) を返す。
+
+    形式検証に失敗したら 1 回だけリトライし、なお失敗なら None（非致命スキップ）。
+    verdict が n/a（照合不能）の場合も None を返す（蓄積価値がないため）。
+    """
+    from scrapers import bias_review
+
+    calls = []
+    feedback = None
+    for attempt in (1, 2):
+        prompt = build_review_prompt(md_text, mode, date_str, feedback=feedback)
+        print(f"[intel] Step 3.5: Bias-Review-Log エントリ生成 (attempt {attempt}/2)...")
+        record = {"purpose": f"review_attempt_{attempt}", "prompt": prompt}
+        try:
+            raw = runner(prompt).strip()
+        except RuntimeError as exc:
+            record["error"] = str(exc)
+            calls.append(record)
+            feedback = f"実行エラー: {exc}"
+            continue
+        record["response"] = raw
+        errors = bias_review.validate_entry(raw, date_str, mode)
+        if errors:
+            record["error"] = f"形式違反: {errors}"
+            calls.append(record)
+            feedback = "形式違反: " + " / ".join(errors)
+            continue
+        calls.append(record)
+        if bias_review.extract_verdict(raw) == "n/a":
+            print("[intel] Step 3.5: 照合不能 (n/a) のため記録をスキップ")
+            return None, calls
+        return raw, calls
+
+    print("[intel] [WARN] Bias-Review-Log エントリ生成に失敗（非致命・スキップ）")
+    return None, calls
+
+
+# ---------------------------------------------------------------------------
+# Brain git 同期（headless 実行時。他端末は git pull 経由で閲覧するため必須）
+# ---------------------------------------------------------------------------
+
+def commit_brain_outputs(rel_paths: List[str], message: str) -> bool:
+    """Brain リポジトリで生成物のみを add → commit → master 直接 push する。
+
+    コマンド版 (daily-bias.md Step 6) と同じルール:
+    - 生成したファイル以外を git add しない（社長の個人メモを巻き込まない）
+    - claude/... ブランチを作らず master (fallback: main) へ直接 push
+    失敗は False を返すのみ（非致命。呼び出し側が WARN 表示）。
+    """
+    brain = brain_path()
+    if not (brain / ".git").exists():
+        print(f"[intel] [WARN] Brain が git リポジトリではない ({brain}) → コミットスキップ")
+        return False
+
+    def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", str(brain), *args],
+            capture_output=True, text=True, timeout=120,
+        )
+
+    try:
+        if _git("checkout", "master").returncode != 0:
+            _git("checkout", "main")
+        _git("pull", "--rebase", "origin", "master")
+        added = False
+        for rel in rel_paths:
+            if (brain / rel).exists() and _git("add", rel).returncode == 0:
+                added = True
+        if not added:
+            return False
+        commit = _git("commit", "-m", message)
+        if commit.returncode != 0:
+            # 変更なし（同一内容の再生成）は正常扱い
+            if "nothing to commit" in (commit.stdout + commit.stderr):
+                return True
+            print(f"[intel] [WARN] Brain commit 失敗: {(commit.stderr or '')[-200:]}")
+            return False
+        push = _git("push", "origin", "HEAD:master")
+        if push.returncode != 0:
+            push = _git("push", "origin", "HEAD:main")
+        if push.returncode != 0:
+            print(f"[intel] [WARN] Brain push 失敗（コミットはローカルに存在）: {(push.stderr or '')[-200:]}")
+            return False
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[intel] [WARN] Brain git 同期失敗（非致命）: {exc}")
+        return False
+
+
+# ---------------------------------------------------------------------------
 # 出力・ログ
 # ---------------------------------------------------------------------------
 
@@ -584,11 +734,22 @@ def brain_path() -> Path:
     return Path(os.environ.get("BRAIN_PATH", str(Path.home() / "Brain")))
 
 
-def save_md_to_brain(md_text: str, mode: str, date_str: str) -> Path:
+def save_md_to_brain(md_text: str, mode: str, date_str: str,
+                     symbol: Optional[str] = None) -> Path:
+    """MD を Brain に保存する。
+
+    個別銘柄は Calendar/Daily-Bias/{SYM}/ サブディレクトリに置く。
+    フラット配置だと report_anchor の非再帰 glob (`*_YYYY-MM-DD.md`) が
+    銘柄別ファイルをデフォルト銘柄の前回 Daily と誤認するため、構造で分離する。
+    """
     cfg = MODES[mode]
     target_dir = brain_path() / cfg["brain_subdir"]
+    name = f"{cfg['md_prefix']}_{date_str}.md"
+    if symbol:
+        target_dir = target_dir / symbol
+        name = f"{cfg['md_prefix']}_{symbol}_{date_str}.md"
     target_dir.mkdir(parents=True, exist_ok=True)
-    md_path = target_dir / f"{cfg['md_prefix']}_{date_str}.md"
+    md_path = target_dir / name
     md_path.write_text(md_text, encoding="utf-8")
     return md_path
 
@@ -642,6 +803,12 @@ def append_run_log(record: dict) -> None:
 def cmd_brief(args) -> int:
     mode = "weekly" if args.weekly else "daily"
     cfg = MODES[mode]
+    # 個別銘柄指定: デフォルト銘柄の明示指定は通常フロー扱い (symbol=None) に正規化
+    symbol = getattr(args, "symbol", None)
+    if symbol:
+        import config as _config
+        if symbol == _config.DEFAULT_SYMBOL:
+            symbol = None
     run_dt = datetime.now().astimezone()
     date_str = run_dt.strftime("%Y-%m-%d")
     generated_at = run_dt.isoformat(timespec="seconds")
@@ -649,6 +816,7 @@ def cmd_brief(args) -> int:
         "run_id": uuid.uuid4().hex[:12],
         "command": "brief",
         "mode": mode,
+        "symbol": symbol,
         "started_at": generated_at,
         "claude_calls": [],
         "outputs": {},
@@ -658,7 +826,7 @@ def cmd_brief(args) -> int:
     try:
         # Step 1: データ取得
         txt_path = collect_data(
-            cfg["weekly_flag"], args.reuse_data, date_str, quick=args.quick
+            cfg["weekly_flag"], args.reuse_data, date_str, quick=args.quick, symbol=symbol
         )
         scraped_text = txt_path.read_text(encoding="utf-8")
         data_as_of = extract_data_date(txt_path)
@@ -666,18 +834,22 @@ def cmd_brief(args) -> int:
         run_record["quick"] = bool(args.quick)
         run_record["data_as_of"] = data_as_of
 
-        from scrapers import xsearch_ingest
+        # X-Search 追加ブロックはデフォルト銘柄 (XAUUSD/マクロ) 専用
+        extra_block = None
+        if symbol is None:
+            from scrapers import xsearch_ingest
 
-        xsearch_data = xsearch_ingest.load_xsearch(date_str)
-        extra_block = xsearch_ingest.format_xsearch_block(xsearch_data) if xsearch_data else None
-        run_record["xsearch_used"] = xsearch_data is not None
-        run_record["xsearch_file"] = xsearch_ingest.LAST_SOURCE_FILE
-        if xsearch_data is None:
-            run_record["xsearch_skip_reason"] = xsearch_ingest.LAST_SKIP_REASON
+            xsearch_data = xsearch_ingest.load_xsearch(date_str)
+            extra_block = xsearch_ingest.format_xsearch_block(xsearch_data) if xsearch_data else None
+            run_record["xsearch_used"] = xsearch_data is not None
+            run_record["xsearch_file"] = xsearch_ingest.LAST_SOURCE_FILE
+            if xsearch_data is None:
+                run_record["xsearch_skip_reason"] = xsearch_ingest.LAST_SKIP_REASON
 
         # Step 2: 人間用 MD
         md_text, report_prompt = generate_report_md(
-            mode, scraped_text, run_llm, data_as_of, date_str, extra_block=extra_block
+            mode, scraped_text, run_llm, data_as_of, date_str,
+            extra_block=extra_block, symbol=symbol,
         )
         if data_as_of != date_str:
             md_text = STALE_DATA_BANNER.format(
@@ -686,7 +858,7 @@ def cmd_brief(args) -> int:
         run_record["claude_calls"].append(
             {"purpose": "report_md", "prompt": report_prompt, "response": md_text}
         )
-        md_path = save_md_to_brain(md_text, mode, date_str)
+        md_path = save_md_to_brain(md_text, mode, date_str, symbol=symbol)
         run_record["outputs"]["md_path"] = str(md_path)
         print(f"[intel] MD 保存: {md_path}")
 
@@ -705,17 +877,57 @@ def cmd_brief(args) -> int:
             run_record["outputs"]["pdf_error"] = f"{type(pub_exc).__name__}: {pub_exc}"
             print(f"[intel] [WARN] PDF 発行に失敗（非致命・続行）: {pub_exc}")
 
+        # Step 3 前半: Bias-Review-Log エントリ生成（デフォルト銘柄のみ、非致命）
+        review_meta = None
+        if symbol is None:
+            try:
+                review_entry, review_calls = generate_review_entry(
+                    md_text, mode, date_str, run_llm
+                )
+                run_record["claude_calls"].extend(review_calls)
+                if review_entry:
+                    from scrapers import bias_review
+
+                    log_path = bias_review.append_entry(review_entry, date_str, mode)
+                    review_meta = {"verdict": bias_review.extract_verdict(review_entry)}
+                    run_record["outputs"]["review_log"] = str(log_path)
+                    print(f"[intel] Bias-Review-Log 追記: {log_path}")
+            except Exception as rev_exc:  # noqa: BLE001 — 振り返りはレポート本体を止めない
+                print(f"[intel] [WARN] Bias-Review-Log 記録に失敗（非致命・続行）: {rev_exc}")
+
         # Step 3: 機械用 JSON（リトライ → フォールバック内蔵）
-        intel_obj, fallback_used, json_calls = generate_machine_json(md_text, run_llm)
-        intel_obj = attach_pipeline_metadata(intel_obj, data_as_of, generated_at)
-        run_record["claude_calls"].extend(json_calls)
-        run_record["json_fallback_used"] = fallback_used
-        json_path = save_intel_json(intel_obj, mode, date_str)
-        run_record["outputs"]["json_path"] = str(json_path)
-        print(f"[intel] JSON 保存: {json_path}（fallback={'あり' if fallback_used else 'なし'}）")
+        # 個別銘柄実行では出力しない: logos-engine gates.py が
+        # output/intel/intel_{mode}_*.json を日付 glob で消費しており、
+        # intel_daily_{SYM}_*.json が混ざると日付マップを汚染するため。
+        if symbol is None:
+            intel_obj, fallback_used, json_calls = generate_machine_json(md_text, run_llm)
+            intel_obj = attach_pipeline_metadata(intel_obj, data_as_of, generated_at)
+            if review_meta:
+                intel_obj["review"] = review_meta  # additive（既存 6 キー契約は不変）
+            run_record["claude_calls"].extend(json_calls)
+            run_record["json_fallback_used"] = fallback_used
+            json_path = save_intel_json(intel_obj, mode, date_str)
+            run_record["outputs"]["json_path"] = str(json_path)
+            print(f"[intel] JSON 保存: {json_path}（fallback={'あり' if fallback_used else 'なし'}）")
+            run_record["intel_json"] = intel_obj
+        else:
+            print(f"[intel] 個別銘柄 ({symbol}) のため機械用 JSON はスキップ（MD + PDF のみ）")
+
+        # Step 4: Brain git 同期（他端末は git pull 経由で閲覧するため headless でも必須）
+        try:
+            rel_paths = [str(md_path.relative_to(brain_path()))]
+            if symbol is None:
+                rel_paths.append("Atlas/Bias-Review-Log.md")
+                rel_paths.append(f"Calendar/XAU-TF/XAU_Technical_Report_{date_str}.md")
+            msg = f"ICT {mode.capitalize()} Bias{f' ({symbol})' if symbol else ''} {date_str}"
+            synced = commit_brain_outputs(rel_paths, msg)
+            run_record["outputs"]["brain_synced"] = synced
+            print(f"[intel] Brain git 同期: {'OK' if synced else 'スキップ/失敗（非致命）'}")
+        except Exception as git_exc:  # noqa: BLE001
+            run_record["outputs"]["brain_synced"] = False
+            print(f"[intel] [WARN] Brain git 同期に失敗（非致命・続行）: {git_exc}")
 
         run_record["ok"] = True
-        run_record["intel_json"] = intel_obj
         return 0
     except Exception as exc:  # noqa: BLE001
         run_record["error"] = f"{type(exc).__name__}: {exc}"
@@ -747,9 +959,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="新規取得を完全にスキップし、直近（日付不問）の scraped_data_*.txt で"
              "分析のみ再実行する軽量モード（--reuse-data より優先）",
     )
+    brief.add_argument(
+        "--symbol", default=None,
+        help="個別銘柄デイリー (例: USDJPY)。config report.on_demand_symbols のみ有効。"
+             "デイリー専用・機械用 JSON なし (MD + PDF のみ)",
+    )
     brief.set_defaults(func=cmd_brief)
 
     args = parser.parse_args(argv)
+
+    # --symbol の検証 (brief のみ)
+    if getattr(args, "symbol", None):
+        import config as _config
+        if args.weekly:
+            parser.error("--symbol はデイリー専用（--weekly と併用不可）")
+        valid = set(_config.ON_DEMAND_SYMBOLS) | {_config.DEFAULT_SYMBOL}
+        if args.symbol not in valid:
+            parser.error(f"--symbol {args.symbol} は無効（有効: {sorted(valid)}）")
+
     return args.func(args)
 
 

@@ -24,6 +24,7 @@ from config import (
     FOMC_DATES,
     FOMC_SCHEDULE_WARN_DAYS,
     DEFAULT_SYMBOL,
+    CONTEXT_SYMBOLS,
     XAU_TF_H1_CSV,
 )
 from scrapers.myfxbook import scrape_myfxbook
@@ -113,13 +114,21 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
     }
 
 
-async def collect_all_data(weekly: bool = False) -> dict:
+async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
     """MyFXBook優先でデータを取得し、失敗銘柄はFXSSI→IGの順でフォールバックする。
     COT データは weekly に関係なく常時取得する（weekly 引数はファイル名 prefix 用に
     呼び出し側で使われるのみで、取得内容は Daily / Weekly で同一）。
     新規データソース: DXY, FRED (DGS10/DGS2/DTWEXBGS), 経済指標カレンダー, FedWatch, BTC ETFフロー
+
+    銘柄スコープ (2026-08-12 XAUUSD 特化再設計):
+        symbol (既定 config report.default_symbol) + context_symbols のみを
+        銘柄固有スクレイパーの対象にする。マクロ層 (FedWatch/FRED/VIX/DXY/
+        カレンダー等) は常時取得。BTC 系は BTCUSD がスコープ内の時のみ、
+        gold ETF/中銀・リテール分析は XAUUSD がスコープ内の時のみ動く。
     """
-    print("[1/4] データ取得を開始...")
+    symbol = symbol or DEFAULT_SYMBOL
+    scope = {symbol} | set(CONTEXT_SYMBOLS)
+    print(f"[1/4] データ取得を開始... (対象: {symbol} + 文脈 {CONTEXT_SYMBOLS})")
 
     results = {
         "timestamp": datetime.now().isoformat(),
@@ -148,27 +157,40 @@ async def collect_all_data(weekly: bool = False) -> dict:
         "report_anchor": None,
     }
 
-    # --- 前回レポート アンカー (ローカル IO のみ、ネットワーク不要) ---
-    try:
-        results["report_anchor"] = load_report_anchor()
-        ra = results["report_anchor"]
-        w = ra.get("weekly")
-        d = ra.get("prev_daily")
-        x = ra.get("xau_tf")
-        print(
-            "  [OK]    report_anchor: "
-            f"Weekly={w['file'] + (' [STALE]' if w['stale'] else '') if w else 'なし'} / "
-            f"前回Daily={d['file'] + (' [STALE]' if d['stale'] else '') if d else 'なし'} / "
-            f"XAU-TF={x['file'] + (' [STALE]' if x['stale'] else '') if x else 'なし'}"
-        )
-    except Exception as e:
-        results["report_anchor"] = {"error": str(e)}
-        print(f"  [WARN]  report_anchor: {e}")
+    # --- Weekly 前回レビュー入力 (ローカル IO のみ) ---
+    # interactive / headless 両フローが同一の照合材料を得るための共通層。
+    if weekly:
+        try:
+            from scrapers.weekly_review import build_weekly_review_block
+            results["weekly_review"] = build_weekly_review_block()
+            print(f"  [OK]    weekly_review: {'あり' if results['weekly_review'] else '材料なし'}")
+        except Exception as e:
+            results["weekly_review"] = None
+            print(f"  [WARN]  weekly_review: {e}")
 
-    # --- Twelve Data: 価格データ取得 ---
+    # --- 前回レポート アンカー (ローカル IO のみ、ネットワーク不要) ---
+    # デフォルト銘柄 (XAUUSD) 実行時のみ。個別銘柄レポートは前回照合を持たない。
+    if symbol == DEFAULT_SYMBOL:
+        try:
+            results["report_anchor"] = load_report_anchor()
+            ra = results["report_anchor"]
+            w = ra.get("weekly")
+            d = ra.get("prev_daily")
+            x = ra.get("xau_tf")
+            print(
+                "  [OK]    report_anchor: "
+                f"Weekly={w['file'] + (' [STALE]' if w['stale'] else '') if w else 'なし'} / "
+                f"前回Daily={d['file'] + (' [STALE]' if d['stale'] else '') if d else 'なし'} / "
+                f"XAU-TF={x['file'] + (' [STALE]' if x['stale'] else '') if x else 'なし'}"
+            )
+        except Exception as e:
+            results["report_anchor"] = {"error": str(e)}
+            print(f"  [WARN]  report_anchor: {e}")
+
+    # --- Twelve Data: 価格データ取得 (スコープ内銘柄のみ) ---
     print("  Twelve Data: 価格データ取得中...")
     try:
-        price_text, raw_quotes, raw_series = fetch_price_data_with_raw()
+        price_text, raw_quotes, raw_series = fetch_price_data_with_raw(instruments=sorted(scope))
         results["price_data"] = price_text
         for sym, quote in raw_quotes.items():
             if quote:
@@ -180,21 +202,27 @@ async def collect_all_data(weekly: bool = False) -> dict:
         print(f"  [ERROR] Twelve Data: {e}")
 
     # --- Binance Futures: BTC Long/Short 取得（MyFXBook が BTC 非対応のため代替）---
-    print("  Binance Futures: BTC Long/Short 取得中...")
-    try:
-        results["binance_btc_sentiment"] = fetch_binance_btc_sentiment()
-        if results["binance_btc_sentiment"].get("error"):
-            print(f"  [WARN]  Binance BTC: {results['binance_btc_sentiment']['error']}")
-        else:
-            print("  [OK]    Binance BTC: Top Trader + Global L/S 取得完了")
-    except Exception as e:
-        results["binance_btc_sentiment"] = {"error": str(e)}
-        print(f"  [ERROR] Binance BTC: {e}")
+    if "BTCUSD" in scope:
+        print("  Binance Futures: BTC Long/Short 取得中...")
+        try:
+            results["binance_btc_sentiment"] = fetch_binance_btc_sentiment()
+            if results["binance_btc_sentiment"].get("error"):
+                print(f"  [WARN]  Binance BTC: {results['binance_btc_sentiment']['error']}")
+            else:
+                print("  [OK]    Binance BTC: Top Trader + Global L/S 取得完了")
+        except Exception as e:
+            results["binance_btc_sentiment"] = {"error": str(e)}
+            print(f"  [ERROR] Binance BTC: {e}")
 
-    # --- Phase 1: MyFXBook + CoinGlass を並列取得 ---
-    myfxbook_targets = [(sym, cfg["myfxbook_slug"]) for sym, cfg in INSTRUMENTS.items() if cfg.get("myfxbook_slug")]
+    # --- Phase 1: MyFXBook + CoinGlass を並列取得 (スコープ内銘柄のみ) ---
+    myfxbook_targets = [
+        (sym, cfg["myfxbook_slug"])
+        for sym, cfg in INSTRUMENTS.items()
+        if cfg.get("myfxbook_slug") and sym in scope
+    ]
     phase1_tasks = [("myfxbook", sym, scrape_myfxbook(slug)) for sym, slug in myfxbook_targets]
-    phase1_tasks.append(("coinglass", "BTCUSD", scrape_coinglass()))
+    if "BTCUSD" in scope:
+        phase1_tasks.append(("coinglass", "BTCUSD", scrape_coinglass()))
 
     print(f"  Phase 1: {len(phase1_tasks)} タスクを並列実行中（MyFXBook + CoinGlass）...")
     phase1_results = await asyncio.gather(*[t[2] for t in phase1_tasks], return_exceptions=True)
@@ -265,10 +293,17 @@ async def collect_all_data(weekly: bool = False) -> dict:
                     }
                     print(f"  [ERROR] ig/{symbol}: {err}")
 
-    # --- COT データ取得（常時。Daily でも機関ポジショニングに使う）---
+    # --- COT データ取得（常時。Daily でも機関ポジショニングに使う。スコープ内銘柄のみ）---
     print("  COT: CFTC APIからデータ取得中...")
+    cot_targets = [
+        (cfg["cot"]["label"], cfg["cot"]["market"])
+        for sym, cfg in sorted(
+            ((s, c) for s, c in INSTRUMENTS.items() if c.get("cot") and s in scope),
+            key=lambda item: item[1]["cot"]["order"],
+        )
+    ]
     try:
-        cot = fetch_cot_data()
+        cot = fetch_cot_data(targets=cot_targets)
         results["cot"] = cot
         if cot.get("error"):
             print(f"  [WARN]  COT: 一部エラー: {cot['error']}")
@@ -297,15 +332,18 @@ async def collect_all_data(weekly: bool = False) -> dict:
         ("dxy", scrape_dxy()),
         ("fred", fetch_fred_data()),
         ("economic_calendar", scrape_economic_calendar()),
-        ("btc_etf", scrape_btc_etf()),
         ("fedwatch", scrape_fedwatch()),
         # vix_structure は CBOE Dashboard を 4 ページ直列取得するため重い。Phase B へ移動。
         ("macro_liquidity", scrape_macro_liquidity()),
         ("rate_spreads", scrape_rate_spreads()),
-        ("crypto_funding", scrape_crypto_funding()),
-        ("gold_etf", scrape_gold_etf()),
-        ("gold_cb", scrape_gold_cb()),
     ]
+    # 銘柄スコープ依存: BTC 系は BTCUSD、金フロー系は XAUUSD がスコープ内の時のみ
+    if "BTCUSD" in scope:
+        phase_a_tasks.append(("btc_etf", scrape_btc_etf()))
+        phase_a_tasks.append(("crypto_funding", scrape_crypto_funding()))
+    if "XAUUSD" in scope:
+        phase_a_tasks.append(("gold_etf", scrape_gold_etf()))
+        phase_a_tasks.append(("gold_cb", scrape_gold_cb()))
     print(f"  Phase A: {len(phase_a_tasks)} 系を並列取得中（DXY/FRED/Calendar/BTC ETF/FedWatch + Deep 強化大半）...")
     phase_a_results = await asyncio.gather(*[t[1] for t in phase_a_tasks], return_exceptions=True)
 
@@ -367,8 +405,8 @@ async def collect_all_data(weekly: bool = False) -> dict:
         results["vix_structure"] = {"error": str(e)}
         print(f"  [ERROR] vix_structure: {e}")
 
-    # --- MyFXBook Open Orders 並列取得 (Deep Bias 強化、対象は config.yaml の open_orders) ---
-    open_order_targets = OPEN_ORDER_SYMBOLS
+    # --- MyFXBook Open Orders 並列取得 (Deep Bias 強化、対象は config.yaml の open_orders ∩ スコープ) ---
+    open_order_targets = [s for s in OPEN_ORDER_SYMBOLS if s in scope]
     print(f"  MyFXBook Open Orders: {open_order_targets} を並列取得中...")
 
     def _quote_close(sym: str):
@@ -403,28 +441,30 @@ async def collect_all_data(weekly: bool = False) -> dict:
                     f"BSL clusters={bsl_n} SSL clusters={ssl_n} (current_price={cp})"
                 )
 
-    # --- リテール分析 (デフォルト銘柄): P/L 構造 + リクイディティプール + スイープ検証 ---
-    target = DEFAULT_SYMBOL
-    try:
-        oo_target = results["myfxbook_open_orders"].get(target) or {}
-        cp = oo_target.get("current_price") or _quote_close(target)
-        results["retail_analytics"] = build_retail_analytics(
-            retail=results["retail_sentiment"].get(target) or {},
-            open_orders=oo_target,
-            current_price=cp,
-            h1_path=XAU_TF_H1_CSV,
-        )
-        ra = results["retail_analytics"]
-        print(
-            f"  [OK]    retail_analytics/{target}: "
-            f"ATR20d={ra.get('atr20d')} pools(BSL/SSL)="
-            f"{len(ra['top_pools']['bsl'])}/{len(ra['top_pools']['ssl'])} "
-            f"sweeps={len(ra.get('sweep_events', []))} "
-            f"baseline={ra.get('baseline_date') or '当日'}"
-        )
-    except Exception as e:
-        results["retail_analytics"] = {"error": str(e)}
-        print(f"  [WARN]  retail_analytics/{target}: {e}")
+    # --- リテール分析 (デフォルト銘柄 = XAUUSD 実行時のみ):
+    #     P/L 構造 + リクイディティプール + スイープ検証 ---
+    if symbol == DEFAULT_SYMBOL:
+        target = DEFAULT_SYMBOL
+        try:
+            oo_target = results["myfxbook_open_orders"].get(target) or {}
+            cp = oo_target.get("current_price") or _quote_close(target)
+            results["retail_analytics"] = build_retail_analytics(
+                retail=results["retail_sentiment"].get(target) or {},
+                open_orders=oo_target,
+                current_price=cp,
+                h1_path=XAU_TF_H1_CSV,
+            )
+            ra = results["retail_analytics"]
+            print(
+                f"  [OK]    retail_analytics/{target}: "
+                f"ATR20d={ra.get('atr20d')} pools(BSL/SSL)="
+                f"{len(ra['top_pools']['bsl'])}/{len(ra['top_pools']['ssl'])} "
+                f"sweeps={len(ra.get('sweep_events', []))} "
+                f"baseline={ra.get('baseline_date') or '当日'}"
+            )
+        except Exception as e:
+            results["retail_analytics"] = {"error": str(e)}
+            print(f"  [WARN]  retail_analytics/{target}: {e}")
 
     # 共通メタデータスキーマ補完（source/symbol/timestamp/as_of_date/
     # stale/fallback_used/error/note）。既存キーは上書きしない。
@@ -452,6 +492,12 @@ def format_scraped_data(data: dict) -> str:
     anchor = data.get("report_anchor")
     if anchor and isinstance(anchor, dict):
         lines.extend(format_anchor_lines(anchor))
+        lines.append("")
+
+    # --- Weekly 前回レビュー入力 (前回想定との答え合わせ用、weekly 実行時のみ) ---
+    weekly_review = data.get("weekly_review")
+    if weekly_review:
+        lines.append(weekly_review)
         lines.append("")
 
     # --- 価格データ（Twelve Data API）---
@@ -599,20 +645,21 @@ def format_scraped_data(data: dict) -> str:
             lines.append(f"- {symbol}: 取得不可（{err}）")
     lines.append("")
 
-    # --- CoinGlass ---
-    lines.append("### CoinGlass (BTCUSD)")
-    cg = data.get("coinglass", {}).get("BTCUSD", {})
-    if isinstance(cg, dict):
-        if cg.get("long_short_ratio") is not None:
-            lines.append(f"- Long/Short Ratio: {cg['long_short_ratio']}")
-        if cg.get("long_pct") is not None:
-            lines.append(f"- Long/Short: {cg['long_pct']}% / {cg['short_pct']}%")
-        if cg.get("funding_rate") is not None:
-            lines.append(f"- Funding Rate: {cg['funding_rate']}%")
-        if cg.get("error"):
-            lines.append(f"- エラー: {cg['error']}")
-    else:
-        lines.append("- BTCUSD: 取得不可")
+    # --- CoinGlass (BTCUSD がスコープ内の実行でのみデータが存在する) ---
+    if data.get("coinglass"):
+        lines.append("### CoinGlass (BTCUSD)")
+        cg = data.get("coinglass", {}).get("BTCUSD", {})
+        if isinstance(cg, dict):
+            if cg.get("long_short_ratio") is not None:
+                lines.append(f"- Long/Short Ratio: {cg['long_short_ratio']}")
+            if cg.get("long_pct") is not None:
+                lines.append(f"- Long/Short: {cg['long_pct']}% / {cg['short_pct']}%")
+            if cg.get("funding_rate") is not None:
+                lines.append(f"- Funding Rate: {cg['funding_rate']}%")
+            if cg.get("error"):
+                lines.append(f"- エラー: {cg['error']}")
+        else:
+            lines.append("- BTCUSD: 取得不可")
 
     # --- Binance Top Trader vs Global（BTCUSD のリテール／プロ センチメント差）---
     # MyFXBook が BTC 非対応のため、取引所機関データで代替。
@@ -978,11 +1025,18 @@ def format_scraped_data(data: dict) -> str:
     return result_text
 
 
-def save_scraped(scraped_data: dict, formatted_text: str, weekly: bool = False) -> tuple[Path, Path]:
+def save_scraped(scraped_data: dict, formatted_text: str, weekly: bool = False,
+                 symbol: str = None) -> tuple[Path, Path]:
     """取得データを output/ に保存する。
 
     JSON (生データ) と TXT (formatted) の2種を出力する。
     LLM 分析・レポート生成は Claude Code スラッシュコマンド側が担当する。
+
+    ファイル名契約:
+        デフォルト銘柄 (XAUUSD): scraped_data_(weekly_)YYYY-MM-DD.*（従来どおり、
+            intel.py / logos-engine が参照する外部契約のため変更しない）
+        個別銘柄: scraped_data_{SYM}_YYYY-MM-DD.*（intel.py の日付 glob を
+            汚染しないよう、日付直結パターンから外れる別名にする）
     """
     today = datetime.now().strftime("%Y-%m-%d")
     output_dir = Path(__file__).parent / "output"
@@ -990,7 +1044,10 @@ def save_scraped(scraped_data: dict, formatted_text: str, weekly: bool = False) 
 
     # Daily は既存の slash command / master_prompt 参照との互換性のため旧名を維持し、
     # weekly だけを分離する。この非対称は意図的。
-    prefix = "scraped_data_weekly_" if weekly else "scraped_data_"
+    if symbol and symbol != DEFAULT_SYMBOL:
+        prefix = f"scraped_data_{symbol}_"
+    else:
+        prefix = "scraped_data_weekly_" if weekly else "scraped_data_"
 
     json_path = output_dir / f"{prefix}{today}.json"
     clean_data = json.loads(json.dumps(scraped_data, default=str))
@@ -1010,21 +1067,43 @@ def save_scraped(scraped_data: dict, formatted_text: str, weekly: bool = False) 
     return json_path, txt_path
 
 
+def parse_args(argv=None):
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="main.py", description="ICT Bias Report スクレイピングオーケストレーター"
+    )
+    parser.add_argument(
+        "--weekly", action="store_true",
+        help="週次データ取得（ファイル名 prefix が scraped_data_weekly_ になる）",
+    )
+    parser.add_argument(
+        "--symbol", default=DEFAULT_SYMBOL, choices=sorted(INSTRUMENTS.keys()),
+        help=f"対象銘柄（既定: {DEFAULT_SYMBOL}。個別指定はデイリー専用）",
+    )
+    args = parser.parse_args(argv)
+    if args.weekly and args.symbol != DEFAULT_SYMBOL:
+        parser.error(f"--weekly は {DEFAULT_SYMBOL}/マクロ専用（--symbol と併用不可）")
+    return args
+
+
 async def main():
-    weekly = "--weekly" in sys.argv
+    args = parse_args()
+    weekly = args.weekly
+    symbol = args.symbol
 
     print("=" * 60)
     mode = "Weekly" if weekly else "Daily"
-    print(f"ICT {mode} Bias Scraper — {datetime.now().strftime('%Y/%m/%d %H:%M')}")
+    print(f"ICT {mode} Bias Scraper ({symbol}) — {datetime.now().strftime('%Y/%m/%d %H:%M')}")
     print("=" * 60)
 
-    scraped_data = await collect_all_data(weekly=weekly)
+    scraped_data = await collect_all_data(weekly=weekly, symbol=symbol)
     formatted_data = format_scraped_data(scraped_data)
 
     print(f"\n[取得データサマリー]")
     print(formatted_data)
 
-    json_path, txt_path = save_scraped(scraped_data, formatted_data, weekly=weekly)
+    json_path, txt_path = save_scraped(scraped_data, formatted_data, weekly=weekly, symbol=symbol)
 
     print(f"\n{'=' * 60}")
     print(f"完了!")

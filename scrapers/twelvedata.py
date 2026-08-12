@@ -216,11 +216,21 @@ def _format_instrument(instrument: str, q: dict, series: List[dict]) -> List[str
     return lines
 
 
-def fetch_price_data_with_raw() -> Tuple[str, dict, dict]:
-    """全銘柄の価格データを取得し、テキストと検証用 raw データを返す。"""
+def fetch_price_data_with_raw(instruments=None) -> Tuple[str, dict, dict]:
+    """銘柄の価格データを取得し、テキストと検証用 raw データを返す。
+
+    Args:
+        instruments: 取得対象の銘柄名リスト（None = config 由来の全銘柄）。
+            銘柄スコープ実行時 (main.py --symbol) は絞ったリストが渡される。
+    """
     lines = ["=== Price Data (Twelve Data API) ===", ""]
 
-    main_symbols = list(SYMBOL_MAP.values())  # config.yaml の twelvedata_symbol 一覧
+    symbol_map = SYMBOL_MAP if instruments is None else {
+        k: v for k, v in SYMBOL_MAP.items() if k in instruments
+    }
+    main_symbols = list(symbol_map.values())  # config.yaml の twelvedata_symbol 一覧
+    if not main_symbols:
+        return "\n".join(lines + ["(対象銘柄なし)"]), {}, {}
     symbol_str = ",".join(main_symbols)
 
     # --- 1回目: /quote（3銘柄一括）---
@@ -236,7 +246,7 @@ def fetch_price_data_with_raw() -> Tuple[str, dict, dict]:
 
     quotes_by_instrument = {}
     series_by_instrument = {}
-    for instrument, td_symbol in SYMBOL_MAP.items():
+    for instrument, td_symbol in symbol_map.items():
         q = quotes.get(td_symbol, {})
         series = series_map.get(td_symbol, [])
         quotes_by_instrument[instrument] = q

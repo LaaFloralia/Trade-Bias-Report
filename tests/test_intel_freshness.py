@@ -46,7 +46,10 @@ def test_cmd_brief_stale_data_adds_md_banner_and_json_metadata(tmp_path, monkeyp
     monkeypatch.setattr(intel, "INTEL_DIR", tmp_path / "intel")
     monkeypatch.setattr(intel, "LOGS_DIR", tmp_path / "logs")
     monkeypatch.setattr(intel, "JSONL_PATH", tmp_path / "logs" / "intel_runs.jsonl")
-    monkeypatch.setattr(intel, "collect_data", lambda weekly, reuse, date_str, quick=False: scraped)
+    monkeypatch.setattr(
+        intel, "collect_data",
+        lambda weekly, reuse, date_str, quick=False, symbol=None: scraped,
+    )
 
     from scrapers import xsearch_ingest
 

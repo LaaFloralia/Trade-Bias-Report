@@ -76,8 +76,13 @@ def _parse_row(row: dict) -> dict:
     }
 
 
-def fetch_cot_data() -> dict:
-    """全対象銘柄のCOTデータを取得し、フォーマット済みテキストを返す。
+def fetch_cot_data(targets=None) -> dict:
+    """対象銘柄のCOTデータを取得し、フォーマット済みテキストを返す。
+
+    Args:
+        targets: [(表示名, market_and_exchange_names)] のリスト。
+            None なら config 由来の全銘柄 (COT_TARGETS)。
+            銘柄スコープ実行時 (main.py --symbol) は絞ったリストが渡される。
 
     Returns:
         {
@@ -90,7 +95,7 @@ def fetch_cot_data() -> dict:
     latest_date = None
     errors = []
 
-    for display_name, market_name in COT_TARGETS:
+    for display_name, market_name in (targets if targets is not None else COT_TARGETS):
         try:
             rows = _fetch_instrument(market_name)
             if not rows:
