@@ -35,8 +35,11 @@ no_trade=true の安全側 JSON にフォールバックする（exit 0 のま�
     BRAIN_PATH           Brain リポジトリのルート（既定: ~/Brain）
     INTEL_ENGINE         LLM エンジン: claude | codex（既定: claude）
     INTEL_CLAUDE_BIN     claude CLI のパス（既定: claude）
+    INTEL_CLAUDE_MODEL   生成モデル（既定: opus = Opus 5。空文字でセッション既定を継承）
+    INTEL_CLAUDE_EFFORT  推論強度（既定: high。空文字でセッション既定を継承）
     INTEL_CODEX_BIN      codex CLI のパス（既定: codex、INTEL_ENGINE=codex 時のみ使用）
     INTEL_CLAUDE_TIMEOUT LLM 1 呼び出しのタイムアウト秒（既定: 900、両エンジン共通）
+    INTEL_SKIP_XAU_TF    1 で XAU-TF エンジンの自動再生成をスキップ
 """
 
 from __future__ import annotations
@@ -67,6 +70,14 @@ JSONL_PATH = LOGS_DIR / "intel_runs.jsonl"
 
 CLAUDE_BIN = os.environ.get("INTEL_CLAUDE_BIN", "claude")
 CLAUDE_TIMEOUT = int(os.environ.get("INTEL_CLAUDE_TIMEOUT", "900"))
+# 定時配信のモデル・推論強度は明示ピンする（2026-08-13）。
+# 理由: 未指定だと ~/.claude/settings.json のセッション既定を継承し、社長が /model を
+# 切り替えると定時配信の生成モデルまで意図せず変わる。加えて Fable 5 は Max の週次
+# プールを共有して消費が速いため、毎営業日の自動生成には Opus 5 を既定にする
+# （本レポートは 2,400〜3,800 字の構造化文書で、Fable の長文一貫性の優位が効かない領域）。
+# 手動の /daily-bias はセッションのモデルをそのまま使う（この定数の影響を受けない）。
+CLAUDE_MODEL = os.environ.get("INTEL_CLAUDE_MODEL", "opus")
+CLAUDE_EFFORT = os.environ.get("INTEL_CLAUDE_EFFORT", "high")
 
 MODES = {
     "daily": {
@@ -209,11 +220,20 @@ def extract_json_object(text: str) -> Optional[dict]:
 # ---------------------------------------------------------------------------
 
 def run_claude(prompt: str, timeout: int = None) -> str:
-    """claude CLI をヘッドレス (-p) で実行し、stdout を返す。失敗は RuntimeError。"""
+    """claude CLI をヘッドレス (-p) で実行し、stdout を返す。失敗は RuntimeError。
+
+    モデルと推論強度は明示ピンする（CLAUDE_MODEL / CLAUDE_EFFORT の定義コメント参照）。
+    空文字を渡すとフラグ自体を省略し、セッション既定の継承に戻せる。
+    """
     timeout = timeout or CLAUDE_TIMEOUT
+    cmd = [CLAUDE_BIN, "-p", "--output-format", "text"]
+    if CLAUDE_MODEL:
+        cmd += ["--model", CLAUDE_MODEL]
+    if CLAUDE_EFFORT:
+        cmd += ["--effort", CLAUDE_EFFORT]
     try:
         proc = subprocess.run(
-            [CLAUDE_BIN, "-p", "--output-format", "text"],
+            cmd,
             input=prompt,
             capture_output=True,
             text=True,

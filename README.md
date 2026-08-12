@@ -284,8 +284,13 @@ XAU Technical Report（Dukascopy H1・検出定義がコードで検証済み）
 `/weekly-bias` は Step 0 で XAU-TF レポートが前日以前の場合に自動再生成する（失敗時は STALE 続行）。
 乖離時は「乖離: TD ○○ / XAU-TF ○○（採用）」形式でレポートに明記。
 
-**推論エンジン**: 既定は Claude サブスク枠（`claude -p`）。`INTEL_ENGINE=codex` で Codex CLI
-（`codex exec`）に切替可能（実験的。CLI 呼び出し規約は検証済み、生成品質は未検証）。
+**推論エンジン**: 既定は Claude サブスク枠（`claude -p`）。**モデルは Opus 5・推論強度 high に明示ピン**
+（`INTEL_CLAUDE_MODEL` / `INTEL_CLAUDE_EFFORT`、既定 `opus` / `high`）。ピンする理由は
+(1) 未指定だとセッション既定（`~/.claude/settings.json`）を継承し、`/model` 切り替えが定時配信にも波及する
+(2) Fable 5 は Max の週次プールを共有して消費が速く、毎営業日の自動生成には過剰
+（本レポートは 2,400〜3,800 字の構造化文書で、Fable の長文一貫性の優位が効かない領域）。
+両変数に空文字を渡せばセッション既定の継承に戻る。手動の `/daily-bias` はセッションのモデルをそのまま使う。
+`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的。CLI 呼び出し規約は検証済み、生成品質は未検証）。
 
 ---
 
@@ -343,7 +348,8 @@ uv run python scripts/intel.py brief --daily --symbol USDJPY  # 個別銘柄ス�
 ```
 
 前提: `claude` CLI がログイン済み（サブスク認証）であること。API キーは不要。
-`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的）。
+生成モデルは既定で **Opus 5 / effort high** に固定（`INTEL_CLAUDE_MODEL` / `INTEL_CLAUDE_EFFORT` で変更、
+空文字でセッション既定の継承に戻る）。`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的）。
 
 ### 8-2. 出力（三重）
 
