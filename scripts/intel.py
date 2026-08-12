@@ -50,7 +50,7 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -306,9 +306,59 @@ def secrets_wrapper_prefix() -> Optional[List[str]]:
         return None
     wrapper = PROJECT_ROOT / "scripts" / "run-with-secrets.sh"
     token = Path.home() / ".config" / "laa" / "op-service-token"
-    if wrapper.exists() and token.exists():
+    # 2026-08-11 の移行後はサービストークンが Keychain 管理になり、
+    # 共通バッチラッパー (op-run-batch.sh) 経由で注入される
+    # (run-with-secrets.sh --batch がフォールバックする)。どちらかがあれば使える。
+    batch_wrapper = Path.home() / ".config" / "laa" / "op-run-batch.sh"
+    if wrapper.exists() and (token.exists() or batch_wrapper.exists()):
         return [str(wrapper), "--batch"]
     return None
+
+
+def ensure_xau_tf_fresh(timeout: int = 300) -> None:
+    """XAU-TF エンジンレポート (Brain/Calendar/XAU-TF) の鮮度を確保する。
+
+    slash command (/daily-bias) の Step 0 相当を headless でも実行する。
+    今日/昨日分の MD が無ければ xauusd-smc-quant の run_report.py --fetch で再生成する。
+    これは同時に live-h1.csv も更新する（retail_analytics のスイープ検証が参照）。
+    失敗は非致命（WARN して続行。アンカー側が STALE 扱いにする）。
+    INTEL_SKIP_XAU_TF=1 でスキップできる。
+    """
+    if os.environ.get("INTEL_SKIP_XAU_TF") == "1":
+        return
+    try:
+        import config as _config
+        repo = _config.XAU_TF_REPO_DIR
+    except Exception as exc:  # noqa: BLE001
+        print(f"[intel] [WARN] config から xau_tf_engine を読めない → XAU-TF 再生成スキップ: {exc}")
+        return
+    if not repo or not Path(repo).is_dir():
+        print("[intel] [WARN] xau_tf_engine.repo_dir が未設定/不存在 → XAU-TF 再生成スキップ")
+        return
+
+    brain = brain_path()
+    today = datetime.now().date()
+    for d in (today, today - timedelta(days=1)):
+        if (brain / "Calendar" / "XAU-TF" / f"XAU_Technical_Report_{d.isoformat()}.md").exists():
+            return
+
+    py = Path(repo) / ".venv" / "bin" / "python"
+    if not py.exists():
+        print(f"[intel] [WARN] XAU-TF venv が見つからない ({py}) → 再生成スキップ")
+        return
+    print("[intel] Step 0: XAU-TF レポートが古いため再生成 (run_report.py --fetch)")
+    try:
+        proc = subprocess.run(
+            [str(py), "run_report.py", "--fetch"],
+            cwd=str(repo), timeout=timeout, capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            tail = (proc.stderr or "")[-300:]
+            print(f"[intel] [WARN] XAU-TF 再生成 exit {proc.returncode}（非致命・続行）: {tail}")
+        else:
+            print("[intel] Step 0: XAU-TF 再生成完了")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[intel] [WARN] XAU-TF 再生成失敗（非致命・続行）: {exc}")
 
 
 def scraped_txt_path(mode: str, date_str: str) -> Path:
@@ -351,6 +401,10 @@ def collect_data(weekly: bool, reuse: bool, date_str: str, quick: bool = False) 
     if reuse and txt_path.exists():
         print(f"[intel] --reuse-data: 既存の {txt_path.name} を使用")
         return txt_path
+
+    # Step 0 相当: 新規スクレイプ前に XAU-TF エンジンの鮮度を確保
+    # (report_anchor の [XAU テクニカル] と retail_analytics の H1 が依存)
+    ensure_xau_tf_fresh()
 
     base_cmd = [sys.executable, str(PROJECT_ROOT / "main.py")]
     if weekly:

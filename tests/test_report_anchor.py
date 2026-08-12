@@ -169,6 +169,11 @@ XAU_TF_MD = """# XAU Technical Report (ICT/SMC × Retail) — 2026-07-09
 ## 5. ボラティリティ / セッション
 
 - ATR20d: 80.6
+
+## 6. 投機筋・リテールポジショニング (CFTC COT)
+
+- 投機筋 net: +175,432 (OI 比 35.2%) — 3年百分位 **91%**
+- 小口 (リテール代理変数) net: +21,050 — 3年百分位 88%
 """
 
 
@@ -180,13 +185,15 @@ def test_xau_tf_anchor_extracts_level_sections(tmp_path, monkeypatch):
     xt = a["xau_tf"]
     assert xt["age_days"] == 0 and xt["stale"] is False
     assert xt["section_used"] == "levels"
-    # データ基準行 + 構造・流動性マップ・Premium/Discount・FVG が連結抽出される
+    # データ基準行 + 構造・流動性マップ・Premium/Discount・FVG に加え、
+    # 2026-08-12 の /xau-tf 単体レポート廃止でボラ/COT 百分位も抽出対象
+    # (Daily/Weekly が本文引用する正規ソースがアンカーになったため)
     for expected in ("[データ基準] データ: Dukascopy H1 bid (UTC)、最終バー 2026-07-06 23:00",
                      "[構造]", "[流動性マップ]", "PMH (前月高値)", "[Premium/Discount]",
-                     "[未充填FVG]", "4115–4123"):
+                     "[未充填FVG]", "4115–4123",
+                     "[ボラ/ATR百分位]", "ATR20d: 80.6",
+                     "[COT百分位]", "3年百分位"):
         assert expected in xt["summary"]
-    # 対象外セクション (ボラティリティ) は含めない
-    assert "ATR20d" not in xt["summary"]
 
 
 def test_xau_tf_anchor_stale_after_one_day(tmp_path, monkeypatch):
