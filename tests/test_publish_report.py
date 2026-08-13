@@ -104,6 +104,40 @@ def test_unmounted_drive_warns_and_exits_zero(tmp_path, monkeypatch, capsys):
     assert not fake_gdrive.exists()
 
 
+def test_drive_only_copies_existing_pdf_without_rendering(tmp_path, monkeypatch, capsys):
+    """--drive-only は Playwright を起動せず、既存 PDF を Drive へコピーする。"""
+    src_md = tmp_path / "brain" / "Daily_Bias_Report_2026-08-13.md"
+    src_md.parent.mkdir(parents=True)
+    src_md.write_text("# report", encoding="utf-8")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    (output_dir / "Daily_Bias_Report_2026-08-13.pdf").write_bytes(b"%PDF-1.4 fake")
+    monkeypatch.setattr(publish_report, "OUTPUT_DIR", output_dir)
+
+    def fail_render(*args, **kwargs):
+        raise AssertionError("drive-only では render を呼ばない")
+
+    monkeypatch.setattr(publish_report, "render", fail_render)
+    drive_dir = tmp_path / "drive"
+    monkeypatch.setattr(
+        publish_report, "get_output_setting",
+        lambda key: str(drive_dir) if key == "gdrive_pdf_dir" else None,
+    )
+
+    assert publish_report.publish(src_md, drive_only=True) == 0
+    out = capsys.readouterr().out
+    assert "PDF: " in out and "Drive: " in out
+    assert (drive_dir / "Daily_Bias_Report_2026-08-13.pdf").exists()
+
+
+def test_drive_only_without_existing_pdf_is_soft(tmp_path, monkeypatch, capsys):
+    src_md = tmp_path / "r.md"
+    src_md.write_text("# report", encoding="utf-8")
+    monkeypatch.setattr(publish_report, "OUTPUT_DIR", tmp_path / "output")
+    assert publish_report.publish(src_md, drive_only=True) == 0
+    assert "既存 PDF が無い" in capsys.readouterr().out
+
+
 def test_render_failure_is_soft_and_cleans_up(tmp_path, monkeypatch, capsys):
     src_md = tmp_path / "brain" / "r.md"
     src_md.parent.mkdir(parents=True)

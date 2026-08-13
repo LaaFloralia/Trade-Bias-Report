@@ -10,6 +10,8 @@
 |---|---|
 | 銘柄範囲 | **XAUUSD 特化 + DXY 上流文脈のみ**（§2 の「非対称化」を置換）。USDJPY / BTCUSD は `/daily-bias <SYM>` / `intel.py brief --daily --symbol <SYM>` の個別指定時のみ、スリム版（master_prompt_symbol.md、`{{SYMBOL}}` 置換）で生成 |
 | 定時配信 | **復活**（§2「オンデマンド化」を置換。社長確定指示 2026-08-12）。平日デイリー 18:00 JST / 土曜ウィークリー 07:00 JST を Hermes cron（intel-daily / intel-weekly、no-agent script、Telegram 配信）で実行。オンデマンド実行も並存 |
+| Telegram 配信の粒度（2026-08-14） | **概要のみ**。`no_agent` cron はスクリプトの stdout をそのまま Telegram に流すため、ラッパーは詳細ログを `logs/intel_{daily\|weekly}_<日付>.log` に退避し、stdout には `output/intel/summary_{daily\|weekly}_<日付>.txt`（bias / confidence / no_trade / 24h リスクイベント / 出力先 / 失敗警告、400 字程度）だけを出す。レポート本文と機械用 JSON は通知に載せない（本文は Brain の MD と Drive の PDF が正） |
+| PDF 発行の堅牢化（2026-08-14） | publish のタイムアウトを 300 → 900 秒（`INTEL_PUBLISH_TIMEOUT`、Hermes の script_timeout 1500 の内側）。タイムアウト時は部分出力を `logs/publish_debug_*.log` に残し、生成済み PDF があれば `publish_report.py --drive-only` で Drive コピーだけを回復する。2026-08-13 18:00 の cron 実行で PDF 生成後に publish が 300 秒で切られ Drive に届かなかった事象への対処 |
 | チャート構造レベル | **FVG / EQH / EQL / Premium-Discount / OB のレベル一覧は本文非掲載**（社長の自力チャート認識訓練を阻害しないため）。XAU-TF アンカーは AI 内部判断専用（プラン価格帯・スコア #3・前回照合）。オーダーブック由来のリクイディティプールは掲載対象（チャートから見えない情報） |
 | /xau-tf 単体レポート | **廃止**（コマンド + `.agents` 重複コピー削除）。計算エンジン run_report.py は内部データ供給役として存続（Brain/Calendar/XAU-TF の MD = アンカー入力、live-h1.csv = スイープ検証入力）。アンカー抽出にボラ/ATR百分位・COT百分位を追加 |
 | リテール分析 | 新設 `scrapers/retail_analytics.py` — P/L 構造（損切り燃料判定）・プール距離・**前日プールに対するスイープ→反転検証**（0.5×ATR 閾値、`output/history/liquidity_pools.json`）。scraped_data に `### リテール分析` ブロックとして注入 |

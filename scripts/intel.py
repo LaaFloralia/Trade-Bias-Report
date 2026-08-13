@@ -27,6 +27,10 @@ PDF 発行 (scripts/publish_report.py 経由で Google Drive へ、非致命) �
     3. PDF + Drive: output/*.pdf と config.yaml output.gdrive_pdf_dir へのコピー
        （publish_report.py に委譲。失敗しても run 全体は成功のまま）
     4. 実行ログ : logs/intel_runs.jsonl（全実行の入出力を JSONL で追記）
+    5. 配信用サマリー: output/intel/summary_{daily|weekly}_YYYY-MM-DD.txt
+       Hermes cron はこのファイルだけを Telegram へ送る（レポート本文・
+       スクレイピングログ・機械用 JSON は通知に載せない）。本文は Brain の
+       MD か Drive の PDF を参照する運用。
 
 JSON パース/スキーマ検証に失敗した場合はリトライ 1 回 → なお失敗なら
 no_trade=true の安全側 JSON にフォールバックする（exit 0 のまま）。
@@ -81,6 +85,9 @@ CLAUDE_EFFORT = os.environ.get("INTEL_CLAUDE_EFFORT", "high")
 # レポート本文生成時のみ許可するツール（カンマ区切り。空文字で完全無効化）。
 # 金は地政学プレミアムと要人発言で動くため、ニュースセクションを埋めるには検索が要る。
 CLAUDE_ALLOWED_TOOLS = os.environ.get("INTEL_CLAUDE_ALLOWED_TOOLS", "WebSearch,WebFetch")
+# PDF 発行 (publish_report.py) のタイムアウト秒。Hermes cron の
+# script_timeout_seconds (1500) の内側で余裕を取る。
+PUBLISH_TIMEOUT = int(os.environ.get("INTEL_PUBLISH_TIMEOUT", "900"))
 
 MODES = {
     "daily": {
@@ -793,30 +800,102 @@ def save_md_to_brain(md_text: str, mode: str, date_str: str,
     return md_path
 
 
-def publish_report_pdf(md_path: Path, timeout: int = 300) -> dict:
+def _parse_publish_stdout(stdout: Optional[str]) -> dict:
+    """publish_report.py の stdout 契約（PDF: / Drive: 行）をパースする。"""
+    result: dict = {}
+    for line in (stdout or "").splitlines():
+        if line.startswith("PDF:"):
+            result["pdf_path"] = line.split(":", 1)[1].strip()
+        elif line.startswith("Drive:"):
+            result["drive_path"] = line.split(":", 1)[1].strip()
+    return result
+
+
+def _dump_publish_debug(md_path: Path, stdout: Optional[str], stderr: Optional[str]) -> Path:
+    """publish 失敗時の部分出力をログに残す（cron 実行時の原因追跡用）。
+
+    capture_output=True では stdout/stderr が親に届かないため、タイムアウト時に
+    「どこまで進んだか」を失うのを防ぐ。
+    """
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOGS_DIR / f"publish_debug_{md_path.stem}.log"
+    body = (
+        f"--- {datetime.now().astimezone().isoformat(timespec='seconds')} {md_path} ---\n"
+        f"[stdout]\n{stdout or '(empty)'}\n[stderr]\n{stderr or '(empty)'}\n"
+    )
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(body)
+    return log_path
+
+
+def publish_report_pdf(md_path: Path, timeout: Optional[int] = None) -> dict:
     """publish_report.py を subprocess で呼び、PDF 発行と Drive コピーを行う。
 
     stdout の `PDF:` / `Drive:` 行をパースして {"pdf_path": ..., "drive_path": ...}
     を返す（出なかったキーは含めない）。publish_report.py はソフト障害を exit 0 で
     飲み込む設計だが、それ以外の失敗もここでは RuntimeError にして呼び出し側の
     try/except（非致命）に委ねる。
+
+    timeout は既定 900 秒（環境変数 INTEL_PUBLISH_TIMEOUT で上書き可）。
+    ローカル実行では 1 秒で終わる処理だが、cron 実行では Google Drive
+    (CloudStorage FUSE) への書き込みが分単位でブロックすることがあるため、
+    Hermes 側の script_timeout (1500s) の内側で余裕を持たせている。
     """
-    proc = subprocess.run(
-        [sys.executable, str(PROJECT_ROOT / "scripts" / "publish_report.py"), str(md_path)],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        cwd=str(PROJECT_ROOT),
-    )
-    result: dict = {}
-    for line in (proc.stdout or "").splitlines():
-        if line.startswith("PDF:"):
-            result["pdf_path"] = line.split(":", 1)[1].strip()
-        elif line.startswith("Drive:"):
-            result["drive_path"] = line.split(":", 1)[1].strip()
+    timeout = timeout if timeout is not None else PUBLISH_TIMEOUT
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "scripts" / "publish_report.py"), str(md_path)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(PROJECT_ROOT),
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else exc.stdout
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else exc.stderr
+        log_path = _dump_publish_debug(md_path, stdout, stderr)
+        print(f"[intel] [WARN] publish の部分出力を保存: {log_path}")
+        # PDF 生成までは終わっていることが多い（詰まるのは Drive コピー側）。
+        # 生成済み PDF があれば Drive コピーだけを短いタイムアウトで再試行する。
+        recovered = recover_drive_copy(md_path)
+        if recovered:
+            return recovered
+        raise
+    result = _parse_publish_stdout(proc.stdout)
     if proc.returncode != 0:
         stderr_tail = (proc.stderr or "")[-300:]
+        _dump_publish_debug(md_path, proc.stdout, proc.stderr)
         raise RuntimeError(f"publish_report.py exit {proc.returncode}: {stderr_tail}")
+    return result
+
+
+def recover_drive_copy(md_path: Path, timeout: int = 180) -> dict:
+    """生成済み PDF を Drive へコピーし直す（publish タイムアウト後のリカバリ）。
+
+    publish_report.py --drive-only は PDF を作らず output/ の既存 PDF を
+    コピーするだけなので、Playwright を起動しない分だけ速い。
+    リカバリ自体が失敗しても例外は投げず、空 dict を返す。
+    """
+    pdf_path = OUTPUT_DIR / f"{md_path.stem}.pdf"
+    if not pdf_path.exists():
+        return {}
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable, str(PROJECT_ROOT / "scripts" / "publish_report.py"),
+                str(md_path), "--drive-only",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(PROJECT_ROOT),
+        )
+    except Exception as exc:  # noqa: BLE001 — リカバリは best-effort
+        print(f"[intel] [WARN] Drive リカバリコピーに失敗: {type(exc).__name__}: {exc}")
+        return {}
+    result = _parse_publish_stdout(proc.stdout)
+    if result:
+        print("[intel] publish はタイムアウトしたが、生成済み PDF から Drive コピーを回復した")
     return result
 
 
@@ -827,6 +906,153 @@ def save_intel_json(obj: dict, mode: str, date_str: str) -> Path:
         json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return json_path
+
+
+# ---------------------------------------------------------------------------
+# 配信用サマリー（Hermes → Telegram にはこのファイルの中身だけを送る）
+# ---------------------------------------------------------------------------
+
+NOTIFY_TITLE = {"daily": "チャート外分析 Daily", "weekly": "チャート外分析 Weekly"}
+NOTIFY_MAX_EVENTS = 5
+
+
+def _bias_label(bias: float) -> str:
+    """bias (-1.0〜+1.0) を日本語ラベルにする。"""
+    if bias >= 0.5:
+        return "強ブル"
+    if bias >= 0.2:
+        return "ややブル"
+    if bias > -0.2:
+        return "中立"
+    if bias > -0.5:
+        return "ややベア"
+    return "強ベア"
+
+
+def _short_path(path_str: Optional[str]) -> Optional[str]:
+    """ホーム配下のパスを ~ 表記に縮める（通知の可読性のため）。"""
+    if not path_str:
+        return None
+    home = str(Path.home())
+    return path_str.replace(home, "~", 1) if path_str.startswith(home) else path_str
+
+
+def _brain_display(path_str: Optional[str]) -> Optional[str]:
+    """Brain 配下は vault ルートからの相対パスで見せる。"""
+    if not path_str:
+        return None
+    try:
+        return str(Path(path_str).relative_to(brain_path()))
+    except ValueError:
+        return _short_path(path_str)
+
+
+def _drive_display(path_str: Optional[str]) -> Optional[str]:
+    """Drive 配下は「マイドライブ / My Drive」以降だけを見せる。
+
+    CloudStorage の実パス（/Users/.../CloudStorage/GoogleDrive-xxx@gmail.com/...）
+    は通知に載せても意味が薄く、行が折り返して読みにくくなるため。
+    """
+    if not path_str:
+        return None
+    parts = Path(path_str).parts
+    for anchor in ("マイドライブ", "My Drive"):
+        if anchor in parts:
+            return str(Path(*parts[parts.index(anchor) + 1:]))
+    return _short_path(path_str)
+
+
+def summary_path(mode: str, date_str: str, symbol: Optional[str] = None) -> Path:
+    name = f"summary_{mode}_{symbol}_{date_str}.txt" if symbol else f"summary_{mode}_{date_str}.txt"
+    return INTEL_DIR / name
+
+
+def build_notify_summary(run_record: dict, mode: str, date_str: str,
+                         symbol: Optional[str] = None) -> str:
+    """run_record から Telegram 配信用の概要テキストを組み立てる。
+
+    レポート本文・スクレイピングログ・機械用 JSON は一切含めない。
+    本文は Brain の MD / Drive の PDF を見に行く運用。
+    """
+    title = NOTIFY_TITLE.get(mode, mode)
+    if symbol:
+        title = f"{title}（{symbol}）"
+    outputs = run_record.get("outputs", {})
+
+    if not run_record.get("ok"):
+        lines = [
+            f"⚠️ {title} — {date_str} 生成失敗",
+            "",
+            f"エラー: {run_record.get('error', '不明')}",
+            f"詳細ログ: {_short_path(str(JSONL_PATH))}",
+        ]
+        return "\n".join(lines) + "\n"
+
+    lines = [f"📊 {title} — {date_str}", ""]
+
+    intel = run_record.get("intel_json") or {}
+    if intel:
+        bias = float(intel.get("bias", 0.0))
+        conf = float(intel.get("confidence", 0.0))
+        lines.append(f"バイアス: {bias:+.2f}（{_bias_label(bias)}） / 信頼度: {conf * 100:.0f}%")
+        if intel.get("no_trade"):
+            lines.append(f"ノートレード: 該当（{intel.get('no_trade_reason') or '理由なし'}）")
+        else:
+            lines.append("ノートレード: 該当なし")
+        verdict = (intel.get("review") or {}).get("verdict")
+        if verdict:
+            lines.append(f"前回バイアスの振り返り: {verdict}")
+
+        events = [e for e in intel.get("risk_events_next_24h", []) if e][:NOTIFY_MAX_EVENTS]
+        if events:
+            lines.append("")
+            lines.append("24h のリスクイベント:")
+            lines.extend(f"・{e}" for e in events)
+
+    data_as_of = run_record.get("data_as_of")
+    if data_as_of and data_as_of != date_str:
+        lines.append("")
+        lines.append(f"⚠️ データ基準日が {data_as_of}（実行日 {date_str}）— STALE")
+
+    lines.append("")
+    lines.append("出力:")
+    md_disp = _brain_display(outputs.get("md_path"))
+    lines.append(f"・Brain MD: {md_disp}" if md_disp else "・Brain MD: 保存なし")
+    drive_disp = _drive_display(outputs.get("drive_path"))
+    pdf_disp = _short_path(outputs.get("pdf_path"))
+    if drive_disp:
+        lines.append(f"・Drive PDF: {drive_disp}")
+    elif pdf_disp:
+        lines.append(f"・PDF: {pdf_disp}（Drive コピーはスキップ/失敗）")
+    else:
+        lines.append("・PDF: 発行に失敗（Drive 未反映・logs/publish_debug_*.log 参照）")
+
+    if outputs.get("brain_synced") is False:
+        lines.append("・⚠️ Brain の git 同期に失敗（他端末には未反映）")
+
+    duration = run_record.get("duration_s")
+    if duration:
+        lines.append("")
+        lines.append(f"所要 {duration:.0f} 秒 / 本文は MD か PDF を参照")
+
+    return "\n".join(lines) + "\n"
+
+
+def write_notify_summary(run_record: dict, mode: str, date_str: str,
+                         symbol: Optional[str] = None) -> Optional[Path]:
+    """配信用サマリーをファイルに書き、パスを stdout に出す。
+
+    書き込みに失敗しても run 全体は止めない（通知はレポート本体より下位）。
+    """
+    try:
+        INTEL_DIR.mkdir(parents=True, exist_ok=True)
+        path = summary_path(mode, date_str, symbol)
+        path.write_text(build_notify_summary(run_record, mode, date_str, symbol), encoding="utf-8")
+        print(f"SUMMARY_FILE: {path}")
+        return path
+    except Exception as exc:  # noqa: BLE001
+        print(f"[intel] [WARN] 配信用サマリーの書き出しに失敗: {type(exc).__name__}: {exc}")
+        return None
 
 
 def append_run_log(record: dict) -> None:
@@ -977,6 +1203,8 @@ def cmd_brief(args) -> int:
         run_record["finished_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         append_run_log(run_record)
         print(f"[intel] 実行ログ追記: {JSONL_PATH}")
+        # 配信用サマリー（Hermes cron はこのファイルだけを Telegram に送る）
+        write_notify_summary(run_record, mode, date_str, symbol=symbol)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -18,6 +18,7 @@
 使い方:
     python scripts/publish_report.py ~/Brain/Calendar/Daily-Bias/Daily_Bias_Report_2026-08-11.md
     python scripts/publish_report.py <md_path> --no-drive
+    python scripts/publish_report.py <md_path> --drive-only  # 既存 PDF の Drive 再コピー
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -66,8 +68,10 @@ def _render_pdf_in_output(md_path: Path) -> Optional[Path]:
     temp_copy = work_md.resolve() != md_path.resolve()
     if temp_copy:
         shutil.copy2(md_path, work_md)
+    t0 = time.time()
     try:
         _, pdf_path = render(work_md, project_root=PROJECT_ROOT)
+        print(f"[publish] PDF 生成 {time.time() - t0:.1f}s")
         return pdf_path
     except Exception as exc:  # noqa: BLE001 — ソフト障害は exit 0
         print(f"[publish] WARN: PDF 生成に失敗: {type(exc).__name__}: {exc}")
@@ -92,25 +96,37 @@ def _copy_to_drive(pdf_path: Path) -> Optional[Path]:
     if root is not None and not root.exists():
         print(f"[publish] WARN: Google Drive が未マウント ({root}) のため Drive コピーをスキップ")
         return None
+    t0 = time.time()
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         drive_path = target_dir / pdf_path.name
         shutil.copy2(pdf_path, drive_path)
+        print(f"[publish] Drive コピー {time.time() - t0:.1f}s")
         return drive_path
     except Exception as exc:  # noqa: BLE001 — ソフト障害は exit 0
         print(f"[publish] WARN: Drive コピーに失敗: {type(exc).__name__}: {exc}")
         return None
 
 
-def publish(md_path: Path, no_drive: bool = False) -> int:
-    """MD → PDF → Drive コピー。常に 0 を返す（ソフト障害はスキップして続行）。"""
+def publish(md_path: Path, no_drive: bool = False, drive_only: bool = False) -> int:
+    """MD → PDF → Drive コピー。常に 0 を返す（ソフト障害はスキップして続行）。
+
+    drive_only=True は PDF を生成し直さず、output/ の既存 PDF を Drive へ
+    コピーするだけのリカバリモード（Playwright を起動しない）。
+    """
     if not md_path.exists():
         print(f"[publish] WARN: 入力 MD が存在しないためスキップ: {md_path}")
         return 0
 
-    pdf_path = _render_pdf_in_output(md_path)
-    if pdf_path is None:
-        return 0
+    if drive_only:
+        pdf_path = OUTPUT_DIR / f"{md_path.stem}.pdf"
+        if not pdf_path.exists():
+            print(f"[publish] WARN: 既存 PDF が無いため Drive コピーをスキップ: {pdf_path}")
+            return 0
+    else:
+        pdf_path = _render_pdf_in_output(md_path)
+        if pdf_path is None:
+            return 0
     print(f"PDF: {pdf_path.resolve()}")
 
     if no_drive:
@@ -130,8 +146,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--no-drive", action="store_true",
         help="Google Drive へのコピーを省略（PDF 生成のみ）",
     )
+    parser.add_argument(
+        "--drive-only", action="store_true",
+        help="PDF を作り直さず output/ の既存 PDF を Drive へコピーするだけ（リカバリ用）",
+    )
     args = parser.parse_args(argv)
-    return publish(Path(args.md_path).expanduser(), no_drive=args.no_drive)
+    if args.no_drive and args.drive_only:
+        parser.error("--no-drive と --drive-only は同時に指定できない")
+    return publish(
+        Path(args.md_path).expanduser(),
+        no_drive=args.no_drive,
+        drive_only=args.drive_only,
+    )
 
 
 if __name__ == "__main__":

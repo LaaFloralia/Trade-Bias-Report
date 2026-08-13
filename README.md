@@ -361,13 +361,31 @@ uv run python scripts/intel.py brief --daily --symbol USDJPY  # 個別銘柄ス�
 生成モデルは既定で **Opus 5 / effort high** に固定（`INTEL_CLAUDE_MODEL` / `INTEL_CLAUDE_EFFORT` で変更、
 空文字でセッション既定の継承に戻る）。`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的）。
 
-### 8-2. 出力（三重）
+### 8-2. 出力（四重）
 
 | 出力 | パス | 用途 |
 |---|---|---|
 | 人間用 Markdown | `$BRAIN_PATH/Calendar/{Daily-Bias\|Weekly-Bias}/{Daily\|Weekly}_Bias_Report_YYYY-MM-DD.md` | 既存スラッシュコマンドと同じ保存先・形式 |
 | 機械用 JSON | `output/intel/intel_{daily\|weekly}_YYYY-MM-DD.json` | trading-bot / EA 等の機械判断入力 |
 | PDF | `output/*.pdf` + Google Drive `マイドライブ/Trading/Bias-Reports/` | スマホ閲覧用（publish_report.py。失敗しても run は成功のまま） |
+| 配信用サマリー | `output/intel/summary_{daily\|weekly}_YYYY-MM-DD.txt` | Telegram 通知の本文（**Hermes cron はこれだけを送る**） |
+
+#### Telegram 配信の契約
+
+定時配信（Hermes cron `intel-daily` / `intel-weekly`、`no_agent` + script）は
+スクリプトの stdout をそのまま Telegram へ流す。そのためラッパー
+（`~/.hermes/scripts/intel-{daily,weekly,quick}.sh`）は
+
+- 詳細ログ（スクレイピングログ・`[intel]` 行）を `logs/intel_{daily|weekly}_YYYY-MM-DD.log` に退避
+- stdout には配信用サマリー（400 字程度）だけを出す
+
+という構成にしてある。レポート本文・機械用 JSON は通知に載せない。本文は Brain の MD か
+Drive の PDF を参照する。サマリーには bias / confidence / no_trade / 24h リスクイベント /
+出力先パス / 失敗警告（PDF 発行失敗・Brain 同期失敗・STALE データ）が入る。
+
+PDF 発行がタイムアウトした場合（cron 実行では Drive への書き込みが分単位でブロックすることがある）、
+部分出力を `logs/publish_debug_*.log` に残し、生成済み PDF があれば
+`publish_report.py --drive-only` で Drive コピーだけを回復する。
 
 機械用 JSON スキーマ:
 
