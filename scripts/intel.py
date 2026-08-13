@@ -1003,11 +1003,14 @@ def build_notify_summary(run_record: dict, mode: str, date_str: str,
         if verdict:
             lines.append(f"前回バイアスの振り返り: {verdict}")
 
+        # 空の時も明示する（黙って省くと「無い」のか「落ちた」のか通知から判別できない）
         events = [e for e in intel.get("risk_events_next_24h", []) if e][:NOTIFY_MAX_EVENTS]
+        lines.append("")
         if events:
-            lines.append("")
             lines.append("24h のリスクイベント:")
             lines.extend(f"・{e}" for e in events)
+        else:
+            lines.append("24h のリスクイベント: なし")
 
     data_as_of = run_record.get("data_as_of")
     if data_as_of and data_as_of != date_str:

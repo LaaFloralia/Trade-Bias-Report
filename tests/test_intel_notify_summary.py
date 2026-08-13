@@ -89,6 +89,14 @@ def test_summary_caps_risk_events():
     assert out.count("・event") == intel.NOTIFY_MAX_EVENTS
 
 
+def test_summary_states_no_risk_events_explicitly():
+    """イベント 0 件でも行を残す（省略すると「落ちた」のか判別できない）。"""
+    rec = _record()
+    rec["intel_json"] = {**INTEL_JSON, "risk_events_next_24h": []}
+    out = intel.build_notify_summary(rec, "daily", "2026-08-14")
+    assert "24h のリスクイベント: なし" in out
+
+
 def test_summary_flags_missing_pdf():
     rec = _record()
     rec["outputs"] = {**rec["outputs"], "pdf_path": None, "drive_path": None}
