@@ -187,6 +187,9 @@ async def scrape_gold_cb() -> dict:
         **base,
         "months": recent,
         "cumulative_3m_t": cumulative,
+        # 累計に使った確定月（表示用の months は速報月を含む直近 3 ヶ月なので、
+        # 累計の対象月が表示リストに現れないことがある。読み手が検算できるよう明示する）
+        "cumulative_periods": [m["period"] for m in confirmed],
         "regime": regime,
         "as_of_date": recent[0]["period"],
         "error": None,

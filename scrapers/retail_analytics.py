@@ -146,13 +146,34 @@ def load_baseline_pools(today: Optional[date] = None,
 
 # ------------------------------------------------------------ スイープ検証
 
-def detect_sweeps(pools: dict, bars: list[dict], atr: Optional[float]) -> list[dict]:
+def _parse_prev_report_at(value) -> Optional[datetime]:
+    """前回レポートの発行時刻（ISO8601 / datetime）を UTC の aware datetime にする。"""
+    if value is None:
+        return None
+    dt = value if isinstance(value, datetime) else None
+    if dt is None:
+        try:
+            dt = datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def detect_sweeps(pools: dict, bars: list[dict], atr: Optional[float],
+                  prev_report_at=None) -> list[dict]:
     """プールマップ（bsl/ssl リスト）に対する直近 24h のスイープ→反転を判定する。
 
     BSL プール: 高値がプール下端を超えたら sweep。その後、post-sweep 高値から
                 終値までの戻りが REVERSAL_ATR_MULT × ATR 以上なら reversal。
     SSL プール: 対称。
+
+    prev_report_at を渡すと、各イベントに `after_prev_report`（前回レポート発行より
+    後に起きたか）を付ける。前回予測の答え合わせは発行後のイベントだけが実績になる
+    ため、発行前のスイープを的中として数えないための材料になる。
     """
+    prev_at = _parse_prev_report_at(prev_report_at)
     if not bars:
         return []
     last_ts = bars[-1]["ts"]
@@ -185,6 +206,7 @@ def detect_sweeps(pools: dict, bars: list[dict], atr: Optional[float]) -> list[d
                 "swept_at_utc": None,
                 "verdict": "no sweep",
                 "retrace_atr": None,
+                "after_prev_report": None,
             }
             if sweep_idx is not None:
                 post = window[sweep_idx:]
@@ -194,14 +216,50 @@ def detect_sweeps(pools: dict, bars: list[dict], atr: Optional[float]) -> list[d
                 else:
                     extreme = min(b["low"] for b in post)
                     retrace = last_close - extreme
-                event["swept_at_utc"] = window[sweep_idx]["ts"].strftime("%Y-%m-%d %H:%M")
+                swept_ts = window[sweep_idx]["ts"]
+                event["swept_at_utc"] = swept_ts.strftime("%Y-%m-%d %H:%M")
                 if atr and retrace >= threshold:
                     event["verdict"] = "sweep→reversal"
                 else:
                     event["verdict"] = "sweep→continuation"
                 event["retrace_atr"] = round(retrace / atr, 2) if atr else None
+                if prev_at is not None:
+                    event["after_prev_report"] = swept_ts >= prev_at
             events.append(event)
     return events
+
+
+# ------------------------------------------------------------ プール距離
+
+def pool_distances(pool: dict, current_price: float, side: str) -> dict:
+    """プールの近端 / 遠端の距離（%）と、現値を内包しているかを返す。
+
+    帯の中心（mid）だけで距離を出すと、現値を跨ぐ帯（例: BSL 4,353.29–4,407.63 に
+    対して現値 4,354.66）でも「+0.73%」のような一見きれいな値になり、帯のどこを
+    指した数字なのかが読めない。ターゲットとして意味があるのは
+    「現値から見て手前の端（到達の入り口）と奥の端（刈り切り）」なので両方返す。
+
+    BSL（上側）: 近端 = low / 遠端 = high、SSL（下側）: 近端 = high / 遠端 = low。
+    """
+    low, high = pool.get("low"), pool.get("high")
+    out = {
+        "distance_pct": None,
+        "distance_near_pct": None,
+        "distance_far_pct": None,
+        "straddles_price": False,
+    }
+    if low is None or high is None or not current_price:
+        return out
+
+    def pct(level: float) -> float:
+        return round((level - current_price) / current_price * 100, 2)
+
+    near, far = (low, high) if side.lower() == "bsl" else (high, low)
+    out["distance_pct"] = pct((low + high) / 2)
+    out["distance_near_pct"] = pct(near)
+    out["distance_far_pct"] = pct(far)
+    out["straddles_price"] = low <= current_price <= high
+    return out
 
 
 # ------------------------------------------------------------ P/L 構造
@@ -243,6 +301,7 @@ def build_retail_analytics(
     h1_path: Optional[Path],
     today: Optional[date] = None,
     pools_path: Path = POOLS_HISTORY_PATH,
+    prev_report_at=None,
 ) -> dict:
     """リテール分析ブロックの全要素を構築する。
 
@@ -252,6 +311,9 @@ def build_retail_analytics(
         current_price: 現在価格（open_orders.current_price または TwelveData close）
         h1_path: Dukascopy H1 CSV のパス（スイープ検証・ATR 用）
         today: テスト用の日付固定
+        prev_report_at: 前回レポートの発行時刻（ISO8601 / datetime）。
+            渡すとスイープ各件に「発行後かどうか」が付き、前回照合で
+            発行前の値動きを実績として数えるのを防げる
     """
     today = today or date.today()
     result = {
@@ -264,6 +326,9 @@ def build_retail_analytics(
         "baseline_date": None,
         "baseline_note": None,
         "sweep_events": [],
+        "prev_report_at": prev_report_at if isinstance(prev_report_at, str) else (
+            prev_report_at.isoformat(timespec="minutes") if prev_report_at else None
+        ),
         "error": None,
     }
 
@@ -275,12 +340,7 @@ def build_retail_analytics(
         for side, key in (("bsl", "bsl_candidates"), ("ssl", "ssl_candidates")):
             pools = []
             for c in open_orders.get(key) or []:
-                mid = (c["low"] + c["high"]) / 2 if c.get("low") is not None else None
-                pools.append({
-                    **c,
-                    "distance_pct": round((mid - current_price) / current_price * 100, 2)
-                    if mid is not None else None,
-                })
+                pools.append({**c, **pool_distances(c, current_price, side)})
             result["top_pools"][side] = pools
 
     # 3. H1 / ATR
@@ -305,7 +365,9 @@ def build_retail_analytics(
         }
         result["baseline_note"] = "前日プール履歴なし → 当日プールで参考判定"
     if bars:
-        result["sweep_events"] = detect_sweeps(pools_map, bars, result["atr20d"])
+        result["sweep_events"] = detect_sweeps(
+            pools_map, bars, result["atr20d"], prev_report_at=prev_report_at
+        )
 
     # 5. 当日プールを履歴へ保存（翌日の答え合わせ用）
     record_pools(open_orders, current_price, today, pools_path)
@@ -355,11 +417,23 @@ def format_retail_analytics_lines(ra: dict) -> list[str]:
 
     pools = ra.get("top_pools") or {}
     if pools.get("bsl") or pools.get("ssl"):
-        lines.append("- リクイディティプール（オーダーブック由来、ボリューム順）:")
+        lines.append(
+            "- リクイディティプール（オーダーブック由来、ボリューム順。"
+            "距離は 近端→遠端 = 到達の入り口→刈り切り）:"
+        )
         for side_label, key in (("BSL(上)", "bsl"), ("SSL(下)", "ssl")):
             for c in pools.get(key) or []:
                 share = f", side内シェア {c['share_pct']}%" if c.get("share_pct") is not None else ""
-                dist = f", 現値から {c['distance_pct']:+.2f}%" if c.get("distance_pct") is not None else ""
+                near, far = c.get("distance_near_pct"), c.get("distance_far_pct")
+                if near is not None and far is not None:
+                    if c.get("straddles_price"):
+                        dist = f", 現値を内包（有効レンジは 現値〜{far:+.2f}%）"
+                    else:
+                        dist = f", 現値から {near:+.2f}%〜{far:+.2f}%"
+                elif c.get("distance_pct") is not None:
+                    dist = f", 現値から {c['distance_pct']:+.2f}%（帯中心）"
+                else:
+                    dist = ""
                 lines.append(
                     f"  * {side_label} {c.get('low')} – {c.get('high')} "
                     f"(volume {c.get('volume_sum')}{share}{dist})"
@@ -373,11 +447,21 @@ def format_retail_analytics_lines(ra: dict) -> list[str]:
             f"- スイープ検証（基準プール: {base}{note}、直近{SWEEP_WINDOW_HOURS}h、"
             f"反転閾値 {REVERSAL_ATR_MULT}×ATR）:"
         )
+        if ra.get("prev_report_at"):
+            lines.append(
+                f"  ※ 前回レポート発行: {ra['prev_report_at']}。"
+                "前回予測の答え合わせに使えるのは【発行後】のイベントのみ"
+                "（発行前のスイープは前回予測の実績ではない）"
+            )
         for ev in events:
             detail = ""
             if ev["verdict"] != "no sweep":
                 retrace = f", 戻り {ev['retrace_atr']}×ATR" if ev.get("retrace_atr") is not None else ""
                 detail = f" (sweep {ev['swept_at_utc']} UTC{retrace})"
+                if ev.get("after_prev_report") is True:
+                    detail += " [発行後 = 照合可]"
+                elif ev.get("after_prev_report") is False:
+                    detail += " [発行前 = 照合対象外]"
             lines.append(f"  * {ev['side']} {ev['low']} – {ev['high']}: {ev['verdict']}{detail}")
 
     if ra.get("error"):

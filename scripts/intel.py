@@ -1017,6 +1017,18 @@ def build_notify_summary(run_record: dict, mode: str, date_str: str,
         lines.append("")
         lines.append(f"⚠️ データ基準日が {data_as_of}（実行日 {date_str}）— STALE")
 
+    # スコア表記の機械訂正は黙って直さず通知する（信頼度は執行判断に直結するため）
+    sc = run_record.get("score_check") or {}
+    if sc.get("status") == "corrected":
+        lines.append("")
+        lines.append(
+            f"⚠️ 信頼度表記を訂正: {sc.get('declared_label')} スコア {sc.get('declared_score')} → "
+            f"{sc.get('expected_label')} スコア {sc.get('table_total')}（内訳表の再集計値が正）"
+        )
+    elif sc.get("status") == "needs_regeneration":
+        lines.append("")
+        lines.append(f"⚠️ 信頼度スコア不一致: {sc.get('warning')}")
+
     lines.append("")
     lines.append("出力:")
     md_disp = _brain_display(outputs.get("md_path"))
@@ -1123,6 +1135,23 @@ def cmd_brief(args) -> int:
             md_text = STALE_DATA_BANNER.format(
                 data_as_of=data_as_of, run_date=date_str
             ) + md_text
+
+        # Step 2.1: 統一スコアの機械検証（セクション0 は PDF 表紙バッジ・confidence 換算の契約）
+        from scrapers.score_consistency import enforce_score_consistency
+
+        md_text, score_report = enforce_score_consistency(md_text)
+        run_record["score_check"] = score_report
+        if score_report["status"] == "corrected":
+            print(
+                f"[intel] [WARN] セクション0 のスコア表記を訂正: "
+                f"{score_report['declared_label']}/{score_report['declared_score']} → "
+                f"{score_report['expected_label']}/{score_report['table_total']}"
+                "（master_prompt 違反）"
+            )
+        elif score_report["status"] == "needs_regeneration":
+            print(f"[intel] [WARN] スコア不一致（自動訂正せず）: {score_report['warning']}")
+        elif score_report.get("warning"):
+            print(f"[intel] [WARN] スコア検証: {score_report['warning']}")
         run_record["claude_calls"].append(
             {"purpose": "report_md", "prompt": report_prompt, "response": md_text}
         )

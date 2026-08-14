@@ -492,11 +492,17 @@ async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
         try:
             oo_target = results["myfxbook_open_orders"].get(target) or {}
             cp = oo_target.get("current_price") or _quote_close(target)
+            # 前回 Daily の発行時刻。スイープ検証に渡すと「前回予測より後に
+            # 起きたか」が各イベントに付き、前回照合の的中判定が甘くならない
+            _anchor = results.get("report_anchor")
+            _prev_daily = _anchor.get("prev_daily") if isinstance(_anchor, dict) else None
+            _prev_at = _prev_daily.get("generated_at") if isinstance(_prev_daily, dict) else None
             results["retail_analytics"] = build_retail_analytics(
                 retail=results["retail_sentiment"].get(target) or {},
                 open_orders=oo_target,
                 current_price=cp,
                 h1_path=XAU_TF_H1_CSV,
+                prev_report_at=_prev_at,
             )
             ra = results["retail_analytics"]
             print(
@@ -820,10 +826,21 @@ def format_scraped_data(data: dict) -> str:
                 "neutral": "中立",
                 "unknown": "確定月不足で判定不能",
             }.get(gold_cb.get("regime"), "不明")
+            periods = gold_cb.get("cumulative_periods") or []
+            # 累計の対象月を明示する（上のリストは速報月を含む直近3ヶ月なので、
+            # 累計に使った確定月がリストに出てこないことがある）
+            span = f"（{periods[-1]}〜{periods[0]}）" if len(periods) >= 2 else ""
             lines.append(
-                f"- 確定月3ヶ月累計: {gold_cb.get('cumulative_3m_t'):+.1f} t → "
+                f"- 確定月3ヶ月累計{span}: {gold_cb.get('cumulative_3m_t'):+.1f} t → "
                 f"レジーム: {gold_cb.get('regime')} ({regime_ja})"
             )
+            shown = {m["period"] for m in gold_cb.get("months", [])}
+            missing = [p for p in periods if p not in shown]
+            if missing:
+                lines.append(
+                    f"  ※ 累計に含まれるが上の内訳に出ていない確定月: {', '.join(missing)}"
+                    "（内訳表示は直近3ヶ月のみ）"
+                )
             if gold_cb.get("note"):
                 lines.append(f"※ {gold_cb['note']}")
 

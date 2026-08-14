@@ -21,9 +21,11 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+JST = timezone(timedelta(hours=9))
 
 # (ディレクトリ名, 種別ラベル)。同日付なら先頭ほど優先 (Deep 版の方が情報量が多い)
 WEEKLY_DIRS = [
@@ -128,6 +130,32 @@ def _extract_section(
     return section
 
 
+_GENERATED_AT_RE = re.compile(
+    r"生成\s*[:：]\s*(?:(\d{4})[-/])?(\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})"
+)
+
+
+def _extract_generated_at(text: str, fdate: date) -> Optional[str]:
+    """レポートヘッダの `生成: 08/14 08:05 JST` を ISO8601 (JST) にして返す。
+
+    前回照合で「前回レポート発行より後に起きたことだけを実績として数える」ための
+    基準時刻。年はヘッダに無いことが多いため、ファイル日付の年を採用する。
+    見つからない場合は None（呼び出し側は時刻フィルタなしで動く）。
+    """
+    for line in text.splitlines()[:10]:
+        m = _GENERATED_AT_RE.search(line)
+        if not m:
+            continue
+        year = int(m.group(1)) if m.group(1) else fdate.year
+        try:
+            dt = datetime(year, int(m.group(2)), int(m.group(3)),
+                          int(m.group(4)), int(m.group(5)), tzinfo=JST)
+        except ValueError:
+            return None
+        return dt.isoformat(timespec="minutes")
+    return None
+
+
 def _extract_xau_tf_summary(text: str) -> Optional[str]:
     """XAU テクニカルレポートからレベル関連セクションを連結抽出する。
     データ基準行 (`> データ: ... 最終バー ...`) を先頭に含め、ファイル日付が
@@ -174,6 +202,8 @@ def _build_anchor(
         "stale": age > stale_days,
         "section_used": used if summary else None,
         "summary": summary,
+        # 前回照合の時刻基準（発行より前に起きたことを実績に数えないため）
+        "generated_at": _extract_generated_at(text, fdate),
     }
 
 
@@ -254,7 +284,9 @@ def format_anchor_lines(anchor: dict) -> list[str]:
             lines.append(f"[{label}] なし")
             return
         stale_tag = f" [STALE >{stale_days}日: 参考扱い]" if a["stale"] else ""
-        lines.append(f"[{label}] {a['file']} ({a['age_days']}日前){stale_tag}")
+        # 発行時刻は前回照合の基準（この時刻より前の値動きは前回予測の実績にならない）
+        issued = f" 発行 {a['generated_at']}" if a.get("generated_at") else ""
+        lines.append(f"[{label}] {a['file']} ({a['age_days']}日前){issued}{stale_tag}")
         if a.get("summary"):
             lines.append(a["summary"])
         else:
