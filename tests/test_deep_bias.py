@@ -46,18 +46,25 @@ def test_extract_title_and_summary_finds_title():
 
 
 def test_render_html_only(tmp_md: Path):
-    """Smoke test: HTML rendering completes and contains expected anchors."""
+    """Smoke test: 既定（human-first）レンダラで HTML が生成される。"""
     html_path = render_html(tmp_md, project_root=PROJECT_ROOT)
     assert html_path.exists()
     assert html_path.suffix == ".html"
 
     html = html_path.read_text(encoding="utf-8")
-    assert "Executive Summary" in html
+    assert "詳細（全文）" in html, "human-first レンダラは全文詳細セクションを含む"
     assert "DXY" in html
     assert "BTCUSD" in html
     assert "<table" in html, "tables extension must produce <table>"
-    # 9.5pt font size from style.css should be embedded
     assert "font-family" in html
+
+
+def test_render_html_legacy(tmp_md: Path):
+    """renderer='legacy' で旧テンプレ（Executive Summary 表紙）が使われる。"""
+    html_path = render_html(tmp_md, project_root=PROJECT_ROOT, renderer="legacy")
+    html = html_path.read_text(encoding="utf-8")
+    assert "Executive Summary" in html
+    assert "詳細（全文）" not in html
 
 
 def test_render_produces_pdf(tmp_md: Path):

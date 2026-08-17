@@ -130,8 +130,15 @@ def _md_to_html(md_text: str) -> str:
     )
 
 
-def render_html(md_path: Path, project_root: Path | None = None) -> Path:
+def render_html(md_path: Path, project_root: Path | None = None,
+                renderer: str | None = None) -> Path:
     """Render Markdown to a self-contained HTML file alongside the source.
+
+    renderer:
+      - None（既定）: human-first レンダラ（scripts/human_report.py、認知負荷対策
+        ダッシュボード + 全文詳細）。失敗時は legacy テンプレへ自動フォールバック。
+      - "legacy": 旧テンプレ（templates/report.html + style.css）を強制。
+      環境変数 REPORT_RENDERER=legacy でも旧テンプレを強制できる（cron 緊急退避用）。
 
     Returns the path to the generated HTML file.
     """
@@ -139,6 +146,29 @@ def render_html(md_path: Path, project_root: Path | None = None) -> Path:
         project_root = _project_root()
 
     md_text = md_path.read_text(encoding="utf-8")
+
+    import os
+    if renderer is None:
+        renderer = os.environ.get("REPORT_RENDERER", "human")
+
+    if renderer != "legacy":
+        try:
+            try:
+                from scripts.human_report import build_html
+            except ImportError:  # 直接実行時（sys.path[0] == scripts/）
+                from human_report import build_html  # type: ignore[no-redef]
+
+            html = build_html(md_text)
+            html_path = md_path.with_suffix(".html")
+            html_path.write_text(html, encoding="utf-8")
+            return html_path
+        except Exception as exc:  # noqa: BLE001 — レンダラ不具合でパイプラインを止めない
+            print(
+                f"[render] WARN: human renderer failed "
+                f"({type(exc).__name__}: {exc}); falling back to legacy",
+                file=sys.stderr,
+            )
+
     title, summary_html = _extract_title_and_summary(md_text)
 
     template_path = project_root / "templates" / "report.html"
@@ -228,6 +258,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="HTML のみ生成（PDF をスキップ。--keep-html は暗黙的に有効）",
     )
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="旧テンプレ（templates/report.html + style.css）でレンダリングする",
+    )
     args = parser.parse_args(argv)
 
     md_path = Path(args.md_path).resolve()
@@ -235,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: input not found: {md_path}", file=sys.stderr)
         return 1
 
-    html_path = render_html(md_path)
+    html_path = render_html(md_path, renderer="legacy" if args.legacy else None)
 
     if args.html_only:
         print(f"HTML: {html_path}")

@@ -95,12 +95,13 @@ fundamental-macro-analysis/  # 旧 ict-daily-bias、社長呼称「チャート�
 │       └── weekly-bias.md    # 統合 Weekly（同上 + 前回レポート/intel JSON を前回レビュー入力に）
 ├── scripts/
 │   ├── intel.py              # ★ ヘッドレス分析パイプライン（§ 8。MD + JSON + PDF。INTEL_ENGINE で claude/codex 切替）
-│   ├── render_report.py      # MD → PDF レンダラ（HTML は中間生成→削除）
+│   ├── render_report.py      # MD → PDF レンダラ（既定 = human-first。--legacy / REPORT_RENDERER=legacy で旧テンプレ）
+│   ├── human_report.py       # ★ 認知負荷対策レンダラ（2026-08-17〜。ダッシュボード + SVG 図 + 全文詳細。docs/HUMAN_FIRST_DESIGN.md 参照）
 │   ├── publish_report.py     # MD → PDF → Google Drive（マイドライブ/Trading/Bias-Reports）発行
 │   └── archive/
 │       └── generate_xauusd_brief.py # 凍結（API 直叩き方式。後続フェーズで再実装予定）
-├── templates/                # PDF 用 A4 テンプレ + 印刷 CSS
-├── docs/                     # 設計入力（FRED 系列候補 / OSS MCP 机上検証）
+├── templates/                # PDF 用 A4 テンプレ + 印刷 CSS（style_human.css = human-first / report.html + style.css = legacy）
+├── docs/                     # 設計入力（FRED 系列候補 / OSS MCP 机上検証 / HUMAN_FIRST_DESIGN.md = PDF 誌面設計記録）
 ├── scrapers/
 │   ├── twelvedata.py         # Twelve Data API（価格 + PDH/PDL + IPDA 20/40/60）
 │   ├── dxy.py                # DXY（Investing.com → MarketWatch → EUR/USD 逆数推定）

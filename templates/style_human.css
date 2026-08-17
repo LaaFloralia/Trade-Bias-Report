@@ -1,0 +1,500 @@
+/* Bias Report — human-first stylesheet (A4 print)
+ * 認知負荷対策の設計原則:
+ *  - 3 層構造（結論ダッシュボード → 根拠パネル → 全文詳細）
+ *  - 本文 9.5-10pt / 行間 1.7 / 見出しは大きさ+色+余白で明確な階層
+ *  - 色は検証済みパレット（Bullish #047857 / Bearish #c22f2f / 注意 #d97706）
+ *    + 必ず記号（▲▼◆）を併記して色単独に意味を持たせない
+ * フォントは Hiragino Sans 単独（PDF へのフォント subset 埋め込み肥大化防止）
+ */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  color: #1c1c1e;
+  font-family: "Hiragino Sans", Arial, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.7;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+p { orphans: 3; widows: 3; }
+
+a[href]::after { content: ""; } /* 印刷時に URL を展開しない */
+
+/* ===== ダッシュボード共通 ===== */
+.dash-page { padding: 4mm 2mm 0 2mm; }
+.dash-page2 { padding: 2mm 2mm 0 2mm; }
+
+.dash-header {
+  border-bottom: 2.5px solid #2547a8;
+  padding-bottom: 2.5mm;
+  margin-bottom: 3.5mm;
+}
+
+.dash-title {
+  font-size: 17pt;
+  font-weight: 700;
+  color: #16213e;
+  margin: 0 0 1.5mm 0;
+  letter-spacing: 0.2pt;
+}
+
+.meta-row { display: flex; flex-wrap: wrap; gap: 1.5mm; }
+
+.meta-chip {
+  font-size: 7.5pt;
+  color: #55555c;
+  background: #f1f1f4;
+  border: 1px solid #e4e4e8;
+  border-radius: 2mm;
+  padding: 0.4mm 2.2mm;
+  white-space: nowrap;
+}
+
+/* ===== KPI カード ===== */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2.5mm;
+  margin: 0 0 3.5mm 0;
+}
+
+.kpi {
+  border: 1px solid #e4e4e8;
+  border-top: 2.5px solid #e4e4e8; /* accent は inline style で上書き */
+  border-radius: 1.5mm;
+  padding: 2mm 2.5mm 1.8mm 2.5mm;
+  background: #ffffff;
+}
+
+.kpi-label {
+  font-size: 7.5pt;
+  color: #8b8b92;
+  font-weight: 600;
+  margin-bottom: 1mm;
+  letter-spacing: 0.3pt;
+}
+
+.kpi-value {
+  font-size: 12.5pt;
+  font-weight: 700;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-sub {
+  font-size: 7.5pt;
+  color: #55555c;
+  margin-top: 1mm;
+  line-height: 1.45;
+}
+
+/* ===== バッジ ===== */
+.badge {
+  display: inline-block;
+  padding: 0.5mm 2.2mm;
+  border-radius: 1.5mm;
+  border: 1px solid;
+  font-size: 10pt;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.kpi-value .badge { font-size: 11pt; }
+
+/* ===== コールアウト ===== */
+.callout {
+  display: flex;
+  gap: 2.5mm;
+  align-items: flex-start;
+  border-radius: 1.5mm;
+  padding: 2.2mm 3mm;
+  margin: 0 0 3mm 0;
+  font-size: 9pt;
+  line-height: 1.6;
+  page-break-inside: avoid;
+}
+
+.callout-warn {
+  background: #fdf3e3;
+  border: 1px solid #d97706;
+  border-left: 3.5px solid #d97706;
+}
+
+.callout-risk {
+  background: #fdeaea;
+  border: 1px solid #c22f2f;
+  border-left: 3.5px solid #c22f2f;
+}
+
+.callout-icon { font-size: 11pt; line-height: 1.3; }
+
+.cond-list { margin: 1mm 0 0 0; padding-left: 5mm; }
+.cond-list li { margin-bottom: 0.8mm; }
+
+/* ===== メイングリッド（ラダー + シナリオ）===== */
+.main-grid {
+  display: grid;
+  grid-template-columns: 90mm 1fr;
+  gap: 4mm;
+  margin-bottom: 3mm;
+}
+
+.ladder-col { min-width: 0; }
+.ladder { width: 100%; height: auto; }
+
+.ladder-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3mm;
+  font-size: 7.5pt;
+  color: #55555c;
+  margin-top: 1mm;
+}
+
+/* ===== プランカード ===== */
+.plans-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3mm;
+  margin-bottom: 3mm;
+  align-items: start;
+}
+
+.plan-card {
+  border: 1px solid #e4e4e8;
+  border-left: 3.5px solid #e4e4e8; /* accent は inline style */
+  border-radius: 1.5mm;
+  padding: 2mm 3mm;
+  page-break-inside: avoid;
+}
+
+.plan-muted { opacity: 0.62; }
+
+.plan-head {
+  display: flex;
+  align-items: center;
+  gap: 2.5mm;
+  margin-bottom: 1.5mm;
+}
+
+.plan-name { font-size: 10pt; font-weight: 700; color: #16213e; }
+
+.plan-status {
+  font-size: 7.5pt;
+  color: #c22f2f;
+  border: 1px solid #c22f2f;
+  border-radius: 1.5mm;
+  padding: 0.2mm 1.8mm;
+  font-weight: 600;
+}
+
+.plan-row {
+  display: flex;
+  gap: 2.5mm;
+  font-size: 8.5pt;
+  padding: 0.7mm 0;
+  border-top: 1px solid #f1f1f4;
+  line-height: 1.55;
+}
+
+.plan-key {
+  flex: 0 0 17mm;
+  color: #8b8b92;
+  font-weight: 600;
+  font-size: 8pt;
+}
+
+.plan-val { flex: 1; color: #1c1c1e; }
+
+.note-box {
+  background: #f7f7f9;
+  border: 1px solid #e4e4e8;
+  border-radius: 1.5mm;
+  padding: 2mm 3mm;
+  font-size: 8.5pt;
+  color: #38383d;
+  line-height: 1.6;
+  page-break-inside: avoid;
+}
+
+.note-box strong { color: #16213e; }
+
+/* ===== パネル（2 ページ目）===== */
+.panel {
+  border: 1px solid #e4e4e8;
+  border-radius: 1.5mm;
+  padding: 2.5mm 3.5mm 2.5mm 3.5mm;
+  margin-bottom: 3mm;
+  page-break-inside: avoid;
+}
+
+.panel-title {
+  font-size: 9.5pt;
+  font-weight: 700;
+  color: #2547a8;
+  margin: 0 0 2mm 0;
+  padding-bottom: 1mm;
+  border-bottom: 1px solid #e4e4e8;
+  letter-spacing: 0.3pt;
+}
+
+/* スコア内訳 */
+.score-row {
+  display: flex;
+  align-items: baseline;
+  gap: 2.5mm;
+  padding: 0.8mm 0;
+  border-bottom: 1px solid #f5f5f7;
+  font-size: 8.5pt;
+}
+
+.score-label { flex: 0 0 34mm; font-weight: 600; color: #38383d; font-size: 8pt; }
+
+.score-chip {
+  flex: 0 0 auto;
+  display: inline-block;
+  min-width: 7mm;
+  text-align: center;
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 8.5pt;
+  border-radius: 1.2mm;
+  padding: 0.2mm 1.2mm;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-chip-zero { background: #f1f1f4; color: #8b8b92; border: 1px solid #d9d9de; }
+
+.score-reason { flex: 1; color: #55555c; font-size: 7.8pt; line-height: 1.5; }
+
+.gauge-wrap { margin-top: 2mm; }
+.gauge-wrap svg { width: 100%; height: auto; }
+
+/* リテール */
+.retail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2mm;
+  margin-top: 1.5mm;
+}
+
+.retail-cell { font-size: 8pt; color: #38383d; line-height: 1.55; }
+
+.mini-note { font-size: 8pt; color: #55555c; margin-top: 1.5mm; line-height: 1.55; }
+
+.macro-head { font-size: 8.5pt; font-weight: 600; color: #38383d; margin-bottom: 1mm; }
+
+/* ミニテーブル */
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8pt;
+  margin: 0;
+}
+
+.mini-table th {
+  background: #edf1fa;
+  color: #16213e;
+  font-weight: 600;
+  padding: 1mm 2mm;
+  text-align: left;
+  border-bottom: 1.5px solid #2547a8;
+}
+
+.mini-table td {
+  padding: 1mm 2mm;
+  border-bottom: 1px solid #f1f1f4;
+  vertical-align: top;
+}
+
+/* 相関チップ */
+.corr-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm; }
+
+.corr-chip {
+  border: 1px solid;
+  border-radius: 1.5mm;
+  padding: 1.5mm 2.2mm;
+  font-size: 7.8pt;
+  line-height: 1.5;
+}
+
+.corr-pair { font-weight: 700; color: #38383d; }
+.corr-vals { color: #55555c; font-variant-numeric: tabular-nums; }
+.corr-judge { font-weight: 700; }
+
+/* ファンダカード */
+.fund-card {
+  border-top: 1px solid #f1f1f4;
+  padding: 1.5mm 0;
+}
+
+.fund-head { display: flex; align-items: center; gap: 2.5mm; margin-bottom: 0.8mm; }
+.fund-head .badge { font-size: 8.5pt; }
+
+.mini-tag {
+  font-size: 7.5pt;
+  color: #55555c;
+  background: #f1f1f4;
+  border-radius: 1.2mm;
+  padding: 0.2mm 1.8mm;
+}
+
+.fund-driver { font-size: 8pt; color: #55555c; line-height: 1.55; }
+
+/* 前回照合 */
+.review-line { display: flex; align-items: baseline; gap: 2.5mm; font-size: 8.5pt; }
+.review-note { color: #55555c; line-height: 1.55; }
+
+/* ===== 詳細（全文）===== */
+.detail { padding: 0 2mm; page-break-before: always; }
+
+.detail-divider {
+  border-bottom: 2px solid #2547a8;
+  padding-bottom: 1.5mm;
+  margin-bottom: 4mm;
+  display: flex;
+  align-items: baseline;
+  gap: 4mm;
+}
+
+.detail-divider > span:first-child {
+  font-size: 13pt;
+  font-weight: 700;
+  color: #16213e;
+}
+
+.detail-sub { font-size: 8pt; color: #8b8b92; }
+
+.detail h1 {
+  font-size: 13pt;
+  font-weight: 700;
+  color: #16213e;
+  border-bottom: 1.5px solid #2547a8;
+  padding-bottom: 1.5mm;
+  margin: 6mm 0 3mm 0;
+  page-break-after: avoid;
+}
+
+.detail h2 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  color: #16213e;
+  margin: 6mm 0 2.5mm 0;
+  border-left: 3.5px solid #2547a8;
+  padding-left: 3mm;
+  page-break-after: avoid;
+}
+
+.detail h3 {
+  font-size: 10pt;
+  font-weight: 700;
+  color: #2547a8;
+  margin: 4.5mm 0 2mm 0;
+  page-break-after: avoid;
+}
+
+.detail h4 {
+  font-size: 9.5pt;
+  font-weight: 700;
+  color: #38383d;
+  margin: 3.5mm 0 1.5mm 0;
+  page-break-after: avoid;
+}
+
+.detail p { margin: 0 0 2mm 0; }
+
+.detail ul, .detail ol { margin: 0 0 2.5mm 0; padding-left: 6.5mm; }
+.detail li { margin-bottom: 0.8mm; }
+
+.detail strong { color: #16213e; }
+
+.detail code {
+  background: #f1f1f4;
+  border-radius: 1mm;
+  padding: 0.3mm 1.2mm;
+  font-family: Menlo, Consolas, "Hiragino Sans", monospace;
+  font-size: 8.5pt;
+}
+
+.detail pre {
+  background: #f1f1f4;
+  border-radius: 1.5mm;
+  padding: 2.5mm 3.5mm;
+  overflow-x: auto;
+  font-family: Menlo, Consolas, "Hiragino Sans", monospace;
+  font-size: 8pt;
+}
+
+.detail table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 2.5mm 0;
+  font-size: 8.5pt;
+  page-break-inside: avoid;
+}
+
+.detail table th {
+  background: #edf1fa;
+  color: #16213e;
+  font-weight: 600;
+  padding: 1.3mm 2.2mm;
+  text-align: left;
+  border-bottom: 1.5px solid #2547a8;
+  border-top: 1px solid #e4e4e8;
+}
+
+.detail table td {
+  padding: 1.3mm 2.2mm;
+  border-bottom: 1px solid #ececef;
+  vertical-align: top;
+}
+
+.detail table tr:nth-child(even) td { background: #fafafb; }
+
+.detail table thead { display: table-header-group; }
+
+.detail hr { border: none; border-top: 1px solid #e4e4e8; margin: 4mm 0; }
+
+.detail blockquote {
+  border-left: 3px solid #d9d9de;
+  padding: 0.8mm 0 0.8mm 3.5mm;
+  margin: 2.5mm 0;
+  color: #55555c;
+}
+
+/* ===== フッター ===== */
+.footer {
+  margin-top: 6mm;
+  padding: 3mm 2mm;
+  font-size: 7.5pt;
+  color: #8b8b92;
+  text-align: center;
+  border-top: 1px solid #e4e4e8;
+}
+
+/* ===== ページ設定 ===== */
+@page {
+  size: A4;
+  margin: 11mm 11mm 13mm 11mm;
+  @top-left {
+    content: "{{DOC_LABEL}}";
+    font-size: 8pt;
+    color: #8b8b92;
+  }
+  @top-right {
+    content: "{{DATE_JST}}";
+    font-size: 8pt;
+    color: #8b8b92;
+  }
+  @bottom-right {
+    content: counter(page) " / " counter(pages);
+    font-size: 8pt;
+    color: #8b8b92;
+  }
+}
