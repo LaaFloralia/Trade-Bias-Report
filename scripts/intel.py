@@ -801,13 +801,19 @@ def save_md_to_brain(md_text: str, mode: str, date_str: str,
 
 
 def _parse_publish_stdout(stdout: Optional[str]) -> dict:
-    """publish_report.py の stdout 契約（PDF: / Drive: 行）をパースする。"""
+    """publish_report.py の stdout 契約（PDF: / Drive: 行）をパースする。
+
+    Drive 関連の WARN 行も拾う。Drive コピーは「ファイルが置けても同期していない」
+    という失敗の仕方をするため、理由を通知本文まで運ぶ必要がある。
+    """
     result: dict = {}
     for line in (stdout or "").splitlines():
         if line.startswith("PDF:"):
             result["pdf_path"] = line.split(":", 1)[1].strip()
         elif line.startswith("Drive:"):
             result["drive_path"] = line.split(":", 1)[1].strip()
+        elif "WARN" in line and "Drive" in line:
+            result["drive_warn"] = line.split("WARN:", 1)[-1].strip()
     return result
 
 
@@ -1039,6 +1045,9 @@ def build_notify_summary(run_record: dict, mode: str, date_str: str,
         lines.append(f"・Drive PDF: {drive_disp}")
     elif pdf_disp:
         lines.append(f"・PDF: {pdf_disp}（Drive コピーはスキップ/失敗）")
+        drive_warn = outputs.get("drive_warn")
+        if drive_warn:
+            lines.append(f"・⚠️ {drive_warn}")
     else:
         lines.append("・PDF: 発行に失敗（Drive 未反映・logs/publish_debug_*.log 参照）")
 
@@ -1168,6 +1177,9 @@ def cmd_brief(args) -> int:
             if pub.get("drive_path"):
                 run_record["outputs"]["drive_path"] = pub["drive_path"]
                 print(f"[intel] Drive コピー: {pub['drive_path']}")
+            if pub.get("drive_warn"):
+                run_record["outputs"]["drive_warn"] = pub["drive_warn"]
+                print(f"[intel] [WARN] Drive: {pub['drive_warn']}")
             if not pub:
                 print("[intel] [WARN] PDF 発行はスキップされた（publish_report.py の WARN を参照）")
         except Exception as pub_exc:  # noqa: BLE001 — PDF はレポート本体を止めない

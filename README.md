@@ -388,6 +388,15 @@ PDF 発行がタイムアウトした場合（cron 実行では Drive への書�
 部分出力を `logs/publish_debug_*.log` に残し、生成済み PDF があれば
 `publish_report.py --drive-only` で Drive コピーだけを回復する。
 
+**Drive 反映の検証（2026-08-17 追加）**: Google Drive アプリが起動していないと、
+`~/Library/CloudStorage/GoogleDrive-*/` は同期しないただのローカルフォルダとして振る舞い、
+**コピーは成功するのにクラウドには出ない**（実際に 2026-08-17 に発生）。ディレクトリの存在確認だけでは
+検出できないため、コピー後に Drive が付与する拡張属性 `com.google.drivefs.item-id` を
+最大 30 秒（`PUBLISH_DRIVE_SYNC_TIMEOUT` で変更可）ポーリングして実際の反映を確認する。
+付かない場合は `Drive:` 行を出さず WARN を返し、Telegram サマリーにも
+「Drive コピーはスキップ/失敗」+ 理由が出る。復旧は Google Drive アプリを起動してから
+`publish_report.py <md> --drive-only`。
+
 機械用 JSON スキーマ:
 
 ```json
