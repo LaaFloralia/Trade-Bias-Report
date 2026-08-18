@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import html as html_mod
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from scripts.human_report import (  # noqa: E402
     ReportData,
+    _boxify,
+    _decorate_tables,
+    _normalize_md,
+    _render_detail,
     build_html,
     parse_report,
     svg_price_ladder,
@@ -184,3 +190,115 @@ def test_build_html_end_to_end():
 def test_build_html_never_crashes_on_minimal_input():
     html = build_html("# 何もない Report\n\n本文のみ。", style_css="")
     assert "詳細（全文）" in html
+
+
+# ---------------------------------------------------------------------------
+# 詳細（全文）レンダリング — 「情報を落とさない」ことの機械検証
+# ---------------------------------------------------------------------------
+
+# 区切り記号は「構造」であってレポートの内容ではない。表のパイプや
+# ラベルのコロンはレイアウト側（列・タグ）が担うため、両辺から落として比較する。
+_SEPARATORS = re.compile(r"[|:：\s]+")
+
+
+def _md_content_lines(md: str) -> list[str]:
+    """MD から構文記号を落とし、内容だけの行に正規化する。"""
+    lines: list[str] = []
+    for raw in md.splitlines():
+        ln = raw.strip()
+        if not ln or re.fullmatch(r"[-*_|:\s]+", ln):  # 空行 / 罫線 / 表の区切り行
+            continue
+        ln = re.sub(r"^#{1,6}\s*", "", ln)
+        ln = re.sub(r"^(?:[-*+]|\d+\.)\s+", "", ln)
+        ln = ln.replace("*", "").replace("`", "")
+        ln = _SEPARATORS.sub("", ln)
+        if len(ln) >= 4:
+            lines.append(ln)
+    return lines
+
+
+def _html_text(html: str) -> str:
+    """本文テキストだけを取り出す。装飾記号（<span class="mark">▲</span>）は除く。"""
+    body = re.sub(r'<span class="mark">.*?</span>', " ", html, flags=re.DOTALL)
+    return _SEPARATORS.sub("", html_mod.unescape(re.sub(r"<[^>]+>", " ", body)))
+
+
+def _assert_no_information_lost(md: str, detail_html: str) -> None:
+    text = _html_text(detail_html)
+    missing = [ln for ln in _md_content_lines(md) if ln not in text]
+    assert not missing, f"詳細から欠落した内容: {missing[:3]}"
+
+
+def test_detail_preserves_every_source_line():
+    """視覚化のための変換で本文が 1 行も失われないこと（最重要の契約）。"""
+    _assert_no_information_lost(DAILY_MD, _render_detail(DAILY_MD))
+    _assert_no_information_lost(WEEKLY_CORRECTION_MD, _render_detail(WEEKLY_CORRECTION_MD))
+
+
+def test_detail_preserves_fixture_report():
+    fixture = PROJECT_ROOT / "tests" / "fixtures" / "sample_report.md"
+    if not fixture.exists():
+        return
+    md = fixture.read_text(encoding="utf-8")
+    _assert_no_information_lost(md, _render_detail(md))
+
+
+def test_normalize_md_rescues_list_after_bold_label():
+    """空行なしで `**ラベル:**` の直後に続く箇条書きがハイフンのまま出ないこと。"""
+    md = "**条件付きシナリオ:**\n- 4,370 まで押した場合\n- 4,304 を割った場合\n"
+    assert "\n\n- 4,370" in _normalize_md(md)
+    html = _render_detail(f"# t\n\n## セクション1: x\n\n{md}")
+    assert "<li>" in html and "- 4,370" not in _html_text(html)
+
+
+def test_labeled_paragraph_becomes_box():
+    html = _boxify("<p><strong>損益構造:</strong> Short 54.0% が含み損。</p>")
+    assert 'class="labeled"' in html
+    # ラベルは区切り記号ごと原文のまま、本文も原文のまま
+    assert "損益構造:" in html and "Short 54.0% が含み損。" in html
+
+
+def test_all_bold_paragraph_becomes_statement():
+    html = _boxify("<p><strong>本日は高確度のセットアップなし。</strong></p>")
+    assert 'class="statement"' in html
+    assert "本日は高確度のセットアップなし。" in html
+
+
+def test_plain_bold_lead_without_colon_is_untouched():
+    src = "<p><strong>強調</strong> のあとに続く文章。</p>"
+    assert _boxify(src) == src
+
+
+def test_table_cells_get_badges_and_alignment():
+    html = _decorate_tables(
+        "<table>\n<thead>\n<tr>\n<th>項目</th>\n<th>判定</th>\n<th>点</th>\n</tr>\n</thead>\n"
+        "<tbody>\n<tr>\n<td>DXY</td>\n<td>Bearish</td>\n<td>-1</td>\n</tr>\n</tbody>\n</table>"
+    )
+    assert 'class="cell-badge"' in html and "▼" in html and "Bearish" in html
+    assert 'class="score-chip"' in html and "-1" in html
+    assert "DXY" in html
+
+
+def test_correlation_cell_gets_mini_bar():
+    html = _decorate_tables(
+        "<table>\n<thead>\n<tr>\n<th>ペア</th>\n<th>20日 r</th>\n</tr>\n</thead>\n"
+        "<tbody>\n<tr>\n<td>XAU vs DXY</td>\n<td>-0.23</td>\n</tr>\n</tbody>\n</table>"
+    )
+    assert "mini-bar" in html and "-0.23" in html
+
+
+def test_wide_table_gets_smaller_class():
+    header = "".join(f"<th>c{i}</th>" for i in range(8))
+    row = "".join(f"<td>v{i}</td>" for i in range(8))
+    html = _decorate_tables(
+        f"<table>\n<thead>\n<tr>{header}</tr>\n</thead>\n<tbody>\n<tr>{row}</tr>\n</tbody>\n</table>"
+    )
+    assert 'class="wide-table"' in html
+
+
+def test_section_gets_kicker_and_index():
+    html = _render_detail(DAILY_MD)
+    # 「セクション3: ポジショニング」→ キッカー + タイトルに分割しても語は残る
+    assert 'class="sec-kicker"' in html
+    assert "セクション3" in html and "ポジショニング" in html
+    assert 'class="sec-index"' in html

@@ -1236,7 +1236,7 @@ def build_dashboard(data: ReportData) -> str:
         build_review_panel(data),
     ]
     panels2 = [p for p in panels2 if p]
-    page2 = f'<div class="dash-page2">{"".join(panels2)}</div>' if panels2 else ""
+    page2 = f'<div class="dash-panels">{"".join(panels2)}</div>' if panels2 else ""
     return page1 + page2
 
 
@@ -1252,12 +1252,247 @@ def _md_to_html(md_text: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# 詳細（全文）レンダリング
+#
+# 方針: 本文の文字は 1 つも落とさず、視覚構造だけを与える。
+# ここでの変換はすべて「同じテキストを要素で包む / 属性を足す」に限定し、
+# 要約・省略・並べ替えは行わない（tests/test_human_report.py が全行の残存を検証）。
+# ---------------------------------------------------------------------------
+
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+\.\s+)")
+
+
+def _normalize_md(md_text: str) -> str:
+    """箇条書きが直前の段落に吸収されるのを防ぐ（sane_lists 対策）。
+
+    レポート MD は `**ラベル:**` の直後に空行なしで `- ...` を並べる書き方が多い。
+    sane_lists は段落の途中から始まるリストを認識しないため、そのままだと
+    ハイフンが本文にそのまま出てしまう（実際に 2026-08-17 の PDF で発生）。
+    リスト行の前に空行を 1 行入れるだけの整形で、文字は増減しない。
+    """
+    out: list[str] = []
+    in_fence = False
+    prev = ""
+    for ln in md_text.splitlines():
+        if ln.strip().startswith("```"):
+            in_fence = not in_fence
+        if (
+            not in_fence
+            and _LIST_ITEM_RE.match(ln)
+            and prev.strip()
+            and not _LIST_ITEM_RE.match(prev)
+        ):
+            out.append("")
+        out.append(ln)
+        prev = ln
+    return "\n".join(out)
+
+
+def _split_kicker(title: str) -> Tuple[str, str]:
+    """「セクション3: ポジショニング」→ ("セクション3", "ポジショニング")。
+
+    見出し語を捨てずにキッカー（上に置く小見出し）へ回すための分割。
+    パターンに合わなければキッカーなしで全文をタイトルとして返す。
+    """
+    m = re.match(r"^(セクション\s*\d+)\s*[:：]\s*(.+)$", title)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", title
+
+
+# セル 1 個が判定語そのものである場合に付けるバッジ。
+# 方向語（英語）は記号を併記し、日本語の判定語は語そのものが冗長チャネルになる。
+CELL_BADGES: list[tuple[re.Pattern, str, str, str]] = [
+    (re.compile(r"^(Bullish|Long|強気|買い)(?:（[^）]*）)?$"), C_BULL, C_BULL_BG, "▲"),
+    (re.compile(r"^(Bearish|Short|弱気|売り)(?:（[^）]*）)?$"), C_BEAR, C_BEAR_BG, "▼"),
+    (re.compile(r"^(Neutral|中立|レンジ)$"), C_INK2, C_NEUTRAL_BG, "◆"),
+    (re.compile(r"^(当たり|一致|整合|YES|OK|良好)$"), C_BULL, C_BULL_BG, ""),
+    (re.compile(r"^(外れ|不一致|逆行|NO|NG)$"), C_BEAR, C_BEAR_BG, ""),
+    (re.compile(r"^(未決着|部分的中|一部的中|混在|無相関化|修正済み?|要注意|STALE|混雑)$"),
+     C_WARN, C_WARN_BG, ""),
+]
+
+_NUMERIC_CELL_RE = re.compile(r"^[+\-−]?[\d,]+(?:\.\d+)?\s*(?:%|pp|t|倍)?$")
+_SCORE_CELL_RE = re.compile(r"^[+\-−]?\d+$")
+
+
+def svg_mini_corr(v: float, width: int = 46, height: int = 10) -> str:
+    """相関係数 −1〜+1 を示すインラインのミニバー（数値の隣に添える）。"""
+    left, right = 2.0, width - 2.0
+    mid = (left + right) / 2
+    x = left + (max(-1.0, min(1.0, v)) + 1) / 2 * (right - left)
+    cy = height / 2
+    return (
+        f'<svg class="mini-bar" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="相関係数 {v}">'
+        f'<line x1="{left}" y1="{cy}" x2="{right}" y2="{cy}" stroke="{C_LINE}" '
+        f'stroke-width="2" stroke-linecap="round"/>'
+        f'<line x1="{mid:.1f}" y1="1.5" x2="{mid:.1f}" y2="{height - 1.5:.1f}" '
+        f'stroke="{C_MUTED}" stroke-width="0.8"/>'
+        f'<circle cx="{x:.1f}" cy="{cy}" r="2.6" fill="{C_INK2}"/></svg>'
+    )
+
+
+def _decorate_cell(inner: str, header: str) -> Tuple[str, str]:
+    """テーブルセルに (td の追加属性, 表示 HTML) を与える。テキストは保つ。"""
+    if "<" in inner:  # 装飾済み / 太字などを含むセルは触らない
+        return "", inner
+    text = html_mod.unescape(inner).strip()
+    if not text:
+        return "", inner
+
+    # スコア列（ヘッダに「点」）は符号付きチップ
+    if "点" in header and _SCORE_CELL_RE.match(text):
+        val = _num(text)
+        if val is not None:
+            if val > 0:
+                bg = C_BULL
+            elif val < 0:
+                bg = C_BEAR
+            else:
+                bg = None
+            chip = (f'<span class="score-chip" style="background:{bg}">{inner}</span>'
+                    if bg else f'<span class="score-chip score-chip-zero">{inner}</span>')
+            return ' class="cell-center"', chip
+
+    # 判定語バッジ。方向記号は本文テキストと混ざらないよう独立要素に出す
+    # （情報欠落テストが本文だけを厳密に突き合わせられるようにするため）。
+    # バッジは短いトークンに限る。説明文まで枠で囲うと視覚的な重みが釣り合わない。
+    for pat, color, bg, symbol in (CELL_BADGES if len(text) <= 20 else ()):
+        if pat.match(text):
+            mark = f'<span class="mark">{symbol}</span>' if symbol else ""
+            return "", (f'<span class="cell-badge" style="color:{color};background:{bg};'
+                        f'border-color:{color}">{mark}{inner}</span>')
+
+    # 相関係数列はミニバーを添える
+    if re.search(r"\br\b|相関", header, re.IGNORECASE) and re.search(r"20|60", header):
+        val = _num(text)
+        if val is not None and -1.0 <= val <= 1.0:
+            return ' class="cell-num"', f"{inner}{svg_mini_corr(val)}"
+
+    # 数値セルは右揃え + 桁揃え
+    if _NUMERIC_CELL_RE.match(text):
+        return ' class="cell-num"', inner
+    return "", inner
+
+
+def _decorate_one_table(tbl: str) -> str:
+    head = re.search(r"<thead>(.*?)</thead>", tbl, re.DOTALL)
+    headers: list[str] = []
+    if head:
+        headers = [
+            html_mod.unescape(re.sub(r"<[^>]+>", "", c)).strip()
+            for c in re.findall(r"<th[^>]*>(.*?)</th>", head.group(1), re.DOTALL)
+        ]
+
+    body = re.search(r"<tbody>(.*?)</tbody>", tbl, re.DOTALL)
+    if body:
+        def fix_row(row_m: re.Match) -> str:
+            col = {"i": 0}
+
+            def fix_cell(cell_m: re.Match) -> str:
+                i = col["i"]
+                col["i"] += 1
+                header = headers[i] if i < len(headers) else ""
+                attrs, inner = _decorate_cell(cell_m.group(1), header)
+                return f"<td{attrs}>{inner}</td>"
+
+            return re.sub(r"<td[^>]*>(.*?)</td>", fix_cell, row_m.group(0), flags=re.DOTALL)
+
+        new_body = re.sub(r"<tr>.*?</tr>", fix_row, body.group(1), flags=re.DOTALL)
+        tbl = tbl.replace(body.group(1), new_body)
+
+    # 列が多い表は本文サイズのままだと折り返しが崩れるので一段小さくする
+    cls = "wide-table" if len(headers) >= 7 else "std-table"
+    return tbl.replace("<table>", f'<table class="{cls}">', 1)
+
+
+def _decorate_tables(html: str) -> str:
+    return re.sub(r"<table>.*?</table>",
+                  lambda m: _decorate_one_table(m.group(0)), html, flags=re.DOTALL)
+
+
+_LABELED_RE = re.compile(
+    r"<p>\s*<strong>([^<>]{1,40})</strong>(\s*[:：])?\s*(.*?)\s*</p>", re.DOTALL)
+
+
+def _boxify(html: str) -> str:
+    """`**ラベル:** 本文` をラベル付きボックスに、全体が太字の段落を強調文にする。
+
+    どちらもテキストはそのまま。ラベルが本文の頭に埋もれて壁のように見えるのを、
+    タグ + 本文の 2 カラムに分解して走査可能にするのが目的。
+    """
+    def repl(m: re.Match) -> str:
+        label_raw, colon, body = m.group(1), m.group(2), m.group(3)
+        has_colon = bool(colon) or label_raw.rstrip().endswith((":", "："))
+        if not body:
+            return f'<p class="statement">{label_raw}</p>'
+        if not has_colon:
+            return m.group(0)
+        # ラベルは区切り記号ごと原文のまま出す（1 文字も落とさない）
+        label = f"{label_raw.rstrip()}{(colon or '').strip()}"
+        return (f'<div class="labeled"><div class="labeled-tag">{label}</div>'
+                f'<div class="labeled-body">{body}</div></div>')
+
+    return _LABELED_RE.sub(repl, html)
+
+
+def _render_chunk(md_chunk: str) -> str:
+    if not md_chunk.strip():
+        return ""
+    return _decorate_tables(_boxify(_md_to_html(md_chunk)))
+
+
+def _build_section_index(items: list[str]) -> str:
+    if len(items) < 3:
+        return ""
+    rows = "".join(f"<li>{esc(t)}</li>" for t in items)
+    return (f'<nav class="sec-index"><div class="sec-index-title">この文書の構成</div>'
+            f'<ol>{rows}</ol></nav>')
+
+
+def _render_detail(md_text: str) -> str:
+    """全文を節単位で組む。節ごとにキッカー付き見出しと枠を与える。"""
+    sections = split_sections(_normalize_md(md_text))
+    parts: list[str] = []
+    index: list[str] = []
+    open_section = False
+
+    for s in sections:
+        if s.level <= 1:
+            if s.title:
+                parts.append(f'<h1 class="detail-doc-title">{esc(s.title)}</h1>')
+            parts.append(_render_chunk(s.body))
+            continue
+        if s.level == 2:
+            if open_section:
+                parts.append("</section>")
+            index.append(s.title)
+            kicker, label = _split_kicker(s.title)
+            kicker_html = (f'<span class="sec-kicker">{esc(kicker)}</span>'
+                           if kicker else "")
+            parts.append(
+                f'<section class="doc-section"><div class="sec-head">{kicker_html}'
+                f'<h2 class="sec-title">{esc(label)}</h2></div>')
+            open_section = True
+            parts.append(_render_chunk(s.body))
+            continue
+        level = min(s.level, 4)
+        parts.append(f'<h{level} class="sub-head">{esc(s.title)}</h{level}>')
+        parts.append(_render_chunk(s.body))
+
+    if open_section:
+        parts.append("</section>")
+    return _build_section_index(index) + "".join(parts)
+
+
 def build_html(md_text: str, generated: Optional[str] = None,
                style_css: Optional[str] = None) -> str:
     """レポート MD から完全な HTML ドキュメントを生成する。"""
     data = parse_report(md_text)
     dashboard = build_dashboard(data)
-    detail_body = _md_to_html(md_text)
+    detail_body = _render_detail(md_text)
     if style_css is None:
         css_path = Path(__file__).resolve().parent.parent / "templates" / "style_human.css"
         style_css = css_path.read_text(encoding="utf-8")
