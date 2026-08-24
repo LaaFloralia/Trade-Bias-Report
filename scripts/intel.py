@@ -561,8 +561,11 @@ def generate_report_md(mode: str, scraped_text: str,
     prompt = build_report_prompt(
         mode, master_prompt_text, scraped_text, data_as_of, run_date, extra_block=extra_block
     )
-    print(f"[intel] Step 2: claude -p で {cfg['report_kind']}"
-          f"{f' ({symbol})' if symbol else ''} を生成中...")
+    engine = os.environ.get("INTEL_ENGINE", "claude").strip().lower()
+    print(
+        f"[intel] Step 2: {engine} で {cfg['report_kind']}"
+        f"{f' ({symbol})' if symbol else ''} を生成中..."
+    )
     md = runner(prompt)
     return md, prompt
 
@@ -1138,6 +1141,19 @@ def cmd_brief(args) -> int:
         "mode": mode,
         "symbol": symbol,
         "started_at": generated_at,
+        "llm": {
+            "engine": os.environ.get("INTEL_ENGINE", "claude").strip().lower(),
+            "model": (
+                CLAUDE_MODEL
+                if os.environ.get("INTEL_ENGINE", "claude").strip().lower() == "claude"
+                else "codex-session-default"
+            ),
+            "effort": (
+                CLAUDE_EFFORT
+                if os.environ.get("INTEL_ENGINE", "claude").strip().lower() == "claude"
+                else "codex-session-default"
+            ),
+        },
         "claude_calls": [],
         "outputs": {},
         "ok": False,

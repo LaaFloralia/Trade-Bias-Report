@@ -159,8 +159,11 @@ def test_collect_data_quick_fails_clearly_when_no_data(tmp_path, monkeypatch):
 
 def test_run_llm_defaults_to_claude(monkeypatch):
     monkeypatch.delenv("INTEL_ENGINE", raising=False)
-    monkeypatch.setattr(intel, "run_claude",
-                        lambda prompt, timeout=None, allow_tools=False: f"claude:{prompt}")
+    monkeypatch.setattr(
+        intel,
+        "run_claude",
+        lambda prompt, timeout=None, allow_tools=False: f"claude:{prompt}",
+    )
     assert intel.run_llm("hi") == "claude:hi"
 
 
@@ -172,19 +175,22 @@ def test_run_llm_dispatches_to_codex(monkeypatch):
 
 def test_run_llm_unknown_engine_falls_back_to_claude(monkeypatch):
     monkeypatch.setenv("INTEL_ENGINE", "gpt9")
-    monkeypatch.setattr(intel, "run_claude",
-                        lambda prompt, timeout=None, allow_tools=False: "claude-out")
+    monkeypatch.setattr(
+        intel,
+        "run_claude",
+        lambda prompt, timeout=None, allow_tools=False: "claude-out",
+    )
     assert intel.run_llm("hi") == "claude-out"
 
 
-def test_run_codex_missing_binary_advises_claude_switch(monkeypatch):
+def test_run_codex_missing_binary_reports_compatibility_option(monkeypatch):
     monkeypatch.setenv("INTEL_CODEX_BIN", "/no/such/codex-binary")
     try:
         intel.run_codex("hi", timeout=5)
     except RuntimeError as exc:
         msg = str(exc)
         assert "codex CLI が見つかりません" in msg
-        assert "INTEL_ENGINE=claude" in msg  # claude への切替案内
+        assert "INTEL_ENGINE=claude" in msg
     else:
         raise AssertionError("codex CLI が無いのに RuntimeError にならない")
 

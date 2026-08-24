@@ -1,11 +1,13 @@
 # ICT Daily / Weekly Bias Report — 自動生成パイプライン
 
+> **現行運用（2026-08-23）**: 全体ハーネスは Codex 中心だが、チャート外分析の Daily / Weekly / Quick は品質と使用枠を考慮し、Claude Code CLI のサブスク枠で Opus 5 / effort high を使う。`INTEL_ENGINE=codex` は比較検証用に残す。
+
 > **2026-05-09 リネーム**: フォルダ名を `ict-daily-bias` → `fundamental-macro-analysis` に変更。
 > 社長は本プロジェクトを「**チャート外分析**」と呼ぶ（リテールセンチメント / 経済指標 / FedWatch / ETFフロー / COT 等、チャート上の値動き以外の情報を体系化するため）。
 > Output report 名（"ICT Daily Bias Report" / "ICT Weekly Bias Report"）、GitHub repo 名（`Trade-Bias-Report`）、Sovereign Stack skill / Routine 識別子（`ict-daily-bias` / `ict-weekly-bias`）は **変更なし**（識別子として継続使用）。
 
 Playwright（ヘッドレスブラウザ）でリテールセンチメントデータと経済指標を取得し、
-Claude API にマスタープロンプトとデータを渡してレポートを生成する。
+Claude Code CLI にマスタープロンプトとデータを渡してレポートを生成する。
 出力は Markdown として Obsidian Vault（Brain）に保存される。
 
 > **次世代化メモ**: 2026-05-05 リリースの Anthropic 公式 financial-services プラグイン（Financial Modeling Prep MCP 含む）で、Twelve Data + DXY/US10Y/economic_calendar スクレイピングを大幅に置き換え可能な見込み。詳細は `MODERNIZATION_RESEARCH.md` を参照。
@@ -19,8 +21,8 @@ Claude API にマスタープロンプトとデータを渡してレポートを
 
 ## 1. 前提条件
 
-- Python 3.9+
-- Claude Code CLI（サブスクログイン済み。LLM 分析はスラッシュコマンドまたは `claude -p` 経由、Anthropic API キーは不要）
+- Python 3.12+
+- Claude Code CLI（サブスクログイン済み。LLM 分析は `claude -p` 経由、Anthropic API キーは不要）
 - Node.js 18+（Playwright 用）
 - Twelve Data API キー（価格取得用）
 - **FRED API キー**（Treasury yields + Broad USD Index、無料、https://fred.stlouisfed.org/）— 1Password の `op://Agents/Fred/credential` に保管し、`./scripts/run-with-secrets.sh` 経由で注入する
@@ -301,7 +303,7 @@ Swap Dealer / Producer。Legacy の "Large Spec" では判別できない投機�
 (2) Fable 5 は Max の週次プールを共有して消費が速く、毎営業日の自動生成には過剰
 （本レポートは 2,400〜3,800 字の構造化文書で、Fable の長文一貫性の優位が効かない領域）。
 両変数に空文字を渡せばセッション既定の継承に戻る。手動の `/daily-bias` はセッションのモデルをそのまま使う。
-`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的。CLI 呼び出し規約は検証済み、生成品質は未検証）。
+`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（比較検証用）。
 
 ---
 
@@ -360,7 +362,7 @@ uv run python scripts/intel.py brief --daily --symbol USDJPY  # 個別銘柄ス�
 
 前提: `claude` CLI がログイン済み（サブスク認証）であること。API キーは不要。
 生成モデルは既定で **Opus 5 / effort high** に固定（`INTEL_CLAUDE_MODEL` / `INTEL_CLAUDE_EFFORT` で変更、
-空文字でセッション既定の継承に戻る）。`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（実験的）。
+空文字でセッション既定の継承に戻る）。`INTEL_ENGINE=codex` で Codex CLI（`codex exec`）に切替可能（比較検証用）。
 
 ### 8-2. 出力（四重）
 
