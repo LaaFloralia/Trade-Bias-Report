@@ -121,7 +121,7 @@ def observations(data, now=None):
             if min(long, short) < 0 or abs(long + short - 100) > .01:
                 raise BundleError('Retail percentages do not add to 100')
             add('retail', 'split', '参加口座の建玉比率', '%',
-                '取得された比率を小数第2位で表示しています。市場全体の比率や件数の比率ではありません。',
+                '取得された比率を小数第2位で表示しています。母集団・分母は提供元の定義に依存し、市場全体の比率を示すものではありません。',
                 (provider, provider_url), rt, [
                     ('Long', long, 'retail_sentiment.XAUUSD.long_pct', 2, '%', ''),
                     ('Short', short, 'retail_sentiment.XAUUSD.short_pct', 2, '%', '')])
@@ -137,6 +137,14 @@ def observations(data, now=None):
                 ('SPDR Gold Shares', 'https://www.spdrgoldshares.com/usa/historical-data/'), etf['as_of_date'], [
                     ('直近5営業日', etf.get('change_5d_t'), 'gold_etf.change_5d_t', 2, ' t', '期間は直近5営業日'),
                     ('直近20営業日', etf.get('change_20d_t'), 'gold_etf.change_20d_t', 2, ' t', '期間は直近20営業日')])
+            streak = etf.get('streak_days')
+            direction = etf.get('streak_direction')
+            if isinstance(streak, int) and streak > 0 and direction in {'inflow', 'outflow'}:
+                word = '保有増' if direction == 'inflow' else '保有減'
+                note = f'GLDは直近{streak}営業日連続の{word}。観測: {etf["as_of_date"]}。中期の変化と直近の動きを分けて確認します。'
+                rows.append(note)
+                figures[-1]['caption'] += note
+                limitations.append(note)
         except BundleError:
             missing.append('etf: 保有量変化は欠測')
     cot = data.get('cot_disaggregated')
@@ -169,10 +177,10 @@ def observations(data, now=None):
         items = []
         for t, event in sorted(upcoming, key=lambda pair: pair[0])[:6]:
             label = (str(event.get('country', '')) + ' / ' + str(event.get('indicator', ''))).replace('|', ' ')[:180]
-            text = f'{t.date().isoformat()} {t.strftime("%H:%M")} JST {label}。カレンダー掲載予定。発表元との日時照合は未確認。'
+            text = f'{t.date().isoformat()} {t.strftime("%H:%M")} JST {label}。提供カレンダーの掲載予定。発表元との日時照合の状況は本文を参照。'
             rows.append(text)
             items.append({'date': t.date().isoformat(), 'time': t.strftime('%H:%M') + ' JST',
-                          'label': label, 'source_quote': text, 'detail': '日時の最終確認が必要'})
+                          'label': label, 'source_quote': text, 'detail': '発表直前に日程を再確認'})
         if items:
             figures.append({'id': 'calendar', 'type': 'timeline', 'title': '今後の掲載予定',
                             'subtitle': 'JST / 今後7日間の取得範囲', 'caption': '最大6件の掲載予定です。網羅性は未確認。予想欄は列の意味が未照合のため図に採用しません。',
@@ -260,6 +268,8 @@ def prepare(md_path, data_path, mode, now=None):
     source = source.split(marker)[0].rstrip() + result['appendix']
     md_path.write_text(source, encoding='utf-8')
     summary = make_summary(source, mode, result['asOf'])
+    summary['limitations'] = [{'title': '今回の制約と直近の変化', 'text': note, 'source_quote': note}
+                              for note in result['limitations']]
     summary_path, figures_path, manifest_path = [md_path.with_suffix(s) for s in ('.summary.json', '.figures.json', '.bundle.json')]
     check_bindings(data, result, result['figures'])
     for path, value in ((summary_path, summary), (figures_path, result['figures'])):
@@ -275,3 +285,21 @@ def prepare(md_path, data_path, mode, now=None):
                 'numericCheck': 'passed', 'semanticReview': 'pending', 'publicationReady': False}
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
     return {'summary_path': str(summary_path), 'visuals_path': str(figures_path), 'bundle_path': str(manifest_path)}
+
+
+def calendar_events_24h(data, as_of):
+    """Keep every supplied US/Euro Zone event inside the exact next-24h window."""
+    start = timestamp(as_of)
+    events = []
+    for event in (data.get('economic_calendar') or {}).get('events') or []:
+        if event.get('country') not in {'United States', 'Euro Zone'}:
+            continue
+        try:
+            day = datetime.strptime(event['date'], '%A, %B %d, %Y').date()
+            when = datetime.fromisoformat(f'{day.isoformat()}T{event["time_jst"]}').replace(tzinfo=JST)
+        except (KeyError, ValueError, TypeError):
+            continue
+        if start <= when <= start + timedelta(hours=24):
+            label = f'{when.date().isoformat()} {when.strftime("%H:%M")} JST {event["country"]} / {event["indicator"]}（提供カレンダー、確認状況は本文参照）'
+            events.append((when, label))
+    return list(dict.fromkeys(label for _, label in sorted(events)))

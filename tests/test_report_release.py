@@ -203,3 +203,22 @@ def test_in_progress_edition_stays_fresh_across_midnight_without_relabeling():
     data=sample_data();data['timestamp']='2026-09-09T23:45:00+09:00'
     stamp=bundle.require_fresh(data,datetime.fromisoformat('2026-09-10T00:05:00+09:00'))
     assert stamp.date().isoformat()=='2026-09-09'
+
+
+def test_next_24h_calendar_coverage_keeps_ecb_and_jobless_claims():
+    data=sample_data();start='2026-09-09T23:39:00+09:00'
+    data['economic_calendar']['events'] += [
+        {'date':'Thursday, September 10, 2026','time_jst':'21:15','country':'Euro Zone','indicator':'ECB Interest Rate Decision'},
+        {'date':'Thursday, September 10, 2026','time_jst':'21:30','country':'United States','indicator':'Initial Jobless Claims'},
+        {'date':'Friday, September 11, 2026','time_jst':'21:30','country':'United States','indicator':'CPI'}]
+    result=bundle.calendar_events_24h(data,start)
+    assert len(result)==3 and any('ECB' in e for e in result) and any('Initial Jobless' in e for e in result)
+    assert not any('CPI' in e for e in result)
+
+
+def test_etf_countertrend_is_retained_in_figure_and_summary_source():
+    data=sample_data();data['gold_etf'].update(streak_days=3,streak_direction='outflow')
+    result=bundle.observations(data,NOW)
+    figure=next(f for f in result['figures'] if f['id']=='etf')
+    assert '3営業日連続の保有減' in figure['caption']
+    assert any('3営業日連続の保有減' in note for note in result['limitations'])

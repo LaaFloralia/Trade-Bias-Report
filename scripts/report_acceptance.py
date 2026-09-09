@@ -122,6 +122,26 @@ def browser_check(html_path, bundle_path, *, now=None):
                     path = out / f'{label}-figure-{i+1}.png'
                     figure.screenshot(path=str(path))
                     record['images'].append({'path': str(path), 'sha256': digest(path), 'viewport': label})
+                # Readable source tiles keep the full tables legible to an image reviewer.
+                rect = page.locator('.full-report').bounding_box()
+                top_y, bottom_y = rect['y'], rect['y'] + rect['height']
+                tile_index = 0
+                while top_y < bottom_y:
+                    tile_index += 1
+                    tile = out / f'{label}-source-{tile_index:02}.png'
+                    page.screenshot(path=str(tile), full_page=True,
+                                    clip={'x': rect['x'], 'y': top_y, 'width': rect['width'],
+                                          'height': min(950, bottom_y-top_y)})
+                    record['images'].append({'path': str(tile), 'sha256': digest(tile), 'viewport': label})
+                    top_y += 850
+                if label == 'mobile':
+                    for index, table in enumerate(page.locator('.table-wrap').all()):
+                        if table.evaluate('(e)=>e.scrollWidth > e.clientWidth + 1'):
+                            table.evaluate('(e)=>e.scrollLeft=e.scrollWidth')
+                            tile = out / f'mobile-table-right-{index+1}.png'
+                            table.screenshot(path=str(tile))
+                            record['images'].append({'path': str(tile), 'sha256': digest(tile), 'viewport': label})
+                            table.evaluate('(e)=>e.scrollLeft=0')
                 # Full text evidence is separate from the compact first screen.
                 path = out / f'{label}-full.png'
                 page.evaluate('document.documentElement.style.scrollBehavior = \"auto\"; window.scrollTo({top:0,left:0,behavior:\"instant\"})')
