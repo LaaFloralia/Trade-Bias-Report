@@ -1,140 +1,84 @@
-"""Bias Report の HTML を Supabase Storage へ上げ、固定 URL を返す。
+"""Publish a reviewed report transactionally; CLI defaults to dry-run.
 
-なぜ固定 URL か:
-  Telegram に毎回違う URL が流れると過去号が散らかり、HP から「常に最新」を
-  指す先も作れない。Daily / Weekly でそれぞれ 1 本の URL に上書きし続ける。
-  過去号は Brain の MD が正本なので、必要になったら screen_report.py で
-  その場で変換すればよく、URL を増やす必要がない。
-
-URL の形:
-  読者に渡す URL   https://www.laa-inc.com/reports/{daily|weekly}
-  実体の置き場所   <project>.supabase.co/.../bias-reports/{daily|weekly}/latest.html
-
-  Supabase は公開バケットの HTML を必ず `text/plain` で返す（同社ドメイン上で
-  任意の HTML を実行させないための仕様）ため、Storage の URL を直接開くと
-  ソースが素で表示される。HP の `/reports/[kind]` route handler が取り直して
-  `text/html` + CSP で配信するので、外に出す URL は必ずそちらを使う。
-  レポートは生成された時点で誰でも読める前提。
-
-必要な環境変数（`.env.tpl` 経由で `op run` が注入する）:
-  SUPABASE_URL                 プロジェクトの API URL
-  SUPABASE_SERVICE_ROLE_KEY    アップロード用（RLS を迂回するため service_role）
-
-設計方針:
-  publish_report.py と同じく、失敗してもレポート生成本体を止めない。
-  上げられなければ WARN を出して None を返すだけ。
-
-使い方:
-    ./scripts/run-with-secrets.sh uv run python scripts/upload_report.py \\
-        output/Weekly_Bias_Report_2026-08-22.html --mode weekly
+The legacy upload() wrapper still returns None on failure so analysis can finish,
+but the CLI exits nonzero. No unaudited HTML can replace the published edition.
 """
-
 from __future__ import annotations
 
 import argparse
 import os
-import sys
-import urllib.error
-import urllib.request
 from pathlib import Path
-from typing import Optional
+import sys
 
-BUCKET = "bias-reports"
-# 読者向けの入口。実体は Supabase だが、直リンクするとソース表示になるため
-# HP の route handler を必ず経由させる（app/reports/[kind]/route.ts）。
-SITE_BASE = os.environ.get("BIAS_REPORT_SITE_BASE", "https://www.laa-inc.com/reports")
-UPLOAD_TIMEOUT = float(os.environ.get("UPLOAD_REPORT_TIMEOUT", "60"))
+if str(Path(__file__).resolve().parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from scripts.report_release import BUCKET, SITE_BASE, ReleaseError, mode_path, release, recover
 
 
-class MissingConfig(RuntimeError):
-    """必要な環境変数が揃っていない。"""
+def object_path(mode):
+    return mode_path(mode)
 
 
-def _env() -> tuple[str, str]:
-    base = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
-    key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
-    missing = [
-        name for name, value in (
-            ("SUPABASE_URL", base),
-            ("SUPABASE_SERVICE_ROLE_KEY", key),
-        ) if not value
-    ]
-    if missing:
-        raise MissingConfig("未設定の環境変数: " + ", ".join(missing))
-    return base, key
-
-
-def object_path(mode: str) -> str:
-    """`{mode}/latest.html`。mode は daily / weekly。日付は入れない。"""
-    return f"{mode}/latest.html"
-
-
-def storage_url(base: str, path: str) -> str:
-    """Supabase 上の実体 URL（デバッグ用。読者には渡さない）。"""
+def storage_url(base, path):
     return f"{base}/storage/v1/object/public/{BUCKET}/{path}"
 
 
-def reader_url(mode: str) -> str:
-    """読者に渡す固定 URL。"""
-    return f"{SITE_BASE.rstrip('/')}/{mode}"
+def reader_url(mode):
+    mode_path(mode)
+    return f"{SITE_BASE}/{mode}"
 
 
-def upload(html_path: Path, mode: str) -> Optional[str]:
-    """HTML を上げて公開 URL を返す。失敗時は WARN を出して None。"""
-    if not html_path.exists():
-        print(f"[upload] WARN: HTML が無いためスキップ: {html_path}")
-        return None
-
+def upload(html_path, mode, *, publish=False, directory=None):
+    html_path = Path(html_path)
     try:
-        base, key = _env()
-    except MissingConfig as exc:
-        print(f"[upload] WARN: {exc}（アップロードをスキップ）")
-        return None
-
-    path = object_path(mode)
-    body = html_path.read_bytes()
-    req = urllib.request.Request(
-        f"{base}/storage/v1/object/{BUCKET}/{path}",
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {key}",
-            "apikey": key,
-            "Content-Type": "text/html",
-            # 同じパスへ上書きし続けるための必須ヘッダ。
-            "x-upsert": "true",
-            # 常に最新を出す。CDN に古い版が居座ると固定 URL の意味が消える。
-            "Cache-Control": "no-cache, max-age=0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=UPLOAD_TIMEOUT) as res:
-            if res.status not in (200, 201):
-                print(f"[upload] WARN: 予期しないステータス {res.status}")
-                return None
-    except urllib.error.HTTPError as exc:
-        # 本文にキーは含まれないが、念のため先頭 200 字だけに切る
-        detail = exc.read()[:200].decode("utf-8", "replace")
-        print(f"[upload] WARN: アップロード失敗 HTTP {exc.code}: {detail}")
-        return None
-    except Exception as exc:  # noqa: BLE001 — ソフト障害
-        print(f"[upload] WARN: アップロード失敗: {type(exc).__name__}: {exc}")
-        return None
-
-    url = reader_url(mode)
-    print(f"URL: {url}")
-    return url
+        import json
+        if json.loads(html_path.with_suffix('.bundle.json').read_text())['kind'] != mode:
+            raise ReleaseError('Report kind mismatch')
+        result = release(html_path, html_path.with_suffix('.bundle.json'),
+                         html_path.with_suffix('.acceptance.json'),
+                         directory or html_path.parent / 'publication', publish=publish)
+        if result['kind'] != mode:
+            raise ReleaseError('Report kind mismatch')
+        if result['publication'] == 'succeeded':
+            print(f"URL: {reader_url(mode)}")
+            return reader_url(mode)
+        print('[upload] Dry-run validated; publication not attempted')
+    except Exception as error:
+        # Do not expose arbitrary file contents, remote responses, or secrets.
+        print(f'[upload] WARN: {type(error).__name__}; publication not confirmed')
+    return None
 
 
-def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Bias Report HTML を Supabase Storage の固定 URL へ発行する")
-    ap.add_argument("html_path", type=Path)
-    ap.add_argument("--mode", choices=["daily", "weekly"], required=True)
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('html_path', type=Path)
+    ap.add_argument('--mode', choices=['daily', 'weekly'], required=True)
+    ap.add_argument('--publish', action='store_true', help='Write externally only after explicit publication approval')
+    ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--recover', action='store_true', help='Recover the previous edition from an interrupted publication journal')
+    ap.add_argument('--state-dir', type=Path)
     args = ap.parse_args(argv)
-    upload(args.html_path.expanduser(), args.mode)
-    return 0
+    if args.publish and args.dry_run:
+        ap.error('--publish and --dry-run are mutually exclusive')
+    path = args.html_path.expanduser().absolute()
+    try:
+        import json
+        if args.recover:
+            if not args.publish or not args.state_dir:
+                raise ReleaseError('Recovery requires --publish and --state-dir')
+            print(json.dumps(recover(args.state_dir), ensure_ascii=False))
+            return 0
+        bundle = json.loads(path.with_suffix('.bundle.json').read_text())
+        if bundle['kind'] != args.mode:
+            raise ReleaseError('Report kind mismatch')
+        result = release(path, path.with_suffix('.bundle.json'), path.with_suffix('.acceptance.json'),
+                         args.state_dir or path.parent / 'publication', publish=args.publish)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+    except Exception as error:
+        print(f'[upload] ERROR: {type(error).__name__}; publication not confirmed', file=sys.stderr)
+        return 1
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())
