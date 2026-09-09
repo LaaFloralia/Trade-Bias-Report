@@ -358,3 +358,26 @@ def test_weekly_plan_tables_keep_invalidation_and_counter_scenario():
     assert '|' not in result[0]['text']
     assert result[1]['text'].endswith('確認できなければ様子見を継続する。')
     assert all(c['source_quote'] in source for c in result)
+
+
+def test_weekly_cover_quotes_the_complete_xau_decision_line():
+    lead = 'XAUUSDはマクロ参考Bullish・確度低、執行保留。方向・価格水準は未設定。最大リスクはFOMC前後の再評価。'
+    source = ('# Weekly\n## セクション0: エグゼクティブサマリー\n\n'
+              '信頼度: Low ｜ スコア -2\n'
+              '臨時検証版。今週は未終了。\n'
+              'DXYはNeutral。\n'
+              '来週最重要はFOMC。\n' + lead + '\n'
+              '前回Weeklyの比較は照合不能。\n')
+    result = bundle.make_summary(source, 'weekly', NOW.isoformat())
+    assert result['conclusion']['text'] == lead
+    assert result['conclusion']['source_quote'] in source
+    assert '前回Weeklyの比較は照合不能' in result['conclusion']['source_quote']
+
+
+def test_plain_cover_labels_hide_markdown_link_syntax_and_preserve_source_url():
+    source = ('# Weekly\n## セクション0: エグゼクティブサマリー\n\n'
+              '来週のFOMC結果は9/17 03:00 JST。[Fed日程](https://www.federalreserve.gov/newsevents/2026-september.htm)で確認。\n')
+    result = bundle.make_summary(source, 'weekly', NOW.isoformat())['conclusion']
+    assert result['text'] == '来週のFOMC結果は9/17 03:00 JST。Fed日程で確認。'
+    assert 'https://www.federalreserve.gov/newsevents/2026-september.htm' in result['source_quote']
+    assert result['source_quote'] in source

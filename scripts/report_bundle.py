@@ -234,12 +234,15 @@ def make_summary(source, mode, as_of):
     conclusion_text = first
     lines = [line.strip() for line in first.splitlines() if line.strip()]
     if len(lines) > 3:
-        lead = next((line for line in lines if re.match(r'XAUUSD[:：]', line)), None)
+        lead = next((line for line in lines if re.match(r'XAUUSD\s*(?:[:：]|は)', line)), None)
         if lead:
             conclusion_text = lead
     candidates = [p.strip() for p in re.split(r'\n\s*\n', source.split('## 図表に使用した観測値')[0])
                   if p.strip() and not p.lstrip().startswith(('#', '|', '<')) and p.strip() != first and len(p) <= 700]
     def plain(text):
+        # Cards use plain text. Preserve readable citation labels here and the
+        # complete original links in source_quote / the full source section.
+        text = re.sub(r'\[([^\]\n]+)\]\(https?://[^\s)]+\)', r'\1', text)
         return text.replace('**', '').replace('`', '').replace('  \n', '\n')
     conditions = []
     for line in lines:
