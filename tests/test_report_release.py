@@ -259,3 +259,38 @@ D1・H1取得後に逆方向の構造を確認できた場合は再評価する�
     assert 'プランB' in conditions[3]['title']
     assert conditions[3]['text'].endswith('確認できなければ様子見を継続する。')
     assert all(c['source_quote'] in source for c in conditions)
+
+
+def test_weekly_plan_tables_keep_invalidation_and_counter_scenario():
+    source = '''# Weekly
+## セクション0: エグゼクティブサマリー
+
+来週の方向は未設定。条件の取得後に再評価する。
+
+## セクション8: 来週の注目シナリオ
+### 8-1. プラン1
+
+| 項目 | 内容 |
+|---|---|
+| 方向 | 未設定 |
+| 無効化レベル | 構造未取得のため未設定 |
+| チャート確認 | D1 / H1の取得後に再評価 |
+
+**スコア内訳表（必須）:**
+
+| # | 項目 | 点 |
+|---|---|---|
+| 1 | 構造 | 0 |
+
+### 8-2. プラン2
+
+プラン1の構造を確認するまで対抗シナリオも未設定。
+確認できなければ様子見を継続する。
+'''
+    result = bundle.make_summary(source, 'weekly', NOW.isoformat())['conditions']
+    assert len(result) == 2
+    assert result[0]['text'].find('無効化レベル: 構造未取得のため未設定') >= 0
+    assert 'D1 / H1の取得後に再評価' in result[0]['text']
+    assert '|' not in result[0]['text']
+    assert result[1]['text'].endswith('確認できなければ様子見を継続する。')
+    assert all(c['source_quote'] in source for c in result)

@@ -248,12 +248,24 @@ def make_summary(source, mode, as_of):
             conditions.append({'title': title, 'text': text.strip(), 'source_quote': line})
     # Preserve each plan's complete conditions, including negative qualifications.
     # An arbitrary first match can select plan B and discard plan A's prerequisites.
-    for match in re.finditer(r'^#{2,3}\s+([^\n]*プラン\s*[ABＡＢ][^\n]*)\n(.*?)(?=^#{1,3}\s|\Z)',
+    for match in re.finditer(r'^#{2,3}\s+([^\n]*プラン\s*[ABＡＢ12１２][^\n]*)\n(.*?)(?=^#{1,3}\s|\Z)',
                              source.split('## 図表に使用した観測値')[0], re.M | re.S):
         title, body = match.group(1).strip(), match.group(2).strip()
-        if not body or len(body) > 1600 or re.search(r'^\s*\|', body, re.M):
+        if not body or len(body) > 2800:
             raise BundleError('Plan conditions require a complete readable source passage')
-        conditions.append({'title': title, 'text': plain(body), 'source_quote': match.group(0).strip()})
+        display = []
+        for paragraph in re.split(r'\n\s*\n', body):
+            if paragraph.lstrip().startswith('|'):
+                rows = [[cell.strip() for cell in row.strip().strip('|').split('|')]
+                        for row in paragraph.splitlines() if row.strip()]
+                if rows[0][0] == '#':
+                    continue  # score arithmetic stays in the score/full-source sections
+                display.extend(': '.join(row) for row in rows[2:])
+            elif not re.fullmatch(r'\*\*スコア内訳[^\n]*\*\*[:：]?', paragraph.strip()):
+                display.append(paragraph)
+        if not display:
+            raise BundleError('Plan conditions are missing')
+        conditions.append({'title': title, 'text': plain('\n\n'.join(display)), 'source_quote': match.group(0).strip()})
     if not conditions:
         condition = next((p for p in candidates if re.search('確認|条件|見送', p)), None)
         if condition:
