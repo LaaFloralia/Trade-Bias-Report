@@ -95,7 +95,7 @@ def observations(data, now=None):
     r = (data.get('retail_sentiment') or {}).get('XAUUSD')
     quote_time = str(q.get('datetime') or q.get('timestamp') or '市場観測時刻は未確認')
     if usable(r):
-        rt = ('観測日 ' + str(r['as_of_date'])) if r.get('as_of_date') else ('観測時刻は未確認 / 取得 ' + str(r.get('timestamp') or '未確認'))
+        rt = ('観測日 ' + str(r['as_of_date'])) if r.get('as_of_date') else ('観測時刻は未確認 / 記録 ' + str(r.get('timestamp') or '未確認'))
         provider = r.get('source') or '提供元は未確認'
         provider_url = 'https://fxssi.com/tools/current-ratio' if provider.upper() == 'FXSSI' else 'https://www.myfxbook.com/community/outlook'
         try:

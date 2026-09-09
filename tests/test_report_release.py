@@ -387,6 +387,15 @@ def test_optional_average_entries_are_explicitly_unavailable():
     bundle.check_bindings(data,result,result['figures'])
 
 
+def test_retail_metadata_timestamp_is_not_claimed_as_observed_or_fetched_time():
+    data = sample_data()
+    result = bundle.observations(data, NOW)
+    retail = next(figure for figure in result['figures'] if figure['id'] == 'retail')
+    assert '観測時刻は未確認 / 記録 ' + NOW.isoformat() in retail['subtitle']
+    assert '取得 ' + NOW.isoformat() not in retail['subtitle']
+    assert data['retail_sentiment']['XAUUSD']['timestamp'] == NOW.isoformat()
+
+
 def test_in_progress_edition_stays_fresh_across_midnight_without_relabeling():
     data=sample_data();data['timestamp']='2026-09-09T23:45:00+09:00'
     stamp=bundle.require_fresh(data,datetime.fromisoformat('2026-09-10T00:05:00+09:00'))
