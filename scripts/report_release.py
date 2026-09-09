@@ -155,6 +155,19 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
         attempt_dir.mkdir()
         html_key, meta_key = mode_path(kind), mode_path(kind, 'latest.json')
         previous_html, previous_meta = store.get(html_key), store.get(meta_key)
+        known_path = directory / f'last-published-{kind}.json'
+        if known_path.exists():
+            known = json.loads(known_path.read_text())
+            if previous_html is None or sha(previous_html[0]) != known['metadata']['sha256']:
+                raise ReleaseError('Current Storage edition differs from the last verified publication')
+            verify(store.reader(kind), previous_html[0], 'previous HP edition', html=True, site=True)
+        if previous_meta is not None:
+            try:
+                known_meta = json.loads(previous_meta[0])
+            except ValueError:
+                raise ReleaseError('Existing publication metadata is invalid') from None
+            if 'sha256' in known_meta and (previous_html is None or known_meta['sha256'] != sha(previous_html[0])):
+                raise ReleaseError('Existing metadata and HTML disagree')
         # Snapshot every prior public byte locally before the first write.
         for name, response in [('previous.html', previous_html), ('previous.json', previous_meta)]:
             if response is not None:

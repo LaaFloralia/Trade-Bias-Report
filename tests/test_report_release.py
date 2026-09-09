@@ -197,3 +197,9 @@ def test_optional_average_entries_are_explicitly_unavailable():
     assert len(price['items'])==1 and price['items'][0]['value']==3400.5
     assert 'retail' in {f['id'] for f in result['figures']}
     bundle.check_bindings(data,result,result['figures'])
+
+
+def test_in_progress_edition_stays_fresh_across_midnight_without_relabeling():
+    data=sample_data();data['timestamp']='2026-09-09T23:45:00+09:00'
+    stamp=bundle.require_fresh(data,datetime.fromisoformat('2026-09-10T00:05:00+09:00'))
+    assert stamp.date().isoformat()=='2026-09-09'

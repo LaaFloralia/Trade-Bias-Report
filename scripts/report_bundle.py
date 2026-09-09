@@ -36,8 +36,8 @@ def timestamp(value):
 def require_fresh(data, now=None):
     stamp = timestamp(data.get('timestamp'))
     current = (now or datetime.now(JST)).astimezone(JST)
-    if stamp > current or current - stamp > timedelta(hours=6) or stamp.date() != current.date():
-        raise BundleError('Data is stale or future-dated; maximum age is six hours on the same JST day')
+    if stamp > current or current - stamp > timedelta(hours=6):
+        raise BundleError('Data is stale or future-dated; maximum age is six hours')
     return stamp
 
 
