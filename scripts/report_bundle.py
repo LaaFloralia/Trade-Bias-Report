@@ -222,11 +222,31 @@ def make_summary(source, mode, as_of):
     first = paragraphs[0]
     if len(first) > 1100:
         raise BundleError('Summary paragraph is too long; edit without truncating conditions')
-    condition = next((p for p in paragraphs[1:] if re.search('確認|条件|見送|再評価', p)), None)
+    # Keep complete source statements; a long metrics list is not a useful lead.
+    conclusion_text = first
+    lines = [line.strip() for line in first.splitlines() if line.strip()]
+    if len(lines) > 3:
+        lead = next((line for line in lines if re.match(r'XAUUSD[:：]', line)), None)
+        if lead:
+            conclusion_text = lead
+    candidates = [p.strip() for p in re.split(r'\n\s*\n', source.split('## 図表に使用した観測値')[0])
+                  if p.strip() and not p.lstrip().startswith(('#', '|', '<')) and p.strip() != first and len(p) <= 700]
+    condition = next((p for p in candidates if re.search(r'取得後|確認できな|再評価|成立しな|再開後', p)), None)
+    if condition is None:
+        condition = next((p for p in candidates if re.search('確認|条件|見送', p)), None)
+    def plain(text):
+        return text.replace('**', '').replace('`', '').replace('  \n', '\n')
+    metrics = []
+    score_line = next((line for line in lines if '信頼度' in line and 'スコア' in line), None)
+    if score_line:
+        match = re.search(r'信頼度[:：]\s*(\w+)', score_line)
+        if match:
+            metrics.append({'label': '信頼度', 'value': match.group(1), 'context': plain(score_line), 'source_quote': score_line})
     return {'eyebrow': f'GOLD {mode.upper()}', 'short_title': 'チャート外分析',
             'report_date': timestamp(as_of).date().isoformat(), 'status': '観測・条件・未確認事項',
-            'conclusion': {'title': '今回の見立て', 'text': first, 'source_quote': first},
-            'conditions': [{'title': '次に確認する条件', 'text': condition, 'source_quote': condition}] if condition else [],
+            'conclusion': {'title': '今回の見立て', 'text': plain(conclusion_text), 'source_quote': first},
+            'metrics': metrics,
+            'conditions': [{'title': '次に確認する条件', 'text': plain(condition), 'source_quote': condition}] if condition else [],
             'source_note': '収集時刻と市場の観測時点は異なります。各図の出典・本文の制約を確認してください。',
             'note': '判断条件と数値は原稿の引用です。売買の確率を示すものではありません。'}
 
