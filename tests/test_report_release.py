@@ -164,3 +164,36 @@ def test_wrong_mime_and_hash_rejected():
 
 def test_cli_returns_failure_on_missing_or_unreviewed_html(tmp_path):
     assert upload_report.main([str(tmp_path/'no.html'), '--mode', 'daily']) == 1
+
+
+def test_crash_recovery_restores_both_objects(inputs):
+    store = MemoryStorage()
+    directory = inputs[3]; backup = directory/'interrupted'; backup.mkdir(parents=True)
+    (backup/'previous.html').write_bytes(b'previous edition')
+    (backup/'previous.json').write_bytes(b'{"old":1}')
+    release.write_json(directory/'active-publication.json', {
+        'publication': 'publishing', 'kind': 'daily', 'backupDirectory': str(backup),
+        'hadPreviousHtml': True, 'hadPreviousMetadata': True})
+    result = release.recover(directory, transport=store)
+    assert result['rollback'] == 'verified'
+    assert store.values['daily/latest.html'][0] == b'previous edition'
+    assert store.values['daily/latest.json'][0] == b'{"old":1}'
+
+
+def test_wrong_mode_stops_before_network(inputs, tmp_path, monkeypatch):
+    p=tmp_path/'report.html';p.write_text('html')
+    p.with_suffix('.bundle.json').write_text(json.dumps({'kind':'weekly'}))
+    monkeypatch.setattr(upload_report, 'release', lambda *a, **k: (_ for _ in ()).throw(AssertionError('must not release')))
+    assert upload_report.upload(p,'daily',publish=True) is None
+
+
+def test_optional_average_entries_are_explicitly_unavailable():
+    data=sample_data(); data['retail_sentiment']['XAUUSD'].update(avg_long_entry=None, avg_short_entry=None)
+    result=bundle.observations(data,NOW)
+    assert result['missing']==[]
+    assert result['limitations'] and '方向判断は行いません' in result['limitations'][0]
+    price=next(f for f in result['figures'] if f['id']=='price')
+    assert '比較不能' in price['title'] and '取得できず' in price['caption']
+    assert len(price['items'])==1 and price['items'][0]['value']==3400.5
+    assert 'retail' in {f['id'] for f in result['figures']}
+    bundle.check_bindings(data,result,result['figures'])

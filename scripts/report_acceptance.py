@@ -124,6 +124,8 @@ def browser_check(html_path, bundle_path, *, now=None):
                     record['images'].append({'path': str(path), 'sha256': digest(path), 'viewport': label})
                 # Full text evidence is separate from the compact first screen.
                 path = out / f'{label}-full.png'
+                page.evaluate('window.scrollTo(0, 0)')
+                page.wait_for_timeout(150)
                 page.screenshot(path=str(path), full_page=True)
                 record['images'].append({'path': str(path), 'sha256': digest(path), 'viewport': label})
                 record['viewports'].append({'width': width, 'height': 950, 'bodyOverflow': False,

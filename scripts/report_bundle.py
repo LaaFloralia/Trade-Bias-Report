@@ -67,22 +67,24 @@ def quote_snapshot(data):
 
 def observations(data, now=None):
     stamp = require_fresh(data, now)
-    figures, rows, missing, bindings = [], [], [], []
+    figures, rows, missing, bindings, limitations = [], [], [], [], []
 
     def add(ident, kind, title, unit, caption, source, observed, specs):
-        items = []
+        items, item_rows, item_bindings = [], [], []
         for label, value, pointer, digits, suffix, detail in specs:
             value = number(value, digits)
             display = f'{value:,.{digits}f}{suffix}'
             text = f'{label}: {display}。観測: {observed}。{detail}'.strip()
-            rows.append(text)
+            item_rows.append(text)
             item = {'label': label, 'value': value, 'display': display, 'source_quote': text,
                     'tone': 'negative' if value < 0 else 'neutral'}
             if detail:
                 item['detail'] = detail
             items.append(item)
-            bindings.append({'figure': ident, 'label': label, 'path': pointer, 'value': value,
+            item_bindings.append({'figure': ident, 'label': label, 'path': pointer, 'value': value,
                              'digits': digits, 'unit': unit, 'observedAt': observed})
+        rows.extend(item_rows)
+        bindings.extend(item_bindings)
         figures.append({'id': ident, 'type': kind, 'title': title, 'unit': unit,
                         'subtitle': f'{unit} / 観測: {observed}', 'caption': caption,
                         'source_label': source[0], 'source_url': source[1], 'items': items})
@@ -93,21 +95,34 @@ def observations(data, now=None):
     r = (data.get('retail_sentiment') or {}).get('XAUUSD')
     quote_time = str(q.get('datetime') or q.get('timestamp') or '市場観測時刻は未確認')
     if usable(r):
-        rt = r.get('as_of_date') or r.get('timestamp') or '市場観測時刻は未確認'
+        rt = ('観測日 ' + str(r['as_of_date'])) if r.get('as_of_date') else ('観測時刻は未確認 / 取得 ' + str(r.get('timestamp') or '未確認'))
+        provider = r.get('source') or '提供元は未確認'
+        provider_url = 'https://fxssi.com/tools/current-ratio' if provider.upper() == 'FXSSI' else 'https://www.myfxbook.com/community/outlook'
         try:
             add('price', 'price_map', '価格とリテール平均建値', 'USD/oz',
-                '価格と建玉集計は異なる提供元・時点です。平均建値はSL位置や注文集中を示しません。小数第2位へ丸めています。',
-                ('Twelve Data / Myfxbook', 'https://www.myfxbook.com/community/outlook'),
+                '価格と建玉集計は別の系列です。観測時刻と時点の一致は未確認です。平均建値はSL位置や注文集中を示しません。小数第2位へ丸めています。',
+                ('Twelve Data / ' + provider, 'https://twelvedata.com/'),
                 f'価格 {quote_time} / 建玉 {rt}', [
                     ('XAUUSD 記録価格', q.get('close'), 'report_quote.close', 2, '', ''),
                     ('Long 平均建値', r.get('avg_long_entry'), 'retail_sentiment.XAUUSD.avg_long_entry', 2, '', ''),
                     ('Short 平均建値', r.get('avg_short_entry'), 'retail_sentiment.XAUUSD.avg_short_entry', 2, '', '')])
+            figures[-1]['source_links'] = [{'label': 'Twelve Data', 'url': 'https://twelvedata.com/'},
+                                            {'label': provider, 'url': provider_url}]
+        except BundleError:
+            limitations.append('Long・Shortの平均建値は取得できず、価格との比較はできません。この比較に基づく方向判断は行いません')
+            add('price', 'price_map', '価格とリテール平均建値（比較不能）', 'USD/oz',
+                'Long平均建値: 取得できず／比較不能。Short平均建値: 取得できず／比較不能。XAUUSD記録価格だけを表示しています。欠測を高安や推測値に置き換えていません。',
+                ('Twelve Data', 'https://twelvedata.com/'), quote_time,
+                [('XAUUSD 記録価格', q.get('close'), 'report_quote.close', 2, '', '')])
+            figures[-1]['availability'] = 'partial'
+            rows.append(limitations[-1])
+        try:
             long, short = number(r.get('long_pct')), number(r.get('short_pct'))
             if min(long, short) < 0 or abs(long + short - 100) > .01:
                 raise BundleError('Retail percentages do not add to 100')
             add('retail', 'split', '参加口座の建玉比率', '%',
-                'Myfxbookの丸め済み表示です。市場全体の比率や件数の比率ではありません。',
-                ('Myfxbook', 'https://www.myfxbook.com/community/outlook'), rt, [
+                '取得された比率を小数第2位で表示しています。市場全体の比率や件数の比率ではありません。',
+                (provider, provider_url), rt, [
                     ('Long', long, 'retail_sentiment.XAUUSD.long_pct', 2, '%', ''),
                     ('Short', short, 'retail_sentiment.XAUUSD.short_pct', 2, '%', '')])
         except BundleError:
@@ -153,7 +168,7 @@ def observations(data, now=None):
                 upcoming.append((t, event))
         items = []
         for t, event in sorted(upcoming, key=lambda pair: pair[0])[:6]:
-            label = str(event.get('indicator', '')).replace('|', ' ')[:180]
+            label = (str(event.get('country', '')) + ' / ' + str(event.get('indicator', ''))).replace('|', ' ')[:180]
             text = f'{t.date().isoformat()} {t.strftime("%H:%M")} JST {label}。カレンダー掲載予定。発表元との日時照合は未確認。'
             rows.append(text)
             items.append({'date': t.date().isoformat(), 'time': t.strftime('%H:%M') + ' JST',
@@ -162,6 +177,10 @@ def observations(data, now=None):
             figures.append({'id': 'calendar', 'type': 'timeline', 'title': '今後の掲載予定',
                             'subtitle': 'JST / 今後7日間の取得範囲', 'caption': '最大6件の掲載予定です。網羅性は未確認。予想欄は列の意味が未照合のため図に採用しません。',
                             'source_label': 'Investing.com Calendar', 'source_url': 'https://www.investing.com/economic-calendar/', 'items': items})
+    if data.get('synthetic') is True:
+        for figure in figures:
+            figure['caption'] = '合成値による表示検証です。リンクは参照用で、数値の取得元ではありません。' + figure['caption']
+            figure['title'] += '（合成値）'
     present = {f['id'] for f in figures}
     missing.extend(f'{key}: 図の作成に必要なデータが不足' for key in REQUIRED_FIGURES if key not in present)
     appendix = ('\n\n## 図表に使用した観測値\n\n'
@@ -170,7 +189,7 @@ def observations(data, now=None):
     if missing:
         appendix += '\n欠測・除外: ' + '。'.join(dict.fromkeys(missing)) + '\n'
     return {'asOf': stamp.isoformat(), 'figures': figures, 'appendix': appendix,
-            'missing': list(dict.fromkeys(missing)), 'bindings': bindings}
+            'missing': list(dict.fromkeys(missing)), 'limitations': limitations, 'bindings': bindings}
 
 
 def check_bindings(data, manifest, figures):
@@ -226,12 +245,12 @@ def prepare(md_path, data_path, mode, now=None):
     for path, value in ((summary_path, summary), (figures_path, result['figures'])):
         path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
     manifest = {'schemaVersion': 1, 'kind': mode, 'asOf': result['asOf'],
-                'reportDate': timestamp(result['asOf']).date().isoformat(),
+                'reportDate': timestamp(result['asOf']).date().isoformat(), 'synthetic': data.get('synthetic') is True,
                 'dataPath': str(data_path.absolute()), 'dataSha256': digest(data_path),
                 'sourcePath': str(md_path.absolute()), 'sourceSha256': digest(md_path),
                 'summaryPath': str(summary_path), 'summarySha256': digest(summary_path),
                 'figuresPath': str(figures_path), 'figuresSha256': digest(figures_path),
-                'missing': result['missing'], 'bindings': result['bindings'],
+                'missing': result['missing'], 'limitations': result['limitations'], 'bindings': result['bindings'],
                 'requiredFigures': list(REQUIRED_FIGURES), 'figureIds': [f['id'] for f in result['figures']],
                 'numericCheck': 'passed', 'semanticReview': 'pending', 'publicationReady': False}
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')

@@ -129,6 +129,8 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
     directory = Path(directory)
     with release_lock(directory):
         bundle, body, acceptance = publication_inputs(html_path, bundle_path, acceptance_path, current)
+        if publish and bundle.get('synthetic'):
+            raise ReleaseError('Synthetic reports cannot be published')
         kind = bundle['kind']
         attempt = f'{current.strftime("%Y%m%dT%H%M%S")}-{uuid.uuid4().hex[:8]}'
         version = mode_path(kind, f'versions/{bundle["reportDate"]}/{attempt}-{sha(body)[:12]}.html')
