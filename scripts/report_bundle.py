@@ -253,7 +253,7 @@ def make_summary(source, mode, as_of):
         title, body = match.group(1).strip(), match.group(2).strip()
         if not body or len(body) > 1600 or re.search(r'^\s*\|', body, re.M):
             raise BundleError('Plan conditions require a complete readable source passage')
-        conditions.append({'title': title, 'text': plain(body), 'source_quote': body})
+        conditions.append({'title': title, 'text': plain(body), 'source_quote': match.group(0).strip()})
     if not conditions:
         condition = next((p for p in candidates if re.search('確認|条件|見送', p)), None)
         if condition:
