@@ -239,11 +239,25 @@ def make_summary(source, mode, as_of):
             conclusion_text = lead
     candidates = [p.strip() for p in re.split(r'\n\s*\n', source.split('## 図表に使用した観測値')[0])
                   if p.strip() and not p.lstrip().startswith(('#', '|', '<')) and p.strip() != first and len(p) <= 700]
-    condition = next((p for p in candidates if re.search(r'取得後|確認できな|再評価|成立しな|再開後', p)), None)
-    if condition is None:
-        condition = next((p for p in candidates if re.search('確認|条件|見送', p)), None)
     def plain(text):
         return text.replace('**', '').replace('`', '').replace('  \n', '\n')
+    conditions = []
+    for line in lines:
+        if re.match(r'(?:観察時間|観察期限|最大リスク|無効化条件)[:：]', plain(line)):
+            title, text = re.split(r'[:：]', plain(line), maxsplit=1)
+            conditions.append({'title': title, 'text': text.strip(), 'source_quote': line})
+    # Preserve each plan's complete conditions, including negative qualifications.
+    # An arbitrary first match can select plan B and discard plan A's prerequisites.
+    for match in re.finditer(r'^#{2,3}\s+([^\n]*プラン\s*[ABＡＢ][^\n]*)\n(.*?)(?=^#{1,3}\s|\Z)',
+                             source.split('## 図表に使用した観測値')[0], re.M | re.S):
+        title, body = match.group(1).strip(), match.group(2).strip()
+        if not body or len(body) > 1600 or re.search(r'^\s*\|', body, re.M):
+            raise BundleError('Plan conditions require a complete readable source passage')
+        conditions.append({'title': title, 'text': plain(body), 'source_quote': body})
+    if not conditions:
+        condition = next((p for p in candidates if re.search('確認|条件|見送', p)), None)
+        if condition:
+            conditions.append({'title': '次に確認する条件', 'text': plain(condition), 'source_quote': condition})
     metrics = []
     score_line = next((line for line in lines if '信頼度' in line and 'スコア' in line), None)
     if score_line:
@@ -254,7 +268,7 @@ def make_summary(source, mode, as_of):
             'report_date': timestamp(as_of).date().isoformat(), 'status': '観測・条件・未確認事項',
             'conclusion': {'title': '今回の見立て', 'text': plain(conclusion_text), 'source_quote': first},
             'metrics': metrics,
-            'conditions': [{'title': '次に確認する条件', 'text': plain(condition), 'source_quote': condition}] if condition else [],
+            'conditions': conditions,
             'source_note': '収集時刻と市場の観測時点は異なります。各図の出典・本文の制約を確認してください。',
             'note': '判断条件と数値は原稿の引用です。売買の確率を示すものではありません。'}
 

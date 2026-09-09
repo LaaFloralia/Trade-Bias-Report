@@ -222,3 +222,40 @@ def test_etf_countertrend_is_retained_in_figure_and_summary_source():
     figure=next(f for f in result['figures'] if f['id']=='etf')
     assert '3営業日連続の保有減' in figure['caption']
     assert any('3営業日連続の保有減' in note for note in result['limitations'])
+
+
+def test_summary_preserves_observation_deadline_and_both_plan_conditions():
+    source = '''# Report
+## セクション0: エグゼクティブサマリー
+
+信頼度: Low ｜ スコア 0
+XAUUSD: プランAは未成立。方向未設定。
+観察時間: 9/10 01:00まで。執行は保留。
+最大リスク: 構造の欠測。
+
+## セクション1: 今夜の執行プラン
+### 1-1. プランA（本命）
+
+D1・H1構造が取得不可のため、方向は未設定。
+
+執行再検討時はCBDR / Asian Rangeを確認する。
+
+### 1-2. プランB（同一銘柄・逆条件シナリオ）
+
+D1・H1取得後に逆方向の構造を確認できた場合は再評価する。
+確認できなければ様子見を継続する。
+
+### 1-3. スコア
+
+合計0。
+'''
+    summary = bundle.make_summary(source, 'daily', NOW.isoformat())
+    conditions = summary['conditions']
+    assert len(conditions) == 4
+    assert conditions[0]['text'] == '9/10 01:00まで。執行は保留。'
+    assert 'プランA' in conditions[2]['title']
+    assert 'CBDR / Asian Range' in conditions[2]['text']
+    assert '取得不可' in conditions[2]['text']
+    assert 'プランB' in conditions[3]['title']
+    assert conditions[3]['text'].endswith('確認できなければ様子見を継続する。')
+    assert all(c['source_quote'] in source for c in conditions)

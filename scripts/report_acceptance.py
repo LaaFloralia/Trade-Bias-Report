@@ -123,16 +123,24 @@ def browser_check(html_path, bundle_path, *, now=None):
                     figure.screenshot(path=str(path))
                     record['images'].append({'path': str(path), 'sha256': digest(path), 'viewport': label})
                 # Readable source tiles keep the full tables legible to an image reviewer.
-                rect = page.locator('.full-report').bounding_box()
+                # Figure screenshots scroll the viewport. Clips for full-page
+                # screenshots require document coordinates, not bounding_box's
+                # viewport-relative coordinates.
+                rect = page.locator('.full-report').evaluate('''(element) => {
+                    const r = element.getBoundingClientRect();
+                    return {x: r.left + window.scrollX, y: r.top + window.scrollY,
+                            width: r.width, height: r.height};
+                }''')
                 top_y, bottom_y = rect['y'], rect['y'] + rect['height']
                 tile_index = 0
                 while top_y < bottom_y:
                     tile_index += 1
                     tile = out / f'{label}-source-{tile_index:02}.png'
-                    page.screenshot(path=str(tile), full_page=True,
-                                    clip={'x': rect['x'], 'y': top_y, 'width': rect['width'],
-                                          'height': min(950, bottom_y-top_y)})
-                    record['images'].append({'path': str(tile), 'sha256': digest(tile), 'viewport': label})
+                    clip = {'x': rect['x'], 'y': top_y, 'width': rect['width'],
+                            'height': min(950, bottom_y-top_y)}
+                    page.screenshot(path=str(tile), full_page=True, clip=clip)
+                    record['images'].append({'path': str(tile), 'sha256': digest(tile),
+                                             'viewport': label, 'section': 'full-report', 'clip': clip})
                     top_y += 850
                 if label == 'mobile':
                     for index, table in enumerate(page.locator('.table-wrap').all()):
