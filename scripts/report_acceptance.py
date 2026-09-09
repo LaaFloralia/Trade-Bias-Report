@@ -169,7 +169,8 @@ def browser_check(html_path, bundle_path, *, now=None):
 
 def validate_acceptance(html_path, bundle_path, acceptance_path, now=None):
     validate_bundle(html_path, bundle_path, now)
-    review = json.loads(Path(acceptance_path).read_text())
+    review_bytes = Path(acceptance_path).read_bytes()
+    review = json.loads(review_bytes)
     if review.get('status') != 'passed' or not review.get('reviewer') or not review.get('reviewedAt'):
         raise BundleError('Independent semantic and visual review is pending')
     if review.get('htmlSha256') != digest(html_path) or review.get('bundleSha256') != digest(bundle_path):
@@ -187,4 +188,5 @@ def validate_acceptance(html_path, bundle_path, acceptance_path, now=None):
             raise BundleError('Reviewed render evidence changed')
     if not render.get('images') or {v['width'] for v in render.get('viewports', [])} != {1365, 390}:
         raise BundleError('Desktop/mobile render evidence is missing')
-    return {'acceptanceSha256': digest(acceptance_path), 'publicationReady': True}
+    return {'acceptanceSha256': hashlib.sha256(review_bytes).hexdigest(), 'publicationReady': True,
+            'htmlSha256': review['htmlSha256'], 'bundleSha256': review['bundleSha256']}

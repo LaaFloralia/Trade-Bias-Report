@@ -28,7 +28,10 @@ def test_hash_bound_independent_review_accepts_limited_edition(report):
     html,bundle,review,record,*_=report
     record['limitations']=['Average entries missing; no comparison or direction inferred']
     review.write_text(json.dumps(record))
-    assert a.validate_acceptance(html,bundle,review)['publicationReady']
+    result = a.validate_acceptance(html,bundle,review)
+    assert result['publicationReady']
+    assert result['htmlSha256'] == digest(html) and result['bundleSha256'] == digest(bundle)
+    assert result['acceptanceSha256'] == digest(review)
 
 
 def test_missing_data_dependent_conclusion_cannot_pass_failed_review(report):

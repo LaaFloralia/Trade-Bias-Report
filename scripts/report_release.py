@@ -122,9 +122,15 @@ def verify(response, expected, label, html=False, site=False):
 def publication_inputs(html_path, bundle_path, acceptance_path, now=None):
     from scripts.report_acceptance import validate_acceptance
     result = validate_acceptance(html_path, bundle_path, acceptance_path, now=now)
-    bundle = json.loads(Path(bundle_path).read_text())
+    bundle_bytes = Path(bundle_path).read_bytes()
     body = Path(html_path).read_bytes()
-    return bundle, body, result
+    # Freeze exactly the reviewed bytes before creating any Storage transport.
+    # A later local replacement cannot change the in-memory release payload.
+    if sha(body) != result.get('htmlSha256') or sha(bundle_bytes) != result.get('bundleSha256'):
+        raise ReleaseError('Publication inputs changed after acceptance')
+    if sha(Path(acceptance_path).read_bytes()) != result.get('acceptanceSha256'):
+        raise ReleaseError('Review changed after acceptance')
+    return json.loads(bundle_bytes), body, result
 
 
 def restore_publication_marker(directory, backup, receipt):
@@ -226,6 +232,10 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
             verify(store.reader(kind), body, 'HP final', html=True, site=True)
             receipt.update(publication='succeeded', phase='complete', storageVerified=True, hpVerified=True)
             write_json(directory / f'last-published-{kind}.json', receipt)
+            # Keep active recoverable until every final receipt is persisted.
+            # Local save failures belong to the same rollback boundary as PUTs.
+            write_json(attempt_dir / 'receipt.json', receipt)
+            write_json(active, receipt)
         except Exception as error:
             receipt.update(publication='failed', error=f'{type(error).__name__}: {error}' if isinstance(error, ReleaseError) else type(error).__name__)
             if touched:
@@ -247,8 +257,6 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
             write_json(active, receipt)
             write_json(attempt_dir / 'receipt.json', receipt)
             raise ReleaseError(f'Publication failed; rollback={receipt["rollback"]}; see local receipt') from None
-        write_json(active, receipt)
-        write_json(attempt_dir / 'receipt.json', receipt)
         return receipt
 
 

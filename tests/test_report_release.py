@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts import report_bundle as bundle
+from scripts import report_acceptance as acceptance
 from scripts import report_release as release
 from scripts import upload_report
 
@@ -115,6 +116,71 @@ def test_dry_run_has_zero_network(inputs):
     assert store.calls == []
     assert 'publishedAt' in result['metadata']
     assert not (inputs[3]/'last-published-daily.json').exists()
+
+
+@pytest.fixture
+def reviewed_inputs(tmp_path, monkeypatch):
+    # Exercise the real acceptance/release boundary. Semantic bundle validation
+    # is covered separately; these fixtures isolate mutations after it returns.
+    monkeypatch.setattr(acceptance, 'validate_bundle', lambda *args, **kwargs: {})
+    html = tmp_path/'report.html'; html.write_bytes(b'reviewed edition')
+    manifest = tmp_path/'report.bundle.json'
+    manifest.write_text(json.dumps({'kind':'daily', 'reportDate':'2026-09-09', 'asOf':NOW.isoformat()}))
+    image = tmp_path/'image.png'; image.write_bytes(b'reviewed image')
+    render = html.with_suffix('.render.json')
+    render.write_text(json.dumps({'status':'passed', 'htmlSha256':bundle.digest(html),
+        'bundleSha256':bundle.digest(manifest), 'images':[{'path':str(image),'sha256':bundle.digest(image)}],
+        'viewports':[{'width':1365},{'width':390}]}))
+    review = html.with_suffix('.acceptance.json')
+    review.write_text(json.dumps({'status':'passed', 'reviewer':'independent-test', 'reviewedAt':NOW.isoformat(),
+        'checks':{k:True for k in acceptance.CHECKS}, 'htmlSha256':bundle.digest(html),
+        'bundleSha256':bundle.digest(manifest), 'renderSha256':bundle.digest(render)}))
+    return html, manifest, review, tmp_path/'publication'
+
+
+@pytest.mark.parametrize('target', ['html', 'bundle', 'review'])
+def test_mutation_after_acceptance_is_rejected_before_storage_creation(reviewed_inputs, monkeypatch, target):
+    validate = acceptance.validate_acceptance
+    html, manifest, review, directory = reviewed_inputs
+    def replace_after_validation(*args, **kwargs):
+        result = validate(*args, **kwargs)
+        if target == 'html':
+            html.write_bytes(b'unreviewed replacement')
+        elif target == 'bundle':
+            value = json.loads(manifest.read_text())
+            value.update(asOf='1999-01-01T00:00:00+09:00', reportDate='1999-01-01')
+            manifest.write_text(json.dumps(value))
+        else:
+            review.write_text('{"status":"changes_requested"}')
+        return result
+    monkeypatch.setattr(acceptance, 'validate_acceptance', replace_after_validation)
+    store = MemoryStorage(); created = []
+    def storage():
+        created.append(True)
+        return store
+    monkeypatch.setattr(release, 'Storage', storage)
+    with pytest.raises(release.ReleaseError, match='changed after acceptance'):
+        release.release(*reviewed_inputs, publish=True, now=NOW)
+    assert created == [] and store.calls == []
+    assert not (directory/'last-published-daily.json').exists()
+
+
+def test_publication_uses_frozen_accepted_bytes_after_input_capture(reviewed_inputs, monkeypatch):
+    html, manifest, _, _ = reviewed_inputs
+    accepted_body = html.read_bytes()
+    accepted_bundle = json.loads(manifest.read_bytes())
+    store = MemoryStorage()
+    def storage():
+        html.write_bytes(b'later unreviewed replacement')
+        manifest.write_text(json.dumps({'kind':'weekly','reportDate':'1999-01-01','asOf':'1999-01-01T00:00:00+09:00'}))
+        return store
+    monkeypatch.setattr(release, 'Storage', storage)
+    result = release.release(*reviewed_inputs, publish=True, now=NOW)
+    assert result['publication'] == 'succeeded'
+    assert store.values['daily/latest.html'][0] == accepted_body
+    metadata = json.loads(store.values['daily/latest.json'][0])
+    assert metadata['asOf'] == accepted_bundle['asOf']
+    assert metadata['reportDate'] == accepted_bundle['reportDate']
 
 
 def test_publish_version_before_latest_and_verified_receipt(inputs):
@@ -241,6 +307,64 @@ def test_success_marker_write_error_rolls_back_all_three_records(inputs, monkeyp
     for key, value in before.items():
         assert store.values[key][0] == value[0]
     monkeypatch.setattr(release, 'write_json', original_write)
+    assert release.release(*inputs, publish=True, transport=store, now=NOW)['publication'] == 'succeeded'
+
+
+@pytest.mark.parametrize('final_record', ['receipt.json', 'active-publication.json'])
+def test_final_receipt_save_error_rolls_back_and_allows_next_publish(inputs, monkeypatch, final_record):
+    store = MemoryStorage(); before = deepcopy(store.values)
+    known_path = inputs[3]/'last-published-daily.json'
+    release.write_json(known_path, {'publication':'succeeded',
+                                  'metadata':{'sha256':release.sha(before['daily/latest.html'][0])}})
+    previous_marker = known_path.read_bytes()
+    write = release.write_json
+    failed_once = False
+    def fail_final_record(path, value):
+        nonlocal failed_once
+        if Path(path).name == final_record and value.get('publication') == 'succeeded' and not failed_once:
+            failed_once = True
+            raise OSError('synthetic final receipt save failure')
+        write(path, value)
+    monkeypatch.setattr(release, 'write_json', fail_final_record)
+    with pytest.raises(release.ReleaseError, match='rollback=verified'):
+        release.release(*inputs, publish=True, transport=store, now=NOW)
+    for key, value in before.items():
+        assert store.values[key][0] == value[0]
+    assert known_path.read_bytes() == previous_marker
+    active = json.loads((inputs[3]/'active-publication.json').read_bytes())
+    assert active['publication'] == 'failed' and active['rollback'] == 'verified'
+    assert json.loads((Path(active['backupDirectory'])/'receipt.json').read_bytes())['publication'] == 'failed'
+    monkeypatch.setattr(release, 'write_json', write)
+    assert release.release(*inputs, publish=True, transport=store, now=NOW)['publication'] == 'succeeded'
+
+
+@pytest.mark.parametrize('after_save', [False, True])
+def test_interrupt_around_final_receipt_save_remains_recoverable(inputs, monkeypatch, after_save):
+    class SimulatedProcessExit(BaseException):
+        pass
+    store = MemoryStorage(); before = deepcopy(store.values)
+    known_path = inputs[3]/'last-published-daily.json'
+    release.write_json(known_path, {'publication':'succeeded',
+                                  'metadata':{'sha256':release.sha(before['daily/latest.html'][0])}})
+    previous_marker = known_path.read_bytes()
+    write = release.write_json
+    def interrupt_final_receipt(path, value):
+        if Path(path).name == 'receipt.json' and value.get('publication') == 'succeeded':
+            if after_save:
+                write(path, value)
+            raise SimulatedProcessExit()
+        write(path, value)
+    monkeypatch.setattr(release, 'write_json', interrupt_final_receipt)
+    with pytest.raises(SimulatedProcessExit):
+        release.release(*inputs, publish=True, transport=store, now=NOW)
+    active = json.loads((inputs[3]/'active-publication.json').read_bytes())
+    assert active['publication'] == 'publishing'
+    assert store.values['daily/latest.html'][0] == b'new edition'
+    monkeypatch.setattr(release, 'write_json', write)
+    assert release.recover(inputs[3], transport=store)['rollback'] == 'verified'
+    for key, value in before.items():
+        assert store.values[key][0] == value[0]
+    assert known_path.read_bytes() == previous_marker
     assert release.release(*inputs, publish=True, transport=store, now=NOW)['publication'] == 'succeeded'
 
 
