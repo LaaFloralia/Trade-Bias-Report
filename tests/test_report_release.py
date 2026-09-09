@@ -180,6 +180,70 @@ def test_crash_recovery_restores_both_objects(inputs):
     assert store.values['daily/latest.json'][0] == b'{"old":1}'
 
 
+@pytest.mark.parametrize('had_previous_record', [False, True])
+def test_success_marker_crash_recovery_allows_the_next_publish(inputs, monkeypatch, had_previous_record):
+    class SimulatedProcessExit(BaseException):
+        pass
+    store = MemoryStorage()
+    before = deepcopy(store.values)
+    known_path = inputs[3] / 'last-published-daily.json'
+    if had_previous_record:
+        release.write_json(known_path, {'publication': 'succeeded', 'attemptId': 'previous-attempt',
+                                      'metadata': {'sha256': release.sha(before['daily/latest.html'][0])}})
+    previous_record = known_path.read_bytes() if known_path.exists() else None
+    original_write = release.write_json
+    interrupted = False
+
+    def crash_after_success_marker(path, value):
+        nonlocal interrupted
+        original_write(path, value)
+        if Path(path) == known_path and value.get('publication') == 'succeeded' and not interrupted:
+            interrupted = True
+            raise SimulatedProcessExit()
+
+    monkeypatch.setattr(release, 'write_json', crash_after_success_marker)
+    with pytest.raises(SimulatedProcessExit):
+        release.release(*inputs, publish=True, transport=store, now=NOW)
+    assert json.loads(known_path.read_text())['metadata']['sha256'] == release.sha(b'new edition')
+    assert json.loads((inputs[3]/'active-publication.json').read_text())['publication'] == 'publishing'
+    monkeypatch.setattr(release, 'write_json', original_write)
+    assert release.recover(inputs[3], transport=store)['rollback'] == 'verified'
+    for key, value in before.items():
+        assert store.values[key][0] == value[0]
+    if previous_record is None:
+        assert not known_path.exists()
+    else:
+        assert known_path.read_bytes() == previous_record
+    assert release.release(*inputs, publish=True, transport=store, now=NOW)['publication'] == 'succeeded'
+
+
+def test_success_marker_write_error_rolls_back_all_three_records(inputs, monkeypatch):
+    store = MemoryStorage()
+    before = deepcopy(store.values)
+    known_path = inputs[3] / 'last-published-daily.json'
+    release.write_json(known_path, {'publication': 'succeeded',
+                                  'metadata': {'sha256': release.sha(before['daily/latest.html'][0])}})
+    previous_record = known_path.read_bytes()
+    original_write = release.write_json
+    interrupted = False
+
+    def fail_after_success_marker(path, value):
+        nonlocal interrupted
+        original_write(path, value)
+        if Path(path) == known_path and value.get('publication') == 'succeeded' and not interrupted:
+            interrupted = True
+            raise OSError('synthetic marker write failure')
+
+    monkeypatch.setattr(release, 'write_json', fail_after_success_marker)
+    with pytest.raises(release.ReleaseError, match='rollback=verified'):
+        release.release(*inputs, publish=True, transport=store, now=NOW)
+    assert known_path.read_bytes() == previous_record
+    for key, value in before.items():
+        assert store.values[key][0] == value[0]
+    monkeypatch.setattr(release, 'write_json', original_write)
+    assert release.release(*inputs, publish=True, transport=store, now=NOW)['publication'] == 'succeeded'
+
+
 def test_wrong_mode_stops_before_network(inputs, tmp_path, monkeypatch):
     p=tmp_path/'report.html';p.write_text('html')
     p.with_suffix('.bundle.json').write_text(json.dumps({'kind':'weekly'}))

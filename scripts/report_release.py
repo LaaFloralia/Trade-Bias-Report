@@ -29,12 +29,16 @@ def sha(body):
     return hashlib.sha256(body).hexdigest()
 
 
-def write_json(path, value):
+def write_bytes(path, body):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + '.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+    temp.write_bytes(body)
     os.replace(temp, path)
+
+
+def write_json(path, value):
+    write_bytes(path, (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode())
 
 
 def mode_path(kind, filename='latest.html'):
@@ -123,6 +127,28 @@ def publication_inputs(html_path, bundle_path, acceptance_path, now=None):
     return bundle, body, result
 
 
+def restore_publication_marker(directory, backup, receipt):
+    """Restore the local success marker to the same edition as the public rollback."""
+    marker = Path(directory) / f"last-published-{receipt['kind']}.json"
+    had_previous = receipt.get('hadPreviousPublicationRecord')
+    if had_previous is True:
+        raw = (Path(backup) / 'previous-publication.json').read_bytes()
+        if sha(raw) != receipt.get('previousPublicationRecordSha256'):
+            raise ReleaseError('Previous publication record backup changed')
+        write_bytes(marker, raw)
+        if marker.read_bytes() != raw:
+            raise ReleaseError('Previous publication record did not restore')
+    elif had_previous is False:
+        marker.unlink(missing_ok=True)
+    elif marker.exists():
+        # Older journals did not save a marker backup. Keep only a marker that
+        # already matches the restored bytes; otherwise recovery stays blocked.
+        previous_html = Path(backup) / 'previous.html'
+        known = json.loads(marker.read_text())
+        if not previous_html.exists() or known.get('metadata', {}).get('sha256') != sha(previous_html.read_bytes()):
+            raise ReleaseError('Legacy recovery cannot verify the publication record')
+
+
 def _release(html_path, bundle_path, acceptance_path, directory, *, publish=False, transport=None, now=None):
     """Return a receipt; exceptions carry fixed labels only, never remote response text."""
     current = now or datetime.now().astimezone()
@@ -156,8 +182,9 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
         html_key, meta_key = mode_path(kind), mode_path(kind, 'latest.json')
         previous_html, previous_meta = store.get(html_key), store.get(meta_key)
         known_path = directory / f'last-published-{kind}.json'
-        if known_path.exists():
-            known = json.loads(known_path.read_text())
+        previous_publication = known_path.read_bytes() if known_path.exists() else None
+        if previous_publication is not None:
+            known = json.loads(previous_publication)
             if previous_html is None or sha(previous_html[0]) != known['metadata']['sha256']:
                 raise ReleaseError('Current Storage edition differs from the last verified publication')
             verify(store.reader(kind), previous_html[0], 'previous HP edition', html=True, site=True)
@@ -172,8 +199,12 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
         for name, response in [('previous.html', previous_html), ('previous.json', previous_meta)]:
             if response is not None:
                 (attempt_dir / name).write_bytes(response[0])
+        if previous_publication is not None:
+            (attempt_dir / 'previous-publication.json').write_bytes(previous_publication)
         receipt.update(publication='publishing', phase='version', backupDirectory=str(attempt_dir),
-                       hadPreviousHtml=previous_html is not None, hadPreviousMetadata=previous_meta is not None)
+                       hadPreviousHtml=previous_html is not None, hadPreviousMetadata=previous_meta is not None,
+                       hadPreviousPublicationRecord=previous_publication is not None,
+                       previousPublicationRecordSha256=sha(previous_publication) if previous_publication is not None else None)
         write_json(active, receipt)
         touched = False
         try:
@@ -209,6 +240,7 @@ def _release(html_path, bundle_path, acceptance_path, directory, *, publish=Fals
                             verify(store.get(key), previous[0], 'rollback', html=is_html)
                     if previous_html:
                         verify(store.reader(kind), previous_html[0], 'HP rollback', html=True, site=True)
+                    restore_publication_marker(directory, attempt_dir, receipt)
                     receipt['rollback'] = 'verified'
                 except Exception:
                     receipt.update(publication='rollback_failed', rollback='unverified')
@@ -258,6 +290,7 @@ def recover(directory, *, transport=None):
                     store.delete(key)
                     if store.get(key) is not None:
                         raise ReleaseError('Recovery deletion did not persist')
+            restore_publication_marker(directory, backup, receipt)
             receipt.update(publication='failed', rollback='verified', phase='recovered')
         except Exception:
             receipt.update(publication='rollback_failed', rollback='unverified')
