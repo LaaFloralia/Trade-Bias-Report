@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -31,6 +32,48 @@ RETENTION_DAYS = 120
 PREV_DAY_WINDOW = (1, 4)
 PREV_WEEK_WINDOW = (6, 9)
 PREV_WEEK_PREFERRED = 7
+PROBABILITY_TOTAL_TOLERANCE = 0.2
+
+
+def validate_target_rates(rates: object) -> Optional[str]:
+    """FedWatchのレート別確率が履歴・判断に使えるか検査する。"""
+    if not isinstance(rates, list) or not rates:
+        return "レートレンジ別確率が未取得"
+    current_total = 0.0
+    for index, row in enumerate(rates, start=1):
+        if not isinstance(row, dict) or not row.get("range"):
+            return f"レートレンジ別確率 {index} 行目の形式が不正"
+        for field in ("current", "prev_day", "prev_week"):
+            value = row.get(field)
+            if isinstance(value, bool):
+                return f"{row.get('range')} {field} が数値不正"
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return f"{row.get('range')} {field} が数値不正"
+            if not math.isfinite(number) or not 0.0 <= number <= 100.0:
+                return f"{row.get('range')} {field} が0〜100の範囲外 ({value})"
+            if field == "current":
+                current_total += number
+    if abs(current_total - 100.0) > PROBABILITY_TOTAL_TOLERANCE:
+        return (
+            f"current確率合計が100%と不整合 ({current_total:.3f}%, "
+            f"許容±{PROBABILITY_TOTAL_TOLERANCE}pp)"
+        )
+    return None
+
+
+def validate_meeting_date(value: object, today: date) -> Optional[str]:
+    """次回FOMC日が有効かつ過去日でないことを検査する。"""
+    if not isinstance(value, str) or not value.strip():
+        return "次回FOMC日が未取得"
+    try:
+        meeting_date = datetime.strptime(value.strip(), "%b %d, %Y").date()
+    except ValueError:
+        return f"次回FOMC日が不正 ({value})"
+    if meeting_date < today:
+        return f"次回FOMC日が過去 ({meeting_date.isoformat()})"
+    return None
 
 
 def _load_history(path: Path = HISTORY_PATH) -> dict:
@@ -48,9 +91,13 @@ def record_snapshot(fedwatch: dict, today: Optional[date] = None, path: Path = H
 
     Returns: 保存したかどうか。
     """
-    if not isinstance(fedwatch, dict) or not fedwatch.get("target_rates"):
+    if not isinstance(fedwatch, dict) or fedwatch.get("error"):
         return False
     today = today or date.today()
+    if validate_meeting_date(fedwatch.get("next_fomc_date"), today):
+        return False
+    if validate_target_rates(fedwatch.get("target_rates")):
+        return False
 
     history = _load_history(path)
     history[today.isoformat()] = {

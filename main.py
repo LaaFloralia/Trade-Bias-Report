@@ -558,11 +558,24 @@ def format_scraped_data(data: dict) -> str:
 
     # --- DXY 価格データ ---
     dxy = data.get("dxy")
-    if dxy and isinstance(dxy, dict) and dxy.get("current_price") is not None:
-        dxy_issues = validation_results.get("DXY", [])
+    dxy_issues = validation_results.get("DXY", [])
+    dxy_fatal_issues = [
+        issue for issue in dxy_issues
+        if issue.startswith("現在価格") or issue.startswith("前日終値")
+    ]
+    if (
+        dxy and isinstance(dxy, dict) and dxy_fatal_issues
+        and not (dxy.get("error") and dxy.get("current_price") is None)
+    ):
+        lines.append("[DXY (スクレイピング)]")
+        lines.append("価格セクション除外（データ異常: " + " / ".join(dxy_fatal_issues) + "）")
+        lines.append("")
+    elif dxy and isinstance(dxy, dict) and dxy.get("current_price") is not None:
+        current_price = float(dxy["current_price"])
+        prev_close = float(dxy["prev_close"])
         lines.append("[DXY (スクレイピング)]")
         lines.append(
-            f"現在値: {dxy['current_price']:,.3f} | 前日終値: {dxy.get('prev_close', 'N/A')} | "
+            f"現在値: {current_price:,.3f} | 前日終値: {prev_close:,.3f} | "
             f"前日比: {dxy.get('change', 'N/A')} ({dxy.get('change_pct', 'N/A')}%)"
         )
         if dxy.get("note"):
@@ -577,7 +590,10 @@ def format_scraped_data(data: dict) -> str:
                 lines.append(f"{label}: データ異常: {issue_msg}")
             elif h is not None and l is not None:
                 note = "（EUR/USD逆数から推定）" if dxy.get("estimated") else ""
-                lines.append(f"{label.split('/')[0]}: {h:,.3f} / {label.split('/')[1]}: {l:,.3f}{note}")
+                lines.append(
+                    f"{label.split('/')[0]}: {float(h):,.3f} / "
+                    f"{label.split('/')[1]}: {float(l):,.3f}{note}"
+                )
             else:
                 lines.append(f"{label}: 取得不可")
 
@@ -871,8 +887,12 @@ def format_scraped_data(data: dict) -> str:
     lines.append(f"days_until_fomc: {fomc_meta['days_until_fomc']}")
 
     fedwatch = data.get("fedwatch")
-    if fedwatch and isinstance(fedwatch, dict) and any(
-        fedwatch.get(k) is not None for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct"]
+    if fedwatch and isinstance(fedwatch, dict) and (
+        fedwatch.get("target_rates")
+        or any(
+            fedwatch.get(k) is not None
+            for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct", "hike_25bp_pct"]
+        )
     ):
         if fedwatch.get("hold_pct") is not None:
             lines.append(f"- 据え置き確率: {fedwatch['hold_pct']}%")
@@ -882,6 +902,11 @@ def format_scraped_data(data: dict) -> str:
             lines.append(f"- 50bp利下げ確率: {fedwatch['cut_50bp_pct']}%")
         if fedwatch.get("hike_25bp_pct") is not None:
             lines.append(f"- 25bp利上げ確率: {fedwatch['hike_25bp_pct']}%")
+        if fedwatch.get("target_rates") and all(
+            fedwatch.get(k) is None
+            for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct", "hike_25bp_pct"]
+        ):
+            lines.append("- 据え置き・利下げ・利上げ分類: 未確認（現行の公式政策金利との照合が必要）")
         # レートレンジ別確率 + 前日比/前週比（fedwatch_history が計算済みの値を出力）
         lines.extend(format_delta_lines(fedwatch))
         if fedwatch.get("next_fomc_date"):

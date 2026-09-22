@@ -6,10 +6,11 @@ format_scraped_data() でClaudeにデータを渡す直前に実行するバリ�
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -30,12 +31,26 @@ CHANGE_PCT_THRESHOLDS = {
 }
 
 
-def _check_zero_null_negative(value: Optional[float], field_name: str) -> Optional[str]:
-    """B-3: 価格のゼロ・NULL・負数チェック。"""
+def _to_finite_number(value: Any) -> Optional[float]:
+    """API由来の数値文字列を許容し、bool・NaN・無限大を拒否する。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        converted = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return converted if math.isfinite(converted) else None
+
+
+def _check_zero_null_negative(value: Any, field_name: str) -> Optional[str]:
+    """B-3: 価格が有限数かつ正数であることを確認する。"""
     if value is None:
         return f"{field_name}がNull"
-    if value <= 0:
-        return f"{field_name}がゼロまたは負数 ({value})"
+    converted = _to_finite_number(value)
+    if converted is None:
+        return f"{field_name}が数値不正 ({value!r})"
+    if converted <= 0:
+        return f"{field_name}がゼロまたは負数 ({converted})"
     return None
 
 
@@ -63,33 +78,21 @@ def validate_price_data(symbol: str, data: dict) -> List[str]:
     issues = []
 
     # --- B-3: 現在価格のゼロ・NULL・負数チェック ---
-    current = data.get("current_price") or data.get("close")
-    if current is not None:
-        try:
-            current = float(current)
-        except (ValueError, TypeError):
-            current = None
-    issue = _check_zero_null_negative(current, "現在価格")
+    current_raw = data["current_price"] if "current_price" in data else data.get("close")
+    issue = _check_zero_null_negative(current_raw, "現在価格")
     if issue:
         issues.append(issue)
 
-    prev_close = data.get("prev_close") or data.get("previous_close")
-    if prev_close is not None:
-        try:
-            prev_close = float(prev_close)
-        except (ValueError, TypeError):
-            prev_close = None
-    issue = _check_zero_null_negative(prev_close, "前日終値")
+    prev_close_raw = data["prev_close"] if "prev_close" in data else data.get("previous_close")
+    issue = _check_zero_null_negative(prev_close_raw, "前日終値")
     if issue:
         issues.append(issue)
 
     # --- B-2: 前日比の異常値チェック ---
-    change_pct = data.get("change_pct") or data.get("percent_change")
-    if change_pct is not None:
-        try:
-            change_pct = float(change_pct)
-        except (ValueError, TypeError):
-            change_pct = None
+    change_raw = data["change_pct"] if "change_pct" in data else data.get("percent_change")
+    change_pct = _to_finite_number(change_raw)
+    if change_raw is not None and change_pct is None:
+        issues.append(f"前日比が数値不正 ({change_raw!r})")
 
     if change_pct is not None and symbol in CHANGE_PCT_THRESHOLDS:
         threshold = CHANGE_PCT_THRESHOLDS[symbol]
@@ -102,11 +105,16 @@ def validate_price_data(symbol: str, data: dict) -> List[str]:
         h = data.get(h_key)
         l = data.get(l_key)
 
-        if h is not None and l is not None:
-            try:
-                h, l = float(h), float(l)
-            except (ValueError, TypeError):
-                continue
+        h_number = _to_finite_number(h)
+        l_number = _to_finite_number(l)
+
+        if h is not None and h_number is None:
+            issues.append(f"{label.split('/')[0]}が数値不正 ({h!r})")
+        if l is not None and l_number is None:
+            issues.append(f"{label.split('/')[1]}が数値不正 ({l!r})")
+
+        if h_number is not None and l_number is not None:
+            h, l = h_number, l_number
 
             # B-4: High < Low の逆転チェック
             inversion = _check_high_low_inversion(h, l, label)
@@ -120,22 +128,14 @@ def validate_price_data(symbol: str, data: dict) -> List[str]:
                 issues.append(f"{label} レンジ {range_val:.4f} が閾値 {threshold} 未満")
 
         # B-3: 個別のゼロ・NULL・負数チェック
-        if h is not None:
-            try:
-                h_float = float(h)
-                issue = _check_zero_null_negative(h_float, f"{label.split('/')[0]}")
-                if issue:
-                    issues.append(issue)
-            except (ValueError, TypeError):
-                pass
-        if l is not None:
-            try:
-                l_float = float(l)
-                issue = _check_zero_null_negative(l_float, f"{label.split('/')[1]}")
-                if issue:
-                    issues.append(issue)
-            except (ValueError, TypeError):
-                pass
+        if h_number is not None:
+            issue = _check_zero_null_negative(h_number, f"{label.split('/')[0]}")
+            if issue:
+                issues.append(issue)
+        if l_number is not None:
+            issue = _check_zero_null_negative(l_number, f"{label.split('/')[1]}")
+            if issue:
+                issues.append(issue)
 
     return issues
 
@@ -153,8 +153,8 @@ def validate_twelvedata_instrument(symbol: str, quote: dict, series: List[dict])
     """
     issues = []
 
-    if not quote or not quote.get("close"):
-        return ["データ未取得"]
+    if not isinstance(quote, dict):
+        return ["現在価格がNull", "前日終値がNull"]
 
     # quoteデータの変換
     data = {
@@ -163,29 +163,37 @@ def validate_twelvedata_instrument(symbol: str, quote: dict, series: List[dict])
         "change_pct": quote.get("percent_change"),
     }
 
-    # seriesからPDH/PDL等を抽出
+    def _raw_extreme(rows: List[dict], key: str, *, maximum: bool) -> Any:
+        """集計前に全要素を検証し、不正値はそのまま異常判定へ渡す。"""
+        values: List[float] = []
+        for row in rows:
+            if not isinstance(row, dict) or key not in row:
+                return "<missing>"
+            raw_value = row[key]
+            number = _to_finite_number(raw_value)
+            if number is None:
+                return raw_value
+            values.append(number)
+        if not values:
+            return "<missing>"
+        return max(values) if maximum else min(values)
+
+    # seriesからPDH/PDL等を抽出。不正値をfloatへ先変換して隠さない。
     if len(series) >= 2:
-        try:
-            data["pdh"] = float(series[1]["high"])
-            data["pdl"] = float(series[1]["low"])
-        except (KeyError, ValueError, IndexError):
-            pass
+        previous = series[1]
+        if isinstance(previous, dict):
+            data["pdh"] = previous.get("high", "<missing>")
+            data["pdl"] = previous.get("low", "<missing>")
 
     if len(series) >= 6:
-        try:
-            week_data = series[1:6]
-            data["pwh"] = max(float(v["high"]) for v in week_data)
-            data["pwl"] = min(float(v["low"]) for v in week_data)
-        except (KeyError, ValueError):
-            pass
+        week_data = series[1:6]
+        data["pwh"] = _raw_extreme(week_data, "high", maximum=True)
+        data["pwl"] = _raw_extreme(week_data, "low", maximum=False)
 
     if len(series) >= 23:
-        try:
-            month_data = series[1:23]
-            data["pmh"] = max(float(v["high"]) for v in month_data)
-            data["pml"] = min(float(v["low"]) for v in month_data)
-        except (KeyError, ValueError):
-            pass
+        month_data = series[1:23]
+        data["pmh"] = _raw_extreme(month_data, "high", maximum=True)
+        data["pml"] = _raw_extreme(month_data, "low", maximum=False)
 
     return validate_price_data(symbol, data)
 
@@ -302,32 +310,58 @@ def apply_validation(formatted_text: str, validation_results: Dict[str, List[str
         return formatted_text
 
     lines = formatted_text.split("\n")
-    new_lines = []
+    new_lines: List[str] = []
+    skip_price_section = False
+
+    fatal_by_symbol = {
+        symbol: [
+            issue for issue in issues
+            if issue.startswith("現在価格") or issue.startswith("前日終値")
+        ]
+        for symbol, issues in validation_results.items()
+    }
 
     for line in lines:
-        replaced = False
-        for symbol, issues in validation_results.items():
-            if f"[{symbol}]" in line:
-                # セクションヘッダー — そのまま通す
-                new_lines.append(line)
-                replaced = True
-                break
+        if skip_price_section and (
+            line.startswith("[") or line.startswith("### ") or line.startswith("=== ")
+        ):
+            skip_price_section = False
 
-            # PDH/PDL等の行をチェック
+        header = re.match(r"^\[([A-Za-z0-9_]+)(?:[^]]*)\]$", line)
+        if header:
+            skip_price_section = False
+            symbol = header.group(1)
+            fatal_issues = fatal_by_symbol.get(symbol) or []
+            if fatal_issues:
+                new_lines.append(line)
+                new_lines.append(
+                    "価格セクション除外（データ異常: " + " / ".join(fatal_issues) + "）"
+                )
+                skip_price_section = True
+                continue
+
+        if skip_price_section:
+            continue
+
+        replaced = False
+        context_symbol = _find_context_symbol(lines, new_lines)
+        for symbol, issues in validation_results.items():
+            if symbol != context_symbol:
+                continue
             for issue in issues:
-                if "PDH/PDL" in issue and "PDH:" in line and symbol in _find_context_symbol(lines, new_lines):
+                if ("PDH/PDL" in issue or issue.startswith(("PDH", "PDL"))) and "PDH:" in line:
                     new_lines.append(f"PDH/PDL: データ異常: {issue}")
                     replaced = True
                     break
-                if "PWH/PWL" in issue and "PWH:" in line and symbol in _find_context_symbol(lines, new_lines):
+                if ("PWH/PWL" in issue or issue.startswith(("PWH", "PWL"))) and "PWH:" in line:
                     new_lines.append(f"PWH/PWL: データ異常: {issue}")
                     replaced = True
                     break
-                if "PMH/PML" in issue and "PMH:" in line and symbol in _find_context_symbol(lines, new_lines):
+                if ("PMH/PML" in issue or issue.startswith(("PMH", "PML"))) and "PMH:" in line:
                     new_lines.append(f"PMH/PML: データ異常: {issue}")
                     replaced = True
                     break
-                if "前日比" in issue and "前日比:" in line and symbol in _find_context_symbol(lines, new_lines):
+                if "前日比" in issue and "前日比:" in line:
                     new_lines.append(f"前日比: データ異常: {issue}")
                     replaced = True
                     break
@@ -343,7 +377,7 @@ def apply_validation(formatted_text: str, validation_results: Dict[str, List[str
 def _find_context_symbol(all_lines: List[str], processed_lines: List[str]) -> str:
     """直近の [SYMBOL] ヘッダーから現在のコンテキスト銘柄を特定する。"""
     for line in reversed(processed_lines):
-        m = re.match(r'\[(\w+)\]', line)
+        m = re.match(r'^\[([A-Za-z0-9_]+)', line)
         if m:
             return m.group(1)
     return ""

@@ -1,0 +1,263 @@
+--- a/runner.py
++++ b/runner.py
+@@ -18,6 +18,7 @@
+ import subprocess
+ import sys
+ import tempfile
++import time
+ import tomllib
+ import uuid
+ from zoneinfo import ZoneInfo
+@@ -292,7 +293,8 @@
+ def runtime_git():
+     # Reuse an installed standalone Git if the system shim is unavailable (for
+     # example pending Xcode license). No installation or license acceptance.
+-    for candidate in ('git', '/Users/laa/Applications/Sourcetree.app/Contents/Resources/git_local/bin/git'):
++    for candidate in ('git', '/Library/Developer/CommandLineTools/usr/bin/git',
++                      '/Users/laa/Applications/Sourcetree.app/Contents/Resources/git_local/bin/git'):
+         try:
+             result = subprocess.run([candidate, '--version'], capture_output=True, timeout=10)
+             if result.returncode == 0:
+@@ -433,6 +435,61 @@
+     result = render(md_path, summary_path=kwargs.get('summary_path'),
+                     visuals_path=kwargs.get('visuals_path'), as_of=kwargs.get('as_of'), kind=kwargs.get('kind'))
+     return {'html_path': result['html'], 'presentation_audit_path': result['audit']}
++
++
++def audit_report_summary(md_path, summary_path, data_class='local'):
++    """Bounded auxiliary check of public summary/quote pairs, never acceptance."""
++    from scripts.jev_report_audit import audit_summary
++    md_path, summary_path = Path(md_path), Path(summary_path)
++    source = md_path.read_text(encoding='utf-8')
++    summary = json.loads(summary_path.read_text(encoding='utf-8'))
++    fallback = audit_summary(summary, source, mode='code')
++    target = md_path.with_suffix('.semantic-audit.json')
++    result = fallback
++    started = time.monotonic()
++    if data_class not in {'public', 'local'}:
++        raise ValueError('Summary data class must be public or local')
++    semantic_candidates = any(pair.get('result') == 'unassessed' for pair in fallback['pairs'])
++    deterministic_error = any(pair.get('result') == 'deterministic_error' for pair in fallback['pairs'])
++    if os.environ.get('LAA_JEV_DISABLED') == '1':
++        fallback['api']['reason'] = 'disabled'
++    if (data_class == 'public' and os.environ.get('LAA_JEV_DISABLED') != '1'
++            and semantic_candidates and not deterministic_error):
++        template = Path.home() / '.config/laa/typesafe.env.tpl'
++        wrapper = Path.home() / '.config/laa/op-run-batch.sh'
++        if template.is_file() and wrapper.is_file():
++            command = [str(wrapper), str(template), str(PYTHON), '-B',
++                       str(RUNTIME / 'scripts/jev_report_audit.py'),
++                       '--source', str(md_path), '--summary', str(summary_path),
++                       '--output', str(target), '--mode', 'jev', '--data-class', 'public']
++            try:
++                proc = subprocess.run(command, capture_output=True, timeout=25,
++                    env={'HOME': str(Path.home()), 'USER': os.environ.get('USER', 'laa'),
++                         'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'PYTHONDONTWRITEBYTECODE': '1'})
++                if proc.returncode != 0:
++                    raise RuntimeError('Auxiliary audit worker failed')
++                candidate = json.loads(target.read_text(encoding='utf-8'))
++                identity = lambda pair: tuple(pair.get(k) for k in
++                    ('id', 'text', 'source_quote', 'deterministic_status'))
++                if (not isinstance(candidate, dict) or candidate.get('schema_version') != 1 or
++                        candidate.get('source_sha256') != fallback['source_sha256'] or
++                        candidate.get('summary_sha256') != fallback['summary_sha256'] or
++                        not isinstance(candidate.get('pairs'), list) or
++                        not all(isinstance(pair, dict) for pair in candidate['pairs']) or
++                        [identity(pair) for pair in candidate['pairs']] !=
++                        [identity(pair) for pair in fallback['pairs']]):
++                    raise ValueError('Auxiliary audit input mismatch')
++                result = candidate
++            except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
++                # Do not expose arbitrary credential or API error text. A killed
++                # worker may have called the API; its shared reservation remains.
++                result['api'].update(status='fallback', reason='audit_worker_unavailable', request_count=None)
++        else:
++            result['api'].update(status='local_only', reason='credential_wrapper_unavailable')
++    result['total_elapsed_ms'] = round((time.monotonic() - started) * 1000, 3)
++    target.write_text(json.dumps(result, ensure_ascii=False, allow_nan=False, indent=2) + '\n')
++    target.chmod(0o600)
++    return str(target)
+ 
+ 
+ def collect_worker(mode):
+--- a/parent_workflow.py
++++ b/parent_workflow.py
+@@ -167,15 +167,21 @@
+     generated = read(sidecars['summary_path'])
+     summary.setdefault('limitations', []).extend(x for x in generated.get('limitations', []) if x not in summary.get('limitations', []))
+     write(sidecars['summary_path'], summary)
++    audit_path = runner.audit_report_summary(md_path, sidecars['summary_path'],
++                                            package.get('summary_data_class', 'local'))
++    audit = read(audit_path)
++    if any(pair.get('result') == 'deterministic_error' for pair in audit.get('pairs', [])):
++        raise ValueError('Summary contains missing or unmatched evidence quotes')
+     bundle = read(sidecars['bundle_path']); bundle['summarySha256'] = digest(sidecars['summary_path'])
+     bundle.update(historicalRevision=historical, validationMode='historical_replay' if historical else 'current', publicationReady=False)
++    bundle.update(semanticAuditRequired=True, semanticAuditSha256=digest(audit_path))
+     write(sidecars['bundle_path'], bundle)
+     write(md_path.with_suffix('.machine.json'), machine); write(md_path.with_suffix('.numeric.json'), facts)
+     md_path.with_suffix('.analysis-input.txt').write_bytes(local(request['input_path'], runner.ROOT).read_bytes())
+     if request.get('context'):
+         write(md_path.with_suffix('.context.json'), request['context'])
+     outputs = {**sidecars, 'md_path': str(md_path), 'json_path': str(md_path.with_suffix('.machine.json')),
+-               'numeric_path': str(md_path.with_suffix('.numeric.json'))}
++               'numeric_path': str(md_path.with_suffix('.numeric.json')), 'semantic_audit_path': audit_path}
+     outputs.update(runner.render_local(md_path, as_of=as_of.isoformat(), kind=mode,
+                                       summary_path=sidecars['summary_path'], visuals_path=sidecars['visuals_path']))
+     outputs['render_evidence_path'] = browser_check(outputs['html_path'], sidecars['bundle_path'], now=validation_time)
+--- a/report_review.py
++++ b/report_review.py
+@@ -19,6 +19,19 @@
+     hashes.update(machineSha256=digest(html_path.with_suffix('.machine.json')), numericSha256=digest(html_path.with_suffix('.numeric.json')))
+     if any(evidence.get(k) != v for k, v in hashes.items()):
+         raise RuntimeError('Parent review bound to different bytes')
++    if bundle.get('semanticAuditRequired') is True:
++        audit_path = html_path.with_suffix('.semantic-audit.json')
++        audit_hash = digest(audit_path)
++        acknowledgement = evidence.get('semanticAudit', {})
++        if (audit_hash != bundle.get('semanticAuditSha256') or
++                acknowledgement.get('sha256') != audit_hash or
++                acknowledgement.get('reviewed') is not True or
++                not isinstance(acknowledgement.get('notes'), str) or
++                not acknowledgement['notes'].strip()):
++            raise RuntimeError('Parent must inspect and acknowledge the current semantic audit')
++        audit = json.loads(audit_path.read_text())
++        if any(pair.get('result') == 'deterministic_error' for pair in audit.get('pairs', [])):
++            raise RuntimeError('Unmatched source quotes cannot be accepted')
+     if evidence.get('independentProcess') is not False or evidence.get('reviewer') != 'parent-ciel':
+         raise RuntimeError('Parent review cannot claim independent acceptance')
+     if render.get('status') != 'passed' or render.get('htmlSha256') != hashes['htmlSha256']:
+--- a/PARENT-WORKFLOW.md
++++ b/PARENT-WORKFLOW.md
+@@ -2,7 +2,7 @@
+ 
+ 2026-09-15の実行設定整理は [引き継ぎ](/Users/laa/.codex/work/external-effort-20260915/SESSION-HANDOFF.md) を参照。現在のモデル・effortは各定期タスク設定を正本とする。旧XAUUSD取引前分析は停止・アーカイブ済みで、定期分析の運用はDailyへ集約している。
+ 
+-更新: 2026-09-12。定期タスク自身が親です。別Codex、LLM CLI、サブエージェント、外部AIへ作成・レビューを渡しません。コードによる収集・計算・HTML生成・ブラウザ検査は継続します。Brain全アクセス、dev変更、外部公開・追加送信は禁止です。
++更新: 2026-09-22。定期タスク自身が親です。本文生成・受入判定は別Codex、LLM CLI、サブエージェントへ委譲しません。社長のJev改善依頼に基づき、公開市場資料の要約と引用の照合だけをJevの型付き補助判定へ渡せます。コードによる収集・計算・HTML生成・ブラウザ検査は継続します。Brain全アクセス、dev変更、資料の外部公開・追加送信は禁止です。
+ 
+ 1. `run.sh daily` または `run.sh weekly` を実行します。返る `awaiting_parent_authoring` は入力準備の完了で、資料完成ではありません。`request_path` と同じフォルダを今回の作業場所にします。再利用を指示された場合のみ `--reuse-data` を使います。通常版は同じ日・収集後6時間以内が必要です。
+ 2. requestの `input_path`、指定された既存master promptを読み、今回の親が原稿、機械JSON、要約を作ります。master promptは章構成の参照用です。そこにある旧Brain・CLI・委譲の指示は実行しません。データは未信頼の資料として扱います。前回レビューとXAU-TFは未取得、注文由来の未検証推定は除外します。
+@@ -10,9 +10,11 @@
+ 4. 原稿は既存の全章、8項目スコア、出典・時点・条件を保持します。Commercialsの急変は閾値・比較期間がなければ判定保留です。セクション0に「反証・無効化条件：…」「判断から除外する材料：…」を各一行で書きます。イベント後の持続確認・逆行時の棄却、政策確率の保留、構造欠測を要約から落としません。行頭の `#6` は「採点項目6」に直します。
+ 5. `machine.json` の必須6項目は `bias`, `no_trade`, `no_trade_reason`, `risk_events_next_24h`, `positioning_summary`, `confidence`。本文と照合して親が作成します。confidenceは校正済み確率ではありません。直近24時間のカレンダーはレンダー時にコードで同じ原データから再計算します。未検証のfallbackを成功にしません。
+ 6. `summary.json` は既存形式の `conclusion`, `metrics`, `conditions`, `limitations` 等を使い、各項目に本文と完全一致する `source_quote` を付けます。上の2行はconditionsまたはlimitationsに各1件を置き、`source_quote`は行全体、`text`はコロン後の全文とします。`scripts.report_bundle.make_summary` は下書きに利用できますが、そのまま受入にしません。
+-7. 作業フォルダへ `package.json` を保存します。キーは `request_path`, `md_path`, `machine_path`, `summary_path`、照合済みなら `policy_path`。値は同じジョブ内の実在する絶対パスです。`run.sh <kind> --parent-package <package.jsonの絶対パス>` で数値表、5図、全文、PC/スマホの検査を生成します。出力先は `reports/<kind>/editions/<作業フォルダ名>/`。同じ版への上書きを避けるため、新しい修正は作業フォルダを分けます。
++7. 作業フォルダへ `package.json` を保存します。キーは `request_path`, `md_path`, `machine_path`, `summary_path`、照合済みなら `policy_path`。パスは同じジョブ内の実在する絶対パスです。要約の全text/source_quoteが公開市場資料だけであると確認できた場合は `summary_data_class: "public"` を指定します。非公開・個人・口座・戦略情報を含む場合は `local`（省略時もlocal）。`run.sh <kind> --parent-package <package.jsonの絶対パス>` で数値表、5図、全文、PC/スマホ検査、`.semantic-audit.json` を生成します。publicの場合だけ既存1Password認証と共有USD 0.01/UTC日上限でJevへ最大1回送信します。`LAA_JEV_DISABLED=1` でローカル照合に戻せます。API失敗・未判定でも出力を残し、合格にはしません。出力先は `reports/<kind>/editions/<作業フォルダ名>/`。同じ版への上書きを避けるため、新しい修正は作業フォルダを分けます。
+ 8. 親が原データ・全本文・machine・numeric・summaryを読み、生成画像を実際に確認します。少なくともPC/スマホのoverview、全figure、PC/スマホのsource画像を含めます。重要な表は横スクロール後の画像も確認します。機械のoverflow検査を目視と呼ばないでください。
++   `.semantic-audit.json` の全pairも確認します。これは要約対本文の点検であり、本文対原資料の事実確認は親が別途行います。contradicts/insufficient/uncertain/unassessedは原文へ戻り、誤要約なら原稿と要約を直して新版を作ります。supportsやexact_matchも情報源自体の正しさを証明しません。空欄・引用不一致はコードで拒否します。
+ 9. `review.json` に `edition_path`, `status: "parent_passed"`（不合格は`changes_requested`）, `reviewer: "parent-ciel"`, `independentProcess: false`, `reviewedAt`, `issues`, `limitations` を書きます。`checks` は `scripts.report_acceptance.CHECKS` の8項目それぞれに `{ "passed": true/false, "evidence": "今回確認した具体的な内容" }`。`imagesReviewed` は実際に見た画像のpath/sha256配列です。`htmlSha256`, `bundleSha256`, `renderSha256`, `machineSha256`, `numericSha256` を今回の実体から計算して結び付けます。未確認項目をtrueにせず、親の自己レビューを独立レビューと呼びません。
++   新版では `semanticAudit: { "sha256": "監査JSONの実ファイルSHA-256", "reviewed": true, "notes": "指摘・未判定を原文に戻って確認した具体的内容" }` も必須です。API成功を確認notesの代わりにしません。
+ 10. `run.sh <kind> --parent-review <review.jsonの絶対パス>` で記録を確定します。`succeeded_local` と `parent_passed` はローカル資料の完成です。`independent_review_status: not_performed`, `publication_ready: false`, `publication_status: disabled` を保持します。公開dry-runも独立受入を必要とするため、この親レビューでは実行しません。`--publish`を付けません。
+ 
+ 原データ、原稿、HTML、図表、数値、要約、レビューは版単位で保持します。変更後の画像・数値・要約は再検査します。失敗時の詳細は作業フォルダで確認し、通知へ秘密値や生の外部エラーを出しません。生成後の失敗でも成果物は保持します。
+--- a/test_parent_workflow.py
++++ b/test_parent_workflow.py
+@@ -145,3 +145,40 @@
+ def test_context_snapshot_fallback_time_is_preserved():
+     metadata=runner.supplemental_metadata({'status':'unavailable','as_of':'2026-09-12T12:00:00+09:00'})
+     assert metadata['as_of']=='2026-09-12T12:00:00+09:00'
++
++
++def test_semantic_audit_requires_current_parent_acknowledgement(tmp_path, monkeypatch):
++    html, render, evidence, review = review_fixture(tmp_path, monkeypatch)
++    audit_path = html.with_suffix('.semantic-audit.json')
++    workflow.write(audit_path, {'status': 'review_required', 'pairs': [
++        {'id': 'conclusion', 'result': 'uncertain'}]})
++    bundle_path = html.with_suffix('.bundle.json')
++    workflow.write(bundle_path, {'semanticAuditRequired': True,
++                                'semanticAuditSha256': workflow.digest(audit_path)})
++    review['bundleSha256'] = workflow.digest(bundle_path)
++    workflow.write(evidence, review)
++    with pytest.raises(RuntimeError, match='semantic audit'):
++        report_review.review_report(html, bundle_path, render, evidence_path=evidence)
++    review['semanticAudit'] = {'sha256': workflow.digest(audit_path), 'reviewed': True,
++                              'notes': 'Fixture: uncertain pair inspected against full report.'}
++    workflow.write(evidence, review)
++    assert report_review.review_report(html, bundle_path, render, evidence_path=evidence)[1]
++    workflow.write(audit_path, {'status': 'changed'})
++    with pytest.raises(RuntimeError, match='semantic audit'):
++        report_review.review_report(html, bundle_path, render, evidence_path=evidence)
++
++
++def test_unmatched_source_quote_cannot_be_overridden_by_parent(tmp_path, monkeypatch):
++    html, render, evidence, review = review_fixture(tmp_path, monkeypatch)
++    audit_path = html.with_suffix('.semantic-audit.json')
++    workflow.write(audit_path, {'status': 'changes_required',
++                               'pairs': [{'result': 'deterministic_error'}]})
++    bundle_path = html.with_suffix('.bundle.json')
++    workflow.write(bundle_path, {'semanticAuditRequired': True,
++                                'semanticAuditSha256': workflow.digest(audit_path)})
++    review['bundleSha256'] = workflow.digest(bundle_path)
++    review['semanticAudit'] = {'sha256': workflow.digest(audit_path), 'reviewed': True,
++                              'notes': 'Fixture attempts to override missing quote.'}
++    workflow.write(evidence, review)
++    with pytest.raises(RuntimeError, match='Unmatched source quotes'):
++        report_review.review_report(html, bundle_path, render, evidence_path=evidence)
+--- /dev/null
++++ b/test_jev_integration.py
+@@ -0,0 +1,64 @@
++import json
++import subprocess
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++import runner
++
++
++def inputs(tmp_path):
++    source = tmp_path / 'report.md'
++    summary = tmp_path / 'report.summary.json'
++    source.write_text('A reduction is possible if inflation declines.')
++    summary.write_text(json.dumps({'conclusion': {
++        'text': 'A reduction will happen.', 'source_quote': source.read_text()}}))
++    return source, summary
++
++
++def test_local_summary_never_loads_credentials(tmp_path, monkeypatch):
++    source, summary = inputs(tmp_path)
++    monkeypatch.setattr(runner.subprocess, 'run', lambda *a, **k: pytest.fail('Unexpected credential/API process'))
++    audit = json.loads(Path(runner.audit_report_summary(source, summary)).read_text())
++    assert audit['pairs'][0]['result'] == 'unassessed'
++    assert audit['api']['request_count'] == 0
++    assert audit['scope']['source_fact_verification'] is False
++
++
++def test_disabled_public_summary_does_not_call_api(tmp_path, monkeypatch):
++    source, summary = inputs(tmp_path)
++    monkeypatch.setenv('LAA_JEV_DISABLED', '1')
++    monkeypatch.setattr(runner.subprocess, 'run', lambda *a, **k: pytest.fail('Unexpected credential/API process'))
++    audit = json.loads(Path(runner.audit_report_summary(source, summary, 'public')).read_text())
++    assert audit['api']['reason'] == 'disabled'
++
++
++def test_worker_timeout_retains_unknown_usage_and_unassessed_pair(tmp_path, monkeypatch):
++    source, summary = inputs(tmp_path)
++    monkeypatch.delenv('LAA_JEV_DISABLED', raising=False)
++    monkeypatch.setattr(Path, 'is_file', lambda _: True)
++    def fail(*args, **kwargs):
++        assert kwargs['timeout'] == 25
++        assert 'TYPESAFE_API_KEY' not in kwargs['env']
++        raise subprocess.TimeoutExpired('redacted', 25)
++    monkeypatch.setattr(runner.subprocess, 'run', fail)
++    audit = json.loads(Path(runner.audit_report_summary(source, summary, 'public')).read_text())
++    assert audit['api']['reason'] == 'audit_worker_unavailable'
++    assert audit['api']['request_count'] is None
++    assert audit['pairs'][0]['result'] == 'unassessed'
++
++
++def test_worker_cannot_omit_an_audited_pair(tmp_path, monkeypatch):
++    from scripts.jev_report_audit import audit_summary
++    source, summary = inputs(tmp_path)
++    monkeypatch.delenv('LAA_JEV_DISABLED', raising=False)
++    monkeypatch.setattr(Path, 'is_file', lambda _: True)
++    malformed = audit_summary(json.loads(summary.read_text()), source.read_text())
++    malformed['pairs'] = []
++    def fake(*args, **kwargs):
++        source.with_suffix('.semantic-audit.json').write_text(json.dumps(malformed))
++        return SimpleNamespace(returncode=0)
++    monkeypatch.setattr(runner.subprocess, 'run', fake)
++    audit = json.loads(Path(runner.audit_report_summary(source, summary, 'public')).read_text())
++    assert audit['api']['reason'] == 'audit_worker_unavailable'
++    assert len(audit['pairs']) == 1

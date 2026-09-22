@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from playwright.async_api import async_playwright
 from config import BROWSER_TIMEOUT, USER_AGENT
+from scrapers.fedwatch_history import validate_meeting_date, validate_target_rates
 
 
 async def _scrape_investing_fedwatch() -> Optional[dict]:
@@ -42,7 +44,8 @@ async def _scrape_investing_fedwatch() -> Optional[dict]:
         - next_fomc_date (例: "Jun 17, 2026")
         - future_price (例: 96.370)
         - target_rates: [{"range": "3.50 - 3.75", "current": 99.0, "prev_day": 99.2, "prev_week": 94.6}, ...]
-        - 互換: hold_pct / cut_25bp_pct / cut_50bp_pct / hike_25bp_pct (現在の Fed Funds rate を基準に算出)
+        - target_rates のみを事実として採用する。政策変更分類には現行の公式
+          target range が別途必要なため、このスクレイパーでは算出しない。
     """
     url = "https://www.investing.com/central-banks/fed-rate-monitor"
     result = {
@@ -85,6 +88,30 @@ async def _scrape_investing_fedwatch() -> Optional[dict]:
         result["error"] = f"Investing.com fed-rate-monitor 失敗: {e}"
         return result
 
+    return _parse_investing_body(body_text, result)
+
+
+def _parse_investing_body(
+    body_text: str,
+    result: Optional[dict] = None,
+    today: Optional[date] = None,
+) -> dict:
+    """Investing.com の本文を、政策変更分類を推測せずに構造化する。"""
+    if result is None:
+        result = {
+            "source": "Investing.com Fed Rate Monitor (CME Fed Funds futures)",
+            "next_fomc_date": None,
+            "future_price": None,
+            "target_rates": [],
+            "cut_25bp_pct": None,
+            "cut_50bp_pct": None,
+            "hold_pct": None,
+            "hike_25bp_pct": None,
+            "raw_probabilities": None,
+            "error": None,
+        }
+    today = today or date.today()
+
     # 1) Meeting Time: <date>
     meet = re.search(r"Meeting Time:\s*(\w{3}\s+\d{1,2},\s*\d{4})", body_text)
     if meet:
@@ -104,6 +131,11 @@ async def _scrape_investing_fedwatch() -> Optional[dict]:
         r"(\d\.\d{2}\s*-\s*\d\.\d{2})\s*\t\s*(\d{1,3}(?:\.\d+)?)\s*%\s*\t\s*"
         r"(\d{1,3}(?:\.\d+)?)\s*%\s*\t\s*(\d{1,3}(?:\.\d+)?)\s*%"
     )
+    detailed_rate_lines = [
+        line.strip()
+        for line in body_text.splitlines()
+        if re.search(r"\d\.\d{2}\s*-\s*\d\.\d{2}", line) and line.count("\t") >= 3
+    ]
     for m in table_re.finditer(body_text):
         try:
             result["target_rates"].append({
@@ -115,38 +147,26 @@ async def _scrape_investing_fedwatch() -> Optional[dict]:
         except ValueError:
             continue
 
-    # 4) 互換用フィールド: 現在 Fed Funds 政策金利を推定し、それに対する据置/利下げ/利上げ確率を出す。
-    # 現在の Fed Funds rate range は「最大確率の Target Rate range」を使う近似で十分。
-    # ただし Investing は通常 2 つの rate range のみ表示するので、シンプルに最大確率を hold_pct とみなす。
-    if result["target_rates"]:
-        # 最大確率の range を「直近の市場予想」として hold_pct に
-        top = max(result["target_rates"], key=lambda r: r["current"])
-        result["hold_pct"] = top["current"]
-        # 残りの range の合計確率を「変動確率」として hike/cut に振り分け
-        # range 表記から数値を取り出して、top より低ければ cut、高ければ hike
-        try:
-            top_low, top_high = [float(x) for x in re.findall(r"\d\.\d{2}", top["range"])]
-            for tr in result["target_rates"]:
-                if tr is top:
-                    continue
-                lo, hi = [float(x) for x in re.findall(r"\d\.\d{2}", tr["range"])]
-                if hi <= top_low:
-                    # range は top より下 → 利下げ
-                    diff_bp = round((top_high - hi) * 100)
-                    if diff_bp <= 25:
-                        result["cut_25bp_pct"] = (result.get("cut_25bp_pct") or 0) + tr["current"]
-                    elif diff_bp <= 50:
-                        result["cut_50bp_pct"] = (result.get("cut_50bp_pct") or 0) + tr["current"]
-                elif lo >= top_high:
-                    diff_bp = round((lo - top_low) * 100)
-                    if diff_bp <= 25:
-                        result["hike_25bp_pct"] = (result.get("hike_25bp_pct") or 0) + tr["current"]
-        except Exception:
-            pass
-
-    if result["next_fomc_date"] is None and not result["target_rates"]:
-        result["error"] = "Investing.com fed-rate-monitor 値抽出失敗"
-        return result
+    result["raw_target_rates"] = [dict(row) for row in result["target_rates"]]
+    result["raw_target_rate_lines"] = detailed_rate_lines
+    row_parse_error = None
+    if detailed_rate_lines and len(detailed_rate_lines) != len(result["target_rates"]):
+        row_parse_error = (
+            "レートレンジ別確率の一部行を数値として解析できない "
+            f"({len(result['target_rates'])}/{len(detailed_rate_lines)}行)"
+        )
+    validation_errors = [
+        error
+        for error in (
+            validate_meeting_date(result.get("next_fomc_date"), today),
+            row_parse_error,
+            validate_target_rates(result.get("target_rates")),
+        )
+        if error
+    ]
+    if validation_errors:
+        result["target_rates"] = []
+        result["error"] = "Investing.com FedWatch検証失敗: " + "; ".join(validation_errors)
 
     return result
 

@@ -1,6 +1,18 @@
 # ICT Daily / Weekly Bias Report — 自動生成パイプライン
 
-> **現行運用（2026-08-23）**: 全体ハーネスは Codex 中心だが、チャート外分析の Daily / Weekly / Quick は品質と使用枠を考慮し、Claude Code CLI のサブスク枠で Opus 5 / effort high を使う。`INTEL_ENGINE=codex` は比較検証用に残す。
+> **現行運用（2026-09-22）**: Codexの親タスクが作成・レビューし、このrepoは収集・数値検査・描画を担当します。入口は `/Users/laa/.codex/jobs/chart-intel/run.sh daily|weekly`。Claude/Hermes/旧Routinesは休止中です。以下の過去構成をそのまま起動しないでください。
+
+## 現行の入口
+
+- [引き継ぎと検証結果](docs/SESSION-HANDOFF.md)
+- [Jevによる照合の範囲と運用](docs/JEV-AUDIT.md)
+- [定期処理の作成・確認手順](/Users/laa/.codex/jobs/chart-intel/PARENT-WORKFLOW.md)
+
+定期処理はコミット済みコードを専用runtimeへ読み取ります。公開市場資料の要約と根拠文の照合をJevが補助し、数値・日付・鮮度はコード、最終判断は親タスクが確認します。Jevの失敗や低確信は未判定として残します。Brainへのアクセスと自動公開・送信は停止を維持しています。
+
+検証: `uv run pytest -q`。現在の定期設定とモデルはCodexの各定期タスク設定を参照します。
+
+## 以下は旧構成の履歴・互換資料
 
 > **2026-05-09 リネーム**: フォルダ名を `ict-daily-bias` → `fundamental-macro-analysis` に変更。
 > 社長は本プロジェクトを「**チャート外分析**」と呼ぶ（リテールセンチメント / 経済指標 / FedWatch / ETFフロー / COT 等、チャート上の値動き以外の情報を体系化するため）。

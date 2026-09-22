@@ -1,0 +1,157 @@
+{
+  "n": 16,
+  "correct_raw": 15,
+  "decisive": 6,
+  "unsafe_supports": [],
+  "api": {
+    "actual_cost_usd": "0.000180558",
+    "actual_model": "jev-1.13.0",
+    "budget_day_basis": "UTC",
+    "budget_usd": "0.010000000",
+    "candidate_count": 16,
+    "daily_accounted_usd": "0.000607866",
+    "decision_confidence_threshold": 0.9,
+    "latency_ms": 705.575,
+    "overflow_count": 0,
+    "reason": null,
+    "request_bytes": 14849,
+    "request_count": 1,
+    "requested_model": "jev-1.13.0",
+    "status": "success",
+    "unsettled_reserve_usd": "0.000000000",
+    "usage": {
+      "input_tokens": 4299,
+      "output_tokens": 735
+    }
+  },
+  "records": [
+    {
+      "id": "ja-faithful-paraphrase-01",
+      "expected": "supports",
+      "raw": "supports",
+      "result": "supports",
+      "confidence": 0.93,
+      "correct": true
+    },
+    {
+      "id": "en-faithful-paraphrase-01",
+      "expected": "supports",
+      "raw": "supports",
+      "result": "supports",
+      "confidence": 0.92,
+      "correct": true
+    },
+    {
+      "id": "ja-negation-reversal-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "contradicts",
+      "confidence": 0.99,
+      "correct": true
+    },
+    {
+      "id": "en-negation-reversal-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "contradicts",
+      "confidence": 0.99,
+      "correct": true
+    },
+    {
+      "id": "ja-condition-omission-01",
+      "expected": "insufficient",
+      "raw": "insufficient",
+      "result": "uncertain",
+      "confidence": 0.68,
+      "correct": true
+    },
+    {
+      "id": "en-condition-omission-01",
+      "expected": "insufficient",
+      "raw": "insufficient",
+      "result": "uncertain",
+      "confidence": 0.78,
+      "correct": true
+    },
+    {
+      "id": "ja-forecast-actual-confusion-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "uncertain",
+      "confidence": 0.85,
+      "correct": true
+    },
+    {
+      "id": "en-forecast-actual-confusion-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "uncertain",
+      "confidence": 0.84,
+      "correct": true
+    },
+    {
+      "id": "ja-stale-currentization-01",
+      "expected": "insufficient",
+      "raw": "insufficient",
+      "result": "uncertain",
+      "confidence": 0.48,
+      "correct": true
+    },
+    {
+      "id": "en-faithful-time-qualification-01",
+      "expected": "supports",
+      "raw": "supports",
+      "result": "uncertain",
+      "confidence": 0.56,
+      "correct": true
+    },
+    {
+      "id": "ja-sample-generalization-01",
+      "expected": "insufficient",
+      "raw": "contradicts",
+      "result": "uncertain",
+      "confidence": 0.58,
+      "correct": false
+    },
+    {
+      "id": "en-faithful-sample-scope-01",
+      "expected": "supports",
+      "raw": "supports",
+      "result": "uncertain",
+      "confidence": 0.52,
+      "correct": true
+    },
+    {
+      "id": "ja-causal-overclaim-01",
+      "expected": "insufficient",
+      "raw": "insufficient",
+      "result": "uncertain",
+      "confidence": 0.84,
+      "correct": true
+    },
+    {
+      "id": "en-causal-overclaim-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "contradicts",
+      "confidence": 0.95,
+      "correct": true
+    },
+    {
+      "id": "ja-unit-number-mismatch-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "contradicts",
+      "confidence": 0.92,
+      "correct": true
+    },
+    {
+      "id": "en-unit-number-mismatch-01",
+      "expected": "contradicts",
+      "raw": "contradicts",
+      "result": "uncertain",
+      "confidence": 0.84,
+      "correct": true
+    }
+  ]
+}

@@ -33,6 +33,13 @@ def _rate(rng, current, prev_day=None, prev_week=None):
     return {"range": rng, "current": current, "prev_day": prev_day, "prev_week": prev_week}
 
 
+def _valid_rates(first: float):
+    return [
+        _rate("3.50-3.75", first, first, first),
+        _rate("3.75-4.00", 100.0 - first, 100.0 - first, 100.0 - first),
+    ]
+
+
 def _write_history(path: Path, entries: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(entries), encoding="utf-8")
@@ -42,8 +49,8 @@ def test_record_snapshot_writes_and_overwrites_same_day(tmp_path):
     path = tmp_path / "fedwatch.json"
     today = date(2026, 8, 12)
 
-    assert record_snapshot(_fedwatch([_rate("3.50-3.75", 50.0)]), today, path) is True
-    assert record_snapshot(_fedwatch([_rate("3.50-3.75", 55.0)]), today, path) is True
+    assert record_snapshot(_fedwatch(_valid_rates(50.0)), today, path) is True
+    assert record_snapshot(_fedwatch(_valid_rates(55.0)), today, path) is True
 
     history = json.loads(path.read_text())
     assert list(history.keys()) == ["2026-08-12"]
@@ -60,10 +67,21 @@ def test_record_snapshot_prunes_old_entries(tmp_path):
     path = tmp_path / "fedwatch.json"
     _write_history(path, {"2026-01-01": _fedwatch([_rate("3.50-3.75", 40.0)])})
 
-    record_snapshot(_fedwatch([_rate("3.50-3.75", 50.0)]), date(2026, 8, 12), path)
+    record_snapshot(_fedwatch(_valid_rates(50.0)), date(2026, 8, 12), path)
     history = json.loads(path.read_text())
     assert "2026-01-01" not in history  # 120 日超は剪定
     assert "2026-08-12" in history
+
+
+def test_record_snapshot_rejects_invalid_probabilities_and_past_meeting(tmp_path):
+    path = tmp_path / "fedwatch.json"
+    today = date(2026, 8, 12)
+
+    assert record_snapshot(
+        _fedwatch([_rate("3.50-3.75", 150.0, 50.0, 50.0)]), today, path
+    ) is False
+    assert record_snapshot(_fedwatch(_valid_rates(50.0), meeting="Jan 1, 2020"), today, path) is False
+    assert not path.exists()
 
 
 def test_prev_day_from_history(tmp_path):

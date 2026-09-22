@@ -1,0 +1,155 @@
+{
+  "schema_version": "1.0",
+  "synthetic_notice": "All cases are synthetic and use fictional institutions, markets, dates, and values. They must not be treated as current or historical market facts.",
+  "labels": [
+    "supports",
+    "contradicts",
+    "insufficient"
+  ],
+  "cases": [
+    {
+      "id": "ja-faithful-paraphrase-01",
+      "language": "ja",
+      "category": "faithful_paraphrase",
+      "text": "アーカディアの8月総合物価指数は前月比0.2%上昇した。",
+      "source_quote": "アーカディア統計局は、8月の総合消費者物価指数が前月から0.2%上昇したと発表した。コア指数は0.1%上昇した。",
+      "expected": "supports",
+      "reason": "対象、期間、指標、方向、数値が一致しており、要約は根拠文の忠実な言い換えである。"
+    },
+    {
+      "id": "en-faithful-paraphrase-01",
+      "language": "en",
+      "category": "faithful_paraphrase",
+      "text": "New orders contracted in the September survey, with the index falling three points to 48.",
+      "source_quote": "The fictional Northbridge Manufacturing Survey covered 500 firms. Its new-orders index declined from 51 in August to 48 in September; readings below 50 indicate contraction.",
+      "expected": "supports",
+      "reason": "The summary preserves the month, three-point decline, final value, and the source-defined contraction threshold."
+    },
+    {
+      "id": "ja-negation-reversal-01",
+      "language": "ja",
+      "category": "negation_reversal",
+      "text": "セレス委員会は次回会合で利下げを検討している。",
+      "source_quote": "セレス金融政策委員会の議長は『次回会合での利下げは検討していない』と述べた。",
+      "expected": "contradicts",
+      "reason": "根拠文の否定を反転し、検討していない事項を検討中としている。"
+    },
+    {
+      "id": "en-negation-reversal-01",
+      "language": "en",
+      "category": "negation_reversal",
+      "text": "The Lumen Treasury ruled out extending the bond-buyback program beyond December.",
+      "source_quote": "The fictional Lumen Treasury said it had not ruled out extending the bond-buyback program beyond December, but no decision had been made.",
+      "expected": "contradicts",
+      "reason": "The claim reverses 'had not ruled out' into 'ruled out' and therefore states the opposite of the source."
+    },
+    {
+      "id": "ja-condition-omission-01",
+      "language": "ja",
+      "category": "condition_omission",
+      "text": "ノヴァ準備銀行は第4四半期に政策金利を引き下げる。",
+      "source_quote": "ノヴァ準備銀行は、インフレ率が目標を3か月連続で下回る場合、第4四半期の利下げを検討する可能性があるとした。",
+      "expected": "insufficient",
+      "reason": "根拠は条件付きの検討可能性であり、条件の成立も利下げの決定も示していない。"
+    },
+    {
+      "id": "en-condition-omission-01",
+      "language": "en",
+      "category": "condition_omission",
+      "text": "Orion Metals will reopen Mine 7 next month.",
+      "source_quote": "Fictional Orion Metals said Mine 7 could reopen next month if the safety regulator approves the revised ventilation plan and power testing is completed.",
+      "expected": "insufficient",
+      "reason": "The source describes a conditional possibility; it does not establish that either condition was met or that reopening is certain."
+    },
+    {
+      "id": "ja-forecast-actual-confusion-01",
+      "language": "ja",
+      "category": "forecast_vs_actual",
+      "text": "エルム国の10月輸出は前年同月比3.0%増加した。",
+      "source_quote": "エルム経済研究所は10月輸出を前年同月比3.0%増と予想したが、統計局が後日発表した実績は1.1%増だった。",
+      "expected": "contradicts",
+      "reason": "要約は予想値3.0%を実績としており、根拠に示された実績1.1%と矛盾する。"
+    },
+    {
+      "id": "en-forecast-actual-confusion-01",
+      "language": "en",
+      "category": "forecast_vs_actual",
+      "text": "The Meridia jobs report showed a gain of 42,000 positions in November.",
+      "source_quote": "Analysts in the fictional Meridia consensus expected 42,000 additional jobs in November. The official release later reported an increase of 18,000.",
+      "expected": "contradicts",
+      "reason": "The summary presents the consensus forecast as the reported outcome, which the source states was 18,000."
+    },
+    {
+      "id": "ja-stale-currentization-01",
+      "language": "ja",
+      "category": "stale_as_current",
+      "text": "現在、アルバ港の在庫は180万トンである。",
+      "source_quote": "架空のアルバ港湾局が1月31日に公表した月報では、1月末時点の在庫は180万トンだった。以後の在庫水準はこの資料に含まれない。",
+      "expected": "insufficient",
+      "reason": "根拠は1月末の過去時点だけを示し、要約がいう現在の在庫を裏づけない。"
+    },
+    {
+      "id": "en-faithful-time-qualification-01",
+      "language": "en",
+      "category": "faithful_temporal_qualification",
+      "text": "A Vela survey conducted six months ago put one-year household inflation expectations at 2.6%.",
+      "source_quote": "A fictional Vela survey conducted six months ago recorded one-year household inflation expectations of 2.6%. The bulletin provides no newer observation.",
+      "expected": "supports",
+      "reason": "The summary preserves the age of the observation, the horizon, and the reported value without presenting it as current."
+    },
+    {
+      "id": "ja-sample-generalization-01",
+      "language": "ja",
+      "category": "sample_to_market_generalization",
+      "text": "フェーン国の小売業者はすべて、年末商戦の売上増加を見込んでいる。",
+      "source_quote": "民間調査会社が首都圏2都市の小売店120社を調査したところ、回答した78社のうち61%が年末商戦の売上増加を予想した。地方店舗と無回答企業は標本に含まれない。",
+      "expected": "insufficient",
+      "reason": "限定された都市・回答者の多数意見から、全国の全小売業者へ一般化する根拠がない。"
+    },
+    {
+      "id": "en-faithful-sample-scope-01",
+      "language": "en",
+      "category": "faithful_sample_scope",
+      "text": "In one Solaris brokerage's poll, 22 of 36 clients expected the five-year yield to fall.",
+      "source_quote": "A fictional poll of 36 clients of one Solaris brokerage found that 22 expected the five-year yield to decline. The poll did not cover other brokerages or investor groups.",
+      "expected": "supports",
+      "reason": "The summary retains the sample size, one-brokerage scope, count, instrument, and expected direction."
+    },
+    {
+      "id": "ja-causal-overclaim-01",
+      "language": "ja",
+      "category": "causal_overclaim",
+      "text": "弱い鉱工業生産の発表が、リュミエール国の10年債利回り低下を引き起こした。",
+      "source_quote": "リュミエール国の10年債利回りは鉱工業生産の発表後に低下した。同日の債券市場では大型入札と海外金利低下もあり、この資料は値動きの原因を特定していない。",
+      "expected": "insufficient",
+      "reason": "発表後という時間関係は示すが、複数要因があり、根拠文は因果を特定していない。"
+    },
+    {
+      "id": "en-causal-overclaim-01",
+      "language": "en",
+      "category": "causal_overclaim",
+      "text": "A cyberattack caused the full decline in fictional Port Helios shipments.",
+      "source_quote": "Port Helios shipments fell 12% in the quarter. The operator attributed most of the decline to a scheduled berth closure and said a brief cyber incident had no measurable effect on loaded volume.",
+      "expected": "contradicts",
+      "reason": "The source explicitly says the cyber incident had no measurable volume effect and identifies another main cause."
+    },
+    {
+      "id": "ja-unit-number-mismatch-01",
+      "language": "ja",
+      "category": "unit_or_numeric_mismatch",
+      "text": "ミナト基金は社債を2.4兆円購入した。",
+      "source_quote": "架空のミナト基金は当月、社債を24億円購入したと開示した。",
+      "expected": "contradicts",
+      "reason": "24億円と2.4兆円では単位換算後の金額が1,000倍異なる。"
+    },
+    {
+      "id": "en-unit-number-mismatch-01",
+      "language": "en",
+      "category": "unit_or_numeric_mismatch",
+      "text": "The fictional Aster freight index rose to 106.4 in May.",
+      "source_quote": "The Aster freight index increased from 102.0 in April to 104.6 in May, according to the fictional exchange bulletin.",
+      "expected": "contradicts",
+      "reason": "The claimed May value is 106.4, while the source reports 104.6."
+    }
+  ]
+}

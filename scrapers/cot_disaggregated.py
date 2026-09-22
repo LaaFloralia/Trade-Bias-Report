@@ -22,12 +22,14 @@ OTC 需要の裏返し。Legacy の "Commercials"（= Swap + Producer 合算）�
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
+from scrapers.cot import _report_date_status
 
 BASE_URL = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json"
 
@@ -102,7 +104,18 @@ def fetch_cot_disaggregated(market_name: str) -> dict:
     Returns:
         {"market": str, "data": dict | None, "error": str | None}
     """
-    result = {"market": market_name, "data": None, "error": None}
+    fetched_at = datetime.now(timezone.utc)
+    result = {
+        "market": market_name,
+        "data": None,
+        "source": "CFTC Public Reporting (Disaggregated Futures Only)",
+        "source_url": BASE_URL,
+        "timestamp": fetched_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "as_of_date": None,
+        "stale": False,
+        "fallback_used": False,
+        "error": None,
+    }
     params = {
         "$where": f"market_and_exchange_names='{market_name}'",
         "$order": "report_date_as_yyyy_mm_dd DESC",
@@ -119,7 +132,15 @@ def fetch_cot_disaggregated(market_name: str) -> dict:
     if not rows:
         result["error"] = "データなし"
         return result
+    as_of, date_error, is_stale = _report_date_status(
+        rows[0].get("report_date_as_yyyy_mm_dd"), fetched_at.date()
+    )
+    if date_error:
+        result["stale"] = is_stale
+        result["error"] = date_error
+        return result
     result["data"] = _parse_row(rows[0])
+    result["as_of_date"] = as_of.isoformat()
     return result
 
 
