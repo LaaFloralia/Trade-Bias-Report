@@ -1,0 +1,59 @@
+--- a/test_parent_workflow.py
++++ b/test_parent_workflow.py
+@@ -11 +11 @@
+-from numeric_validation import fedwatch_facts
++from numeric_validation import facts_markdown, fedwatch_facts
+@@ -52,0 +53,53 @@
++
++
++def test_partial_fedwatch_keeps_known_rows_and_explicit_unavailable_range():
++    raw=deepcopy(RAW)
++    raw.update(completeness='partial', unavailable_target_rates=[
++        {'range':'3.50-3.75','current':None,'prev_day':None,'prev_week':5.2,
++         'availability':'unavailable'}])
++    raw['target_rates']=[
++        {'range':'3.75-4.00','current':47.2,'prev_day':40.3,'prev_week':49.6},
++        {'range':'4.00-4.25','current':52.8,'prev_day':59.7,'prev_week':45.2},
++    ]
++    facts=fedwatch_facts(raw,REF)
++    assert facts['status']=='partial' and facts['distribution_status']=='partial'
++    assert facts['known_current_total_pct']==100
++    assert facts['missing_ranges']==['3.50-3.75']
++    assert [(r['range'],r['current_pct']) for r in facts['rows']]==[
++        ('3.75-4.00',47.2),('4.00-4.25',52.8),('3.50-3.75',None)]
++    assert facts['rows'][-1]['comparisons']['prev_week']['prior_pct']==5.2
++    report=facts_markdown(facts)
++    assert '全体合計と政策方向別確率は未確定' in report
++    assert '| 3.50-3.75 | 確率欠測 | 取得不可 | 取得不可 | 差分算出不可（提供表 5.2%） |' in report
++
++
++def test_partial_fedwatch_does_not_assert_known_subtotal():
++    raw=deepcopy(RAW)
++    raw.update(completeness='partial', unavailable_target_rates=[
++        {'range':'3.50-3.75','current':None,'prev_day':None,'prev_week':None}])
++    raw['target_rates']=[
++        {'range':'3.75-4.00','current':40,'prev_day':None,'prev_week':None},
++        {'range':'4.00-4.25','current':40,'prev_day':None,'prev_week':None},
++    ]
++    facts=fedwatch_facts(raw,REF)
++    assert facts['distribution_status']=='partial'
++    assert facts['known_current_total_pct']==80
++
++
++def test_partial_fedwatch_with_no_known_current_rows_stays_unassessed_and_visible():
++    raw=deepcopy(RAW)
++    raw.update(completeness='partial', target_rates=[], unavailable_target_rates=[
++        {'range':'3.50-3.75','current':None,'prev_day':None,'prev_week':5.2,
++         'availability':'unavailable'},
++        {'range':'3.75-4.00','current':None,'prev_day':None,'prev_week':None,
++         'availability':'unavailable'},
++    ])
++    facts=fedwatch_facts(raw,REF)
++    assert facts['status']=='partial' and facts['distribution_status']=='partial'
++    assert facts['known_current_total_pct']==0
++    assert facts['missing_ranges']==['3.50-3.75','3.75-4.00']
++    assert all(row['current_pct'] is None for row in facts['rows'])
++    report=facts_markdown(facts)
++    assert '全体合計と政策方向別確率は未確定' in report
++    assert '| 3.50-3.75 | 確率欠測 | 取得不可 | 取得不可 | 差分算出不可（提供表 5.2%） |' in report
++    assert '| 3.75-4.00 | 確率欠測 | 取得不可 | 取得不可 | 取得不可 |' in report

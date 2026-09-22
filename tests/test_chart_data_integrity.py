@@ -9,6 +9,7 @@ import pytest
 import main
 from scrapers import cot, cot_disaggregated as cotd
 from scrapers.fedwatch import _parse_investing_body
+from scrapers.twelvedata import _format_instrument
 from scrapers.validation import (
     apply_validation,
     validate_all,
@@ -263,6 +264,71 @@ def test_twelvedata_weekly_aggregate_rejects_bool_instead_of_coercing_to_one():
 
     assert any(issue.startswith("PWHが数値不正") for issue in issues)
     assert series[3]["high"] is True
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "issue_prefix"),
+    [
+        ("change", "nan", "変化額が数値不正"),
+        ("open", "nan", "当日始値が数値不正"),
+        ("open", "-1", "当日始値がゼロまたは負数"),
+        ("high", "inf", "当日高値が数値不正"),
+        ("high", "-1", "当日高値がゼロまたは負数"),
+        ("low", "nan", "当日安値が数値不正"),
+        ("low", "-1", "当日安値がゼロまたは負数"),
+    ],
+)
+def test_invalid_twelvedata_change_or_ohlc_is_removed_from_formatted_input(
+    field, bad_value, issue_prefix
+):
+    quote = {
+        "close": "2350",
+        "previous_close": "2340",
+        "change": "10",
+        "percent_change": "0.427",
+        "open": "2345",
+        "high": "2360",
+        "low": "2330",
+    }
+    quote[field] = bad_value
+    price_text = "\n".join(
+        [
+            "=== Price Data (Twelve Data API) ===",
+            "",
+            *_format_instrument("XAUUSD", quote, []),
+            "[USDJPY]",
+            "有効な後続セクション",
+        ]
+    )
+    text = main.format_scraped_data(
+        {
+            "timestamp": "2026-09-22T12:00:00Z",
+            "price_data": price_text,
+            "_raw_quote_XAUUSD": quote,
+            "_raw_series_XAUUSD": [],
+        }
+    )
+
+    assert "[XAUUSD]\n価格セクション除外" in text
+    assert issue_prefix in text
+    assert repr(bad_value).lower() not in text.lower()
+    if bad_value == "-1":
+        assert "(-1.0)" not in text
+    assert "[USDJPY]\n有効な後続セクション" in text
+
+
+def test_negative_twelvedata_change_amount_is_valid_when_finite():
+    quote = {
+        "close": "2340",
+        "previous_close": "2350",
+        "change": "-10",
+        "percent_change": "-0.426",
+        "open": "2345",
+        "high": "2355",
+        "low": "2335",
+    }
+    issues = validate_twelvedata_instrument("XAUUSD", quote, [])
+    assert not any(issue.startswith("変化額") for issue in issues)
 
 
 def test_invalid_previous_close_also_removes_price_section():

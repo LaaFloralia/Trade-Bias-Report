@@ -35,16 +35,27 @@ PREV_WEEK_PREFERRED = 7
 PROBABILITY_TOTAL_TOLERANCE = 0.2
 
 
-def validate_target_rates(rates: object) -> Optional[str]:
+def validate_target_rates(
+    rates: object,
+    *,
+    require_total: bool = True,
+    allow_missing_current: bool = False,
+) -> Optional[str]:
     """FedWatchのレート別確率が履歴・判断に使えるか検査する。"""
     if not isinstance(rates, list) or not rates:
         return "レートレンジ別確率が未取得"
     current_total = 0.0
+    missing_current = False
     for index, row in enumerate(rates, start=1):
         if not isinstance(row, dict) or not row.get("range"):
             return f"レートレンジ別確率 {index} 行目の形式が不正"
         for field in ("current", "prev_day", "prev_week"):
             value = row.get(field)
+            if value is None and field != "current":
+                continue
+            if value is None and field == "current" and allow_missing_current:
+                missing_current = True
+                continue
             if isinstance(value, bool):
                 return f"{row.get('range')} {field} が数値不正"
             try:
@@ -55,7 +66,11 @@ def validate_target_rates(rates: object) -> Optional[str]:
                 return f"{row.get('range')} {field} が0〜100の範囲外 ({value})"
             if field == "current":
                 current_total += number
-    if abs(current_total - 100.0) > PROBABILITY_TOTAL_TOLERANCE:
+    if missing_current and require_total:
+        return "current確率が欠測しているため合計を検証できない"
+    if not require_total and current_total > 100.0 + PROBABILITY_TOTAL_TOLERANCE:
+        return f"既知current確率だけで100%を超過 ({current_total:.3f}%)"
+    if require_total and abs(current_total - 100.0) > PROBABILITY_TOTAL_TOLERANCE:
         return (
             f"current確率合計が100%と不整合 ({current_total:.3f}%, "
             f"許容±{PROBABILITY_TOTAL_TOLERANCE}pp)"
@@ -91,7 +106,12 @@ def record_snapshot(fedwatch: dict, today: Optional[date] = None, path: Path = H
 
     Returns: 保存したかどうか。
     """
-    if not isinstance(fedwatch, dict) or fedwatch.get("error"):
+    if (
+        not isinstance(fedwatch, dict)
+        or fedwatch.get("error")
+        or fedwatch.get("completeness") == "partial"
+        or fedwatch.get("unavailable_target_rates")
+    ):
         return False
     today = today or date.today()
     if validate_meeting_date(fedwatch.get("next_fomc_date"), today):
@@ -212,7 +232,8 @@ def format_delta_lines(fedwatch: dict) -> list[str]:
     格納している前提。deltas 未添付でも current 値だけは出力する。
     """
     rates = fedwatch.get("target_rates") or []
-    if not rates:
+    unavailable = fedwatch.get("unavailable_target_rates") or []
+    if not rates and not unavailable:
         return []
 
     deltas = fedwatch.get("deltas") or {}
@@ -225,12 +246,25 @@ def format_delta_lines(fedwatch: dict) -> list[str]:
         return f"{v:+.1f}pp" if v is not None else "N/A"
 
     lines = ["- レートレンジ別確率（前日比はデイリー用 / 前週比はウィークリー用）:"]
+    if unavailable or fedwatch.get("completeness") == "partial":
+        lines.append(
+            "  現在確率分布: 一部欠測（欠測レンジを0%補完せず、全体分布は未確定）"
+        )
     for r in rates:
         rng = r.get("range")
         cur = r.get("current")
         cur_str = f"{cur}%" if cur is not None else "N/A"
         lines.append(
             f"  * {rng}: 現在 {cur_str} | 前日比 {_fmt(day, rng)} | 前週比 {_fmt(week, rng)}"
+        )
+    for r in unavailable:
+        rng = r.get("range", "レンジ不明")
+        prior_day = r.get("prev_day")
+        prior_week = r.get("prev_week")
+        prior_day_str = f"{prior_day:g}%" if prior_day is not None else "取得不可"
+        prior_week_str = f"{prior_week:g}%" if prior_week is not None else "取得不可"
+        lines.append(
+            f"  * {rng}: 現在 取得不可 | 提供表前日 {prior_day_str} | 提供表前週 {prior_week_str}"
         )
     if day:
         lines.append(f"  前日比ソース: {day['source']}")

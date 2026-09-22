@@ -542,6 +542,9 @@ def extract_fedwatch(sections: list[Section], data: ReportData) -> None:
     if s is None:
         return
     fw: dict = {}
+    fw["partial"] = bool(
+        re.search(r"現在確率分布:\s*一部欠測|現在\s+取得不可", s.body)
+    )
     m = re.search(r"次回FOMC日?（あと\s*(\d+)\s*日）?\s*\|?\s*([0-9]{4}-[0-9]{2}-[0-9]{2})", s.body)
     if m:
         fw["days"], fw["date"] = m.group(1), m.group(2)
@@ -552,7 +555,12 @@ def extract_fedwatch(sections: list[Section], data: ReportData) -> None:
         m = re.search(r"あと\s*(\d+)\s*日", s.body)
         if m:
             fw["days"] = m.group(1)
-    probs = re.findall(r"(\d\.\d{2}-\d\.\d{2})\s*(\d{1,2}(?:\.\d)?)%", s.body)
+    probs = re.findall(
+        r"(\d+\.\d{2}-\d+\.\d{2}):\s*現在\s*([0-9]+(?:\.[0-9]+)?)%",
+        s.body,
+    )
+    if not probs:
+        probs = re.findall(r"(\d\.\d{2}-\d\.\d{2})\s*(\d{1,2}(?:\.\d)?)%", s.body)
     if probs:
         fw["probs"] = [(rng, float(p)) for rng, p in probs[: 4]]
     data.fedwatch = fw
@@ -1120,12 +1128,18 @@ def build_retail_panel(data: ReportData) -> str:
 def build_macro_panel(data: ReportData) -> str:
     blocks = []
     fw = data.fedwatch
-    if fw.get("probs"):
+    if fw.get("probs") or fw.get("partial"):
         head = "FedWatch"
         if fw.get("date"):
             days = f"（あと {fw['days']} 日）" if fw.get("days") else ""
             head += f' — 次回 FOMC {esc(fw["date"])}{days}'
-        blocks.append(f'<div class="macro-head">{head}</div>{svg_prob_bar(fw["probs"])}')
+        if fw.get("partial"):
+            blocks.append(
+                f'<div class="macro-head">{head}</div>'
+                '<div class="mini-note">確率分布は一部欠測です。完全な分布としてのバーは表示していません。</div>'
+            )
+        elif fw.get("probs"):
+            blocks.append(f'<div class="macro-head">{head}</div>{svg_prob_bar(fw["probs"])}')
     if data.vix_line:
         blocks.append(f'<div class="mini-note">{esc(data.vix_line[:120])}</div>')
     if not blocks:

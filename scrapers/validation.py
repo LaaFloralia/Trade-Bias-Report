@@ -94,6 +94,31 @@ def validate_price_data(symbol: str, data: dict) -> List[str]:
     if change_raw is not None and change_pct is None:
         issues.append(f"前日比が数値不正 ({change_raw!r})")
 
+    # Twelve Data の変化額は負値が正常なので、有限数かだけを検証する。
+    change_amount = data.get("change")
+    if change_amount is not None and _to_finite_number(change_amount) is None:
+        issues.append(f"変化額が数値不正 ({change_amount!r})")
+
+    # 当日 OHLC は正の有限数で、始値・終値を日中レンジが包含する必要がある。
+    ohlc = {}
+    for key, label in (("open", "当日始値"), ("high", "当日高値"), ("low", "当日安値")):
+        raw_value = data.get(key)
+        if raw_value is None:
+            continue
+        issue = _check_zero_null_negative(raw_value, label)
+        if issue:
+            issues.append(issue)
+            continue
+        ohlc[key] = _to_finite_number(raw_value)
+    current_number = _to_finite_number(current_raw)
+    if all(key in ohlc for key in ("open", "high", "low")) and current_number is not None:
+        if ohlc["high"] < max(ohlc["open"], current_number):
+            issues.append("当日OHLC整合性不正: 高値が始値または終値を下回る")
+        if ohlc["low"] > min(ohlc["open"], current_number):
+            issues.append("当日OHLC整合性不正: 安値が始値または終値を上回る")
+        if ohlc["high"] < ohlc["low"]:
+            issues.append("当日OHLC整合性不正: 高値が安値を下回る")
+
     if change_pct is not None and symbol in CHANGE_PCT_THRESHOLDS:
         threshold = CHANGE_PCT_THRESHOLDS[symbol]
         if abs(change_pct) > threshold:
@@ -161,6 +186,10 @@ def validate_twelvedata_instrument(symbol: str, quote: dict, series: List[dict])
         "current_price": quote.get("close"),
         "prev_close": quote.get("previous_close"),
         "change_pct": quote.get("percent_change"),
+        "change": quote.get("change"),
+        "open": quote.get("open"),
+        "high": quote.get("high"),
+        "low": quote.get("low"),
     }
 
     def _raw_extreme(rows: List[dict], key: str, *, maximum: bool) -> Any:
@@ -316,7 +345,15 @@ def apply_validation(formatted_text: str, validation_results: Dict[str, List[str
     fatal_by_symbol = {
         symbol: [
             issue for issue in issues
-            if issue.startswith("現在価格") or issue.startswith("前日終値")
+            if issue.startswith((
+                "現在価格",
+                "前日終値",
+                "変化額",
+                "当日始値",
+                "当日高値",
+                "当日安値",
+                "当日OHLC",
+            ))
         ]
         for symbol, issues in validation_results.items()
     }
@@ -334,8 +371,9 @@ def apply_validation(formatted_text: str, validation_results: Dict[str, List[str
             fatal_issues = fatal_by_symbol.get(symbol) or []
             if fatal_issues:
                 new_lines.append(line)
+                safe_issues = [issue.split(" (", 1)[0] for issue in fatal_issues]
                 new_lines.append(
-                    "価格セクション除外（データ異常: " + " / ".join(fatal_issues) + "）"
+                    "価格セクション除外（データ異常: " + " / ".join(safe_issues) + "）"
                 )
                 skip_price_section = True
                 continue

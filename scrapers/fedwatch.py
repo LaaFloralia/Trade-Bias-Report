@@ -125,47 +125,105 @@ def _parse_investing_body(
         except ValueError:
             pass
 
-    # 3) Target Rate テーブル: "X.XX - X.XX \tCUR%\tPREV_DAY%\tPREV_WEEK%"
-    # 行ごとに数値 4 列をパース
-    table_re = re.compile(
-        r"(\d\.\d{2}\s*-\s*\d\.\d{2})\s*\t\s*(\d{1,3}(?:\.\d+)?)\s*%\s*\t\s*"
-        r"(\d{1,3}(?:\.\d+)?)\s*%\s*\t\s*(\d{1,3}(?:\.\d+)?)\s*%"
+    # 3) Target Rate テーブル。金利レンジで始まり、4セルすべてを持つ
+    # 行だけを対象にする。確率セルの空欄やダッシュは欠測として保持し、
+    # 後続の市況表（例: S&P 500 VIX）は対象にしない。
+    rate_candidate_re = re.compile(
+        r"^\s*(\d+\.\d{2}\s*-\s*\d+\.\d{2})(?=[ \t]*\t)"
     )
-    detailed_rate_lines = [
-        line.strip()
-        for line in body_text.splitlines()
-        if re.search(r"\d\.\d{2}\s*-\s*\d\.\d{2}", line) and line.count("\t") >= 3
-    ]
-    for m in table_re.finditer(body_text):
-        try:
-            result["target_rates"].append({
-                "range": m.group(1).replace(" ", ""),
-                "current": float(m.group(2)),
-                "prev_day": float(m.group(3)),
-                "prev_week": float(m.group(4)),
-            })
-        except ValueError:
-            continue
+    rate_label_re = re.compile(r"\d+\.\d{2}\s*-\s*\d+\.\d{2}")
+    missing_tokens = {"—", "–", "-", "N/A"}
 
-    result["raw_target_rates"] = [dict(row) for row in result["target_rates"]]
+    def parse_probability(cell: str, field: str) -> Optional[float]:
+        value = cell.strip()
+        if not value or value.upper() in missing_tokens:
+            return None
+        match = re.fullmatch(r"([0-9]{1,3}(?:\.[0-9]+)?)\s*%", value)
+        if not match:
+            raise ValueError(f"一部行を数値として解析できない: {field} ({value})")
+        number = float(match.group(1))
+        if not 0.0 <= number <= 100.0:
+            raise ValueError(f"{field} が0〜100の範囲外 ({value})")
+        return number
+
+    detailed_rate_lines = []
+    parsed_rates = []
+    row_parse_errors = []
+    for line in body_text.splitlines():
+        candidate = rate_candidate_re.match(line)
+        if not candidate:
+            continue
+        detailed_rate_lines.append(line.strip())
+        columns = line.split("\t")
+        if len(columns) != 4:
+            row_parse_errors.append(
+                f"{re.sub(r'\s+', '', candidate.group(1))}: レート行の4列形式が不正"
+            )
+            continue
+        label = columns[0].strip()
+        if not rate_label_re.fullmatch(label):
+            row_parse_errors.append(
+                f"{re.sub(r'\s+', '', candidate.group(1))}: レート行の4列形式が不正"
+            )
+            continue
+        rng = re.sub(r"\s+", "", label)
+        low, high = (float(value) for value in re.split(r"-", rng))
+        if high <= low:
+            row_parse_errors.append(f"{rng}: レートレンジの順序が不正")
+            continue
+        try:
+            current, prev_day, prev_week = (
+                parse_probability(columns[1], "current"),
+                parse_probability(columns[2], "prev_day"),
+                parse_probability(columns[3], "prev_week"),
+            )
+        except ValueError as exc:
+            row_parse_errors.append(f"{rng}: {exc}")
+            continue
+        row = {
+            "range": rng,
+            "current": current,
+            "prev_day": prev_day,
+            "prev_week": prev_week,
+        }
+        parsed_rates.append(row)
+
+    result["target_rates"] = [row for row in parsed_rates if row["current"] is not None]
+    result["unavailable_target_rates"] = [
+        {**row, "availability": "unavailable"}
+        for row in parsed_rates
+        if row["current"] is None
+    ]
+    result["raw_target_rates"] = [dict(row) for row in parsed_rates]
     result["raw_target_rate_lines"] = detailed_rate_lines
-    row_parse_error = None
-    if detailed_rate_lines and len(detailed_rate_lines) != len(result["target_rates"]):
-        row_parse_error = (
-            "レートレンジ別確率の一部行を数値として解析できない "
-            f"({len(result['target_rates'])}/{len(detailed_rate_lines)}行)"
-        )
+    result["row_parse_errors"] = row_parse_errors
+    is_partial = bool(result["unavailable_target_rates"])
+    result["completeness"] = "partial" if is_partial else "complete"
+    result["known_current_total"] = round(
+        sum(row["current"] for row in result["target_rates"]), 3
+    )
+    result["note"] = (
+        "current確率が欠測のレートレンジは0補完せず別枠で保持。全体分布は未確定"
+        if is_partial else None
+    )
+    row_parse_error = "; ".join(row_parse_errors) if row_parse_errors else None
     validation_errors = [
         error
         for error in (
             validate_meeting_date(result.get("next_fomc_date"), today),
             row_parse_error,
-            validate_target_rates(result.get("target_rates")),
+            validate_target_rates(
+                parsed_rates,
+                require_total=not is_partial,
+                allow_missing_current=is_partial,
+            ) if parsed_rates else "レートレンジ別確率が未取得",
         )
         if error
     ]
     if validation_errors:
         result["target_rates"] = []
+        result["unavailable_target_rates"] = []
+        result["completeness"] = "invalid"
         result["error"] = "Investing.com FedWatch検証失敗: " + "; ".join(validation_errors)
 
     return result
@@ -195,7 +253,9 @@ async def scrape_fedwatch() -> dict:
     # 1. Investing.com を最優先で試行
     inv = await _scrape_investing_fedwatch()
     if inv and inv.get("error") is None and (
-        inv.get("hold_pct") is not None or inv.get("target_rates")
+        inv.get("hold_pct") is not None
+        or inv.get("target_rates")
+        or inv.get("unavailable_target_rates")
     ):
         return inv
 

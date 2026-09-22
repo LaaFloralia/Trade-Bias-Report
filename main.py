@@ -889,6 +889,7 @@ def format_scraped_data(data: dict) -> str:
     fedwatch = data.get("fedwatch")
     if fedwatch and isinstance(fedwatch, dict) and (
         fedwatch.get("target_rates")
+        or fedwatch.get("unavailable_target_rates")
         or any(
             fedwatch.get(k) is not None
             for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct", "hike_25bp_pct"]
@@ -902,7 +903,7 @@ def format_scraped_data(data: dict) -> str:
             lines.append(f"- 50bp利下げ確率: {fedwatch['cut_50bp_pct']}%")
         if fedwatch.get("hike_25bp_pct") is not None:
             lines.append(f"- 25bp利上げ確率: {fedwatch['hike_25bp_pct']}%")
-        if fedwatch.get("target_rates") and all(
+        if (fedwatch.get("target_rates") or fedwatch.get("unavailable_target_rates")) and all(
             fedwatch.get(k) is None
             for k in ["hold_pct", "cut_25bp_pct", "cut_50bp_pct", "hike_25bp_pct"]
         ):
@@ -1119,7 +1120,10 @@ def format_scraped_data(data: dict) -> str:
         lines.append("### データバリデーション警告")
         for symbol, issues in validation_results.items():
             for issue in issues:
-                lines.append(f"- {symbol}: データ異常: {issue}")
+                displayed_issue = issue
+                if ("数値不正" in issue or "ゼロまたは負数" in issue) and " (" in issue:
+                    displayed_issue = issue.split(" (", 1)[0]
+                lines.append(f"- {symbol}: データ異常: {displayed_issue}")
 
     result_text = "\n".join(lines)
 

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "purpose": "FedWatch partial-distribution support for chart-intel numeric facts",
+  "created_at": "2026-09-23",
+  "base_patch": {
+    "path": "20260922-jev-audit.patch",
+    "sha256": "31082608607ddd9bedf156f3158a8cb308ccda9e926ddef4af0dcc8da732f680",
+    "post_image_sha256": {
+      "runner.py": "8660f696c837b976cac74b3e36647f28a26117dfad0dfb0c23b1c49bdd8882a3",
+      "parent_workflow.py": "f720e7c16d58148e100dbf59d3699b0f7fe73f77cf8ae55fdc2fe455c23e776d",
+      "report_review.py": "1b9ed1e623efcd33272be45f43f7aad4d1432ccbbf0ee0858657566064472f50",
+      "PARENT-WORKFLOW.md": "724fa53871ff40204d7b0542a3768a1209ca412a1902d3d0e53e19f69482d62e",
+      "test_parent_workflow.py": "26e19a20c9fa80c6e127922df86cbfef061f330a43179e13f88d0a3fbdf17f9e",
+      "test_jev_integration.py": "ce7ad4206296b7b6ace3d3c8ec0dfd7b8a37441494ddbbdc1083990f94a10df7"
+    }
+  },
+  "incremental_patch": {
+    "path": "20260923-fedwatch-partial.patch",
+    "sha256": "06d2ada2e4dc4965f77acc81fedd2d75683c9af1220573793c61d4a9b57ce0d8",
+    "target": "/Users/laa/.codex/jobs/chart-intel/test_parent_workflow.py",
+    "preimage_sha256": "26e19a20c9fa80c6e127922df86cbfef061f330a43179e13f88d0a3fbdf17f9e",
+    "postimage_sha256": "61a9ac3aa840fe0dc3a39202e16b801bda1e7f4e1be89ac4cc9d9728e2b62238",
+    "verified_after_base_patch": true
+  },
+  "numeric_validation_snapshot": {
+    "path": "20260923-fedwatch-partial/numeric_validation.py",
+    "target": "/Users/laa/.codex/jobs/chart-intel/numeric_validation.py",
+    "preimage_sha256": null,
+    "preimage_status": "not retained; do not claim an incremental source patch",
+    "postimage_sha256": "11f8daaf3b3bc4d0009ca446c84a64e9c52716e025dcb1796c68d03c68dd9bb3",
+    "apply_mode": "manual_review_copy_only"
+  },
+  "verification": {
+    "sequential_patch_application": "passed: 20260922 Jev patch then 20260923 test patch",
+    "numeric_snapshot_matches_job_source": true,
+    "runtime_deployment": "not performed",
+    "zero_context_patch_application": "passed with git apply --unidiff-zero; exact postimage match"
+  }
+}
