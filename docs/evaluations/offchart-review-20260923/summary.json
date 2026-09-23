@@ -1,0 +1,212 @@
+{
+ "generated_on": "2026-09-23",
+ "bias_history": {
+  "records": 25,
+  "window_note": "24 traded hourly bars from the first full hour after issue; NY close = 21:00 UTC",
+  "directional|ret24": {
+   "n": 17,
+   "hits": 8,
+   "hit_rate": 0.471,
+   "wilson95": [
+    0.262,
+    0.69
+   ],
+   "p_vs_50": 1.0,
+   "always_long": 8,
+   "prev24_momentum": 8
+  },
+  "directional|retNY": {
+   "n": 17,
+   "hits": 9,
+   "hit_rate": 0.529,
+   "wilson95": [
+    0.31,
+    0.738
+   ],
+   "p_vs_50": 1.0,
+   "always_long": 9,
+   "prev24_momentum": 7
+  },
+  "plan_shown|ret24": {
+   "n": 10,
+   "hits": 3,
+   "hit_rate": 0.3,
+   "wilson95": [
+    0.108,
+    0.603
+   ],
+   "p_vs_50": 0.344,
+   "always_long": 3,
+   "prev24_momentum": 4
+  },
+  "plan_shown|retNY": {
+   "n": 10,
+   "hits": 5,
+   "hit_rate": 0.5,
+   "wilson95": [
+    0.237,
+    0.763
+   ],
+   "p_vs_50": 1.0,
+   "always_long": 5,
+   "prev24_momentum": 4
+  },
+  "spearman_bias_ret24": 0.024,
+  "range24_median|no_trade=False": {
+   "n": 10,
+   "median": 0.0172
+  },
+  "range24_median|no_trade=True": {
+   "n": 15,
+   "median": 0.0237
+  }
+ },
+ "macro_regime": {
+  "yearly": [
+   {
+    "year": 2015,
+    "n": 248,
+    "corr_gold_real_yield": -0.31,
+    "gold_pct_per_10bp": -0.58,
+    "corr_gold_usd": -0.45,
+    "gold_change_pct": -10.8,
+    "real_yield_change_bp": 32
+   },
+   {
+    "year": 2016,
+    "n": 247,
+    "corr_gold_real_yield": -0.46,
+    "gold_pct_per_10bp": -1.2,
+    "corr_gold_usd": -0.18,
+    "gold_change_pct": 8.5,
+    "real_yield_change_bp": -23
+   },
+   {
+    "year": 2017,
+    "n": 248,
+    "corr_gold_real_yield": -0.66,
+    "gold_pct_per_10bp": -1.41,
+    "corr_gold_usd": -0.44,
+    "gold_change_pct": 13.1,
+    "real_yield_change_bp": -6
+   },
+   {
+    "year": 2018,
+    "n": 247,
+    "corr_gold_real_yield": -0.2,
+    "gold_pct_per_10bp": -0.43,
+    "corr_gold_usd": -0.59,
+    "gold_change_pct": -1.5,
+    "real_yield_change_bp": 54
+   },
+   {
+    "year": 2019,
+    "n": 247,
+    "corr_gold_real_yield": -0.59,
+    "gold_pct_per_10bp": -1.33,
+    "corr_gold_usd": -0.15,
+    "gold_change_pct": 18.3,
+    "real_yield_change_bp": -83
+   },
+   {
+    "year": 2020,
+    "n": 249,
+    "corr_gold_real_yield": -0.4,
+    "gold_pct_per_10bp": -0.87,
+    "corr_gold_usd": -0.25,
+    "gold_change_pct": 25.0,
+    "real_yield_change_bp": -121
+   },
+   {
+    "year": 2021,
+    "n": 249,
+    "corr_gold_real_yield": -0.43,
+    "gold_pct_per_10bp": -0.92,
+    "corr_gold_usd": -0.45,
+    "gold_change_pct": -4.3,
+    "real_yield_change_bp": 0
+   },
+   {
+    "year": 2022,
+    "n": 249,
+    "corr_gold_real_yield": -0.51,
+    "gold_pct_per_10bp": -0.61,
+    "corr_gold_usd": -0.47,
+    "gold_change_pct": 0.5,
+    "real_yield_change_bp": 264
+   },
+   {
+    "year": 2023,
+    "n": 248,
+    "corr_gold_real_yield": -0.53,
+    "gold_pct_per_10bp": -0.69,
+    "corr_gold_usd": -0.37,
+    "gold_change_pct": 13.1,
+    "real_yield_change_bp": 14
+   },
+   {
+    "year": 2024,
+    "n": 250,
+    "corr_gold_real_yield": -0.33,
+    "gold_pct_per_10bp": -0.7,
+    "corr_gold_usd": -0.39,
+    "gold_change_pct": 27.2,
+    "real_yield_change_bp": 52
+   },
+   {
+    "year": 2025,
+    "n": 247,
+    "corr_gold_real_yield": -0.02,
+    "gold_pct_per_10bp": -0.05,
+    "corr_gold_usd": -0.35,
+    "gold_change_pct": 64.3,
+    "real_yield_change_bp": -31
+   },
+   {
+    "year": 2026,
+    "n": 180,
+    "corr_gold_real_yield": -0.3,
+    "gold_pct_per_10bp": -1.57,
+    "corr_gold_usd": -0.49,
+    "gold_change_pct": 1.5,
+    "real_yield_change_bp": 75
+   }
+  ],
+  "level_fit_2015_2021": {
+   "log_pct_per_1pt": -24.6,
+   "r": -0.91,
+   "checks": [
+    {
+     "date": "2021-12-31",
+     "gold": 1828,
+     "real_yield": -1.04,
+     "implied_by_2015_2021_fit": 1858
+    },
+    {
+     "date": "2023-12-29",
+     "gold": 2063,
+     "real_yield": 1.72,
+     "implied_by_2015_2021_fit": 941
+    },
+    {
+     "date": "2024-12-31",
+     "gold": 2624,
+     "real_yield": 2.24,
+     "implied_by_2015_2021_fit": 828
+    },
+    {
+     "date": "2025-12-31",
+     "gold": 4311,
+     "real_yield": 1.93,
+     "implied_by_2015_2021_fit": 893
+    },
+    {
+     "date": "2026-09-18",
+     "gold": 4377,
+     "real_yield": 2.68,
+     "implied_by_2015_2021_fit": 743
+    }
+   ]
+  }
+ }
+}

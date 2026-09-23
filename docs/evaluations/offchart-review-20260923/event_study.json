@@ -1,0 +1,305 @@
+{
+ "note": "Ex-post release dates (FRED release calendar; Fed FOMC calendar page). Diagnostic only, not PIT-grade news data.",
+ "market": {
+  "CPI": {
+   "n": 62,
+   "median_range_ratio": 2.17,
+   "share_above_ctrl_p95": 0.58,
+   "median_spread_max_ratio": 4.07,
+   "median_spread_mean_ratio": 1.06,
+   "median_event_range_bp": 85.5,
+   "median_ctrl_range_bp": 39.1
+  },
+  "FOMC": {
+   "n": 39,
+   "median_range_ratio": 5.49,
+   "share_above_ctrl_p95": 0.92,
+   "median_spread_max_ratio": 4.41,
+   "median_spread_mean_ratio": 1.16,
+   "median_event_range_bp": 95.9,
+   "median_ctrl_range_bp": 16.4
+  },
+  "NFP": {
+   "n": 57,
+   "median_range_ratio": 2.12,
+   "share_above_ctrl_p95": 0.56,
+   "median_spread_max_ratio": 4.24,
+   "median_spread_mean_ratio": 1.08,
+   "median_event_range_bp": 85.9,
+   "median_ctrl_range_bp": 40.4
+  }
+ },
+ "trade_windows": {
+  "v15 A 2024-25 base price_only": {
+   "event_day_other": {
+    "n": 40,
+    "win_rate": 0.375,
+    "avg_R": -0.152,
+    "sum_R": -6.1
+   },
+   "non_event_day": {
+    "n": 307,
+    "win_rate": 0.433,
+    "avg_R": -0.119,
+    "sum_R": -36.5
+   },
+   "post0-120m": {
+    "n": 6,
+    "win_rate": 0.667,
+    "avg_R": 0.431,
+    "sum_R": 2.6
+   },
+   "pre30 (lab filter blocks)": {
+    "n": 6,
+    "win_rate": 0.167,
+    "avg_R": -0.738,
+    "sum_R": -4.4
+   }
+  },
+  "v6 base price_only 2024+2025, variants ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'] pooled, duplicate entries removed": {
+   "event_day_other": {
+    "n": 136,
+    "win_rate": 0.309,
+    "avg_R": -0.297,
+    "sum_R": -40.4
+   },
+   "non_event_day": {
+    "n": 904,
+    "win_rate": 0.4,
+    "avg_R": -0.126,
+    "sum_R": -114.2
+   },
+   "post0-120m": {
+    "n": 37,
+    "win_rate": 0.486,
+    "avg_R": -0.024,
+    "sum_R": -0.9
+   },
+   "pre30 (lab filter blocks)": {
+    "n": 2,
+    "win_rate": 0.0,
+    "avg_R": -1.407,
+    "sum_R": -2.8
+   }
+  },
+  "v6 variant A": {
+   "event_day_other": {
+    "n": 13,
+    "win_rate": 0.385,
+    "avg_R": -0.169,
+    "sum_R": -2.2
+   },
+   "non_event_day": {
+    "n": 83,
+    "win_rate": 0.373,
+    "avg_R": -0.204,
+    "sum_R": -16.9
+   },
+   "post0-120m": {
+    "n": 8,
+    "win_rate": 0.375,
+    "avg_R": -0.239,
+    "sum_R": -1.9
+   }
+  },
+  "v6 variant B": {
+   "event_day_other": {
+    "n": 17,
+    "win_rate": 0.353,
+    "avg_R": -0.212,
+    "sum_R": -3.6
+   },
+   "non_event_day": {
+    "n": 102,
+    "win_rate": 0.373,
+    "avg_R": -0.165,
+    "sum_R": -16.8
+   },
+   "post0-120m": {
+    "n": 8,
+    "win_rate": 0.375,
+    "avg_R": -0.291,
+    "sum_R": -2.3
+   }
+  },
+  "v6 variant C": {
+   "event_day_other": {
+    "n": 21,
+    "win_rate": 0.286,
+    "avg_R": -0.356,
+    "sum_R": -7.5
+   },
+   "non_event_day": {
+    "n": 117,
+    "win_rate": 0.444,
+    "avg_R": -0.016,
+    "sum_R": -1.9
+   },
+   "post0-120m": {
+    "n": 8,
+    "win_rate": 0.5,
+    "avg_R": 0.007,
+    "sum_R": 0.1
+   }
+  },
+  "v6 variant D": {
+   "event_day_other": {
+    "n": 9,
+    "win_rate": 0.333,
+    "avg_R": -0.295,
+    "sum_R": -2.7
+   },
+   "non_event_day": {
+    "n": 68,
+    "win_rate": 0.353,
+    "avg_R": -0.184,
+    "sum_R": -12.5
+   },
+   "post0-120m": {
+    "n": 3,
+    "win_rate": 0.667,
+    "avg_R": 0.207,
+    "sum_R": 0.6
+   }
+  },
+  "v6 variant E": {
+   "event_day_other": {
+    "n": 28,
+    "win_rate": 0.286,
+    "avg_R": -0.42,
+    "sum_R": -11.7
+   },
+   "non_event_day": {
+    "n": 193,
+    "win_rate": 0.347,
+    "avg_R": -0.23,
+    "sum_R": -44.4
+   },
+   "post0-120m": {
+    "n": 10,
+    "win_rate": 0.3,
+    "avg_R": -0.461,
+    "sum_R": -4.6
+   },
+   "pre30 (lab filter blocks)": {
+    "n": 1,
+    "win_rate": 0.0,
+    "avg_R": -1.022,
+    "sum_R": -1.0
+   }
+  },
+  "v6 variant F": {
+   "event_day_other": {
+    "n": 34,
+    "win_rate": 0.206,
+    "avg_R": -0.542,
+    "sum_R": -18.4
+   },
+   "non_event_day": {
+    "n": 233,
+    "win_rate": 0.408,
+    "avg_R": -0.098,
+    "sum_R": -22.8
+   },
+   "post0-120m": {
+    "n": 10,
+    "win_rate": 0.5,
+    "avg_R": 0.042,
+    "sum_R": 0.4
+   },
+   "pre30 (lab filter blocks)": {
+    "n": 1,
+    "win_rate": 0.0,
+    "avg_R": -1.022,
+    "sum_R": -1.0
+   }
+  },
+  "v6 variant G": {
+   "event_day_other": {
+    "n": 34,
+    "win_rate": 0.206,
+    "avg_R": -0.542,
+    "sum_R": -18.4
+   },
+   "non_event_day": {
+    "n": 233,
+    "win_rate": 0.412,
+    "avg_R": -0.09,
+    "sum_R": -20.9
+   },
+   "post0-120m": {
+    "n": 10,
+    "win_rate": 0.5,
+    "avg_R": 0.042,
+    "sum_R": 0.4
+   },
+   "pre30 (lab filter blocks)": {
+    "n": 1,
+    "win_rate": 0.0,
+    "avg_R": -1.022,
+    "sum_R": -1.0
+   }
+  },
+  "v6 variant H": {
+   "event_day_other": {
+    "n": 44,
+    "win_rate": 0.341,
+    "avg_R": -0.16,
+    "sum_R": -7.0
+   },
+   "non_event_day": {
+    "n": 359,
+    "win_rate": 0.429,
+    "avg_R": -0.083,
+    "sum_R": -29.8
+   },
+   "post0-120m": {
+    "n": 9,
+    "win_rate": 0.778,
+    "avg_R": 0.42,
+    "sum_R": 3.8
+   },
+   "pre30 (lab filter blocks)": {
+    "n": 1,
+    "win_rate": 0.0,
+    "avg_R": -1.793,
+    "sum_R": -1.8
+   }
+  }
+ },
+ "event_day": {
+  "v15 A 2024-25 base price_only": {
+   "event_day_n": 52,
+   "other_n": 307,
+   "avg_R_event_day": -0.152,
+   "avg_R_other": -0.119,
+   "gap_boot95": [
+    -0.238,
+    0.203
+   ],
+   "win_event_day": 0.385,
+   "win_other": 0.433,
+   "avg_R_all": -0.124,
+   "trades_removed_pct": 14.5
+  },
+  "v6 base price_only 2024+2025 pooled unique": {
+   "event_day_n": 175,
+   "other_n": 904,
+   "avg_R_event_day": -0.252,
+   "avg_R_other": -0.126,
+   "gap_boot95": [
+    -0.338,
+    0.068
+   ],
+   "win_event_day": 0.343,
+   "win_other": 0.4,
+   "avg_R_all": -0.147,
+   "trades_removed_pct": 16.2
+  }
+ },
+ "events": {
+  "CPI": 63,
+  "NFP": 61,
+  "FOMC": 40
+ }
+}
