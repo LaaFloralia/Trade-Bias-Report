@@ -18,6 +18,8 @@
 #   ig_url            : IG Client Sentiment ページ URL（null = ページなし、フォールバック 2）
 #   open_orders       : MyFXBook Open Orders（BSL/SSL クラスタ）の対象か
 #   coinglass         : CoinGlass を第 1 センチメントソースに使うか（BTC のみ）
+#   weekend_trading   : 土日も実取引がある銘柄か（省略 = false）。false の銘柄は
+#                       Twelve Data 日足の土日バー（非取引時間の補間値）を除外する
 #   cot               : CFTC Legacy Futures Only の対象定義
 #     order           : レポート表示順（小さい順）
 #     label           : 表示名
@@ -60,6 +62,7 @@ instruments:
     ig_url: null
     open_orders: false
     coinglass: true
+    weekend_trading: true
     cot:
       order: 4
       label: "BITCOIN - CME"

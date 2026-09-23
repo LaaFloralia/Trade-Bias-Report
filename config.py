@@ -38,6 +38,11 @@ TWELVEDATA_SYMBOLS = {
     if cfg.get("twelvedata_symbol")
 }
 
+# 土日も実取引がある銘柄（それ以外は Twelve Data 日足の土日バーを除外する）
+WEEKEND_TRADING_SYMBOLS = frozenset(
+    sym for sym, cfg in INSTRUMENTS.items() if cfg.get("weekend_trading")
+)
+
 # CFTC COT 対象: [(表示名, market_and_exchange_names)] を order 順で
 COT_TARGETS = [
     (cfg["cot"]["label"], cfg["cot"]["market"])

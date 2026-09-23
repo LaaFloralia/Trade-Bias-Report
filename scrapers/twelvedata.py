@@ -5,7 +5,7 @@
 
 API呼び出し数の最小化:
   - /quote: 1回（3銘柄一括）
-  - /time_series: 1回（3銘柄一括、60本）
+  - /time_series: 1回（3銘柄一括、90本。土日除外後も IPDA 60 取引日を確保）
 """
 
 import sys
@@ -18,7 +18,7 @@ from typing import Optional, Tuple, List
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import requests
-from config import TWELVEDATA_API_KEY, TWELVEDATA_SYMBOLS
+from config import TWELVEDATA_API_KEY, TWELVEDATA_SYMBOLS, WEEKEND_TRADING_SYMBOLS
 
 BASE_URL = "https://api.twelvedata.com"
 
@@ -86,6 +86,26 @@ def _parse_series_batch(data: Optional[dict], symbols: List[str]) -> dict:
             # 単一シンボルの場合
             result[sym] = data.get("values", [])
     return result
+
+
+def _drop_weekend_bars(values: List[dict]) -> Tuple[List[dict], int]:
+    """土日付の日足を除外し、(残した足, 除外本数) を返す。
+
+    Twelve Data の XAU/USD・USD/JPY 日足には市場休止中の土日バーが含まれる
+    （2026-09 確認: 値幅は数ドル以下の補間値）。残すと月曜の series[1] が日曜足になり、
+    PDH/PDL が金曜の実レンジではなくなる。IPDA 20/40/60 日も取引日数より短くなる。
+    日付を解釈できない足は判定せず残し、既存の検証へ渡す。
+    """
+    kept = []
+    for v in values:
+        try:
+            weekday = datetime.strptime(str(v["datetime"])[:10], "%Y-%m-%d").weekday()
+        except (KeyError, ValueError, TypeError):
+            kept.append(v)
+            continue
+        if weekday < 5:
+            kept.append(v)
+    return kept, len(values) - len(kept)
 
 
 def _calc_range(values: List[dict], n: int) -> Tuple[Optional[float], Optional[float]]:
@@ -237,10 +257,10 @@ def fetch_price_data_with_raw(instruments=None) -> Tuple[str, dict, dict]:
     quote_raw = _get("/quote", {"symbol": symbol_str, "dp": "2"})
     quotes = _parse_quotes(quote_raw, main_symbols)
 
-    # --- 2回目: /time_series（3銘柄一括、60本）---
+    # --- 2回目: /time_series（3銘柄一括、90本）---
     series_raw = _get(
         "/time_series",
-        {"symbol": symbol_str, "interval": "1day", "outputsize": "60", "dp": "2"},
+        {"symbol": symbol_str, "interval": "1day", "outputsize": "90", "dp": "2"},
     )
     series_map = _parse_series_batch(series_raw, main_symbols)
 
@@ -249,6 +269,10 @@ def fetch_price_data_with_raw(instruments=None) -> Tuple[str, dict, dict]:
     for instrument, td_symbol in symbol_map.items():
         q = quotes.get(td_symbol, {})
         series = series_map.get(td_symbol, [])
+        if instrument not in WEEKEND_TRADING_SYMBOLS:
+            series, dropped = _drop_weekend_bars(series)
+            if dropped:
+                print(f"  [INFO] Twelve Data {instrument}: 土日の日足 {dropped} 本を除外")
         quotes_by_instrument[instrument] = q
         series_by_instrument[instrument] = series
         lines.extend(_format_instrument(instrument, q, series))
