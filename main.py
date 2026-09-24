@@ -61,6 +61,13 @@ from scrapers.correlation import (
     format_correlation_lines,
 )
 from scrapers.session_stats import compute_session_stats, format_session_stats_lines
+from scrapers.macro_surprise import (
+    JST, fetch_ff_week, fill_missing_forecasts, released_surprises, format_surprise_lines,
+)
+from scrapers.liquidity_levels import format_liquidity_lines
+from scrapers.positioning_history import (
+    append_snapshot, format_positioning_lines, load_history, snapshot_from_data,
+)
 
 
 def _get_fomc_metadata(today: datetime = None) -> dict:
@@ -119,6 +126,31 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
         "days_until_fomc": days_until,
         "schedule_warning": schedule_warning,
     }
+
+
+def enrich_offchart_inputs(results: dict) -> None:
+    """指標サプライズとポジショニング履歴を追加する。失敗しても他の入力は残す。"""
+    calendar = results.get("economic_calendar")
+    events = calendar.get("events") if isinstance(calendar, dict) else None
+    if events:
+        try:
+            ff = fetch_ff_week()
+            filled = fill_missing_forecasts(events, ff["events"])
+            calendar["forecast_fallback"] = {"source": "ForexFactory", "filled": filled, "error": ff["error"]}
+            print(f"  [{'WARN' if ff['error'] else 'OK'}]  forecast_fallback: 補完 {filled} 件"
+                  + (f"（{ff['error']}）" if ff["error"] else ""))
+        except Exception as e:
+            print(f"  [WARN]  forecast_fallback: {e}")
+        results["macro_surprises"] = released_surprises(events, datetime.now(JST))
+    try:
+        snapshot = snapshot_from_data(results, str(results.get("timestamp")))
+        history = load_history()
+        results["positioning"] = {"snapshot": snapshot, "lines": format_positioning_lines(snapshot, history)}
+        saved = append_snapshot(snapshot)
+        print(f"  [OK]    positioning_history: 記録={'あり' if saved else 'なし'}（履歴 {len(history)} 件）")
+    except Exception as e:
+        results["positioning"] = {"error": str(e)}
+        print(f"  [WARN]  positioning_history: {e}")
 
 
 async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
@@ -519,6 +551,7 @@ async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
     # 共通メタデータスキーマ補完（source/symbol/timestamp/as_of_date/
     # stale/fallback_used/error/note）。既存キーは上書きしない。
     normalize_scraper_results(results)
+    enrich_offchart_inputs(results)
 
     return results
 
@@ -554,6 +587,14 @@ def format_scraped_data(data: dict) -> str:
     price_data = data.get("price_data")
     if price_data:
         lines.append(price_data)
+        lines.append("")
+    xau_quote = data.get("_raw_quote_XAUUSD") or {}
+    if xau_quote:
+        try:
+            xau_price = float(xau_quote.get("close"))
+        except (TypeError, ValueError):
+            xau_price = None
+        lines.extend(format_liquidity_lines(xau_price))
         lines.append("")
 
     # --- DXY 価格データ ---
@@ -710,6 +751,10 @@ def format_scraped_data(data: dict) -> str:
             err = d.get("error", "取得不可")
             lines.append(f"- {symbol}: 取得不可（{err}）")
     lines.append("")
+    positioning = data.get("positioning")
+    if isinstance(positioning, dict) and positioning.get("lines"):
+        lines.extend(positioning["lines"])
+        lines.append("")
 
     # --- CoinGlass (BTCUSD がスコープ内の実行でのみデータが存在する) ---
     if data.get("coinglass"):
@@ -867,15 +912,23 @@ def format_scraped_data(data: dict) -> str:
         lines.append("### 経済指標カレンダー（ハイインパクト）")
         if calendar.get("events"):
             for ev in calendar["events"]:
+                forecast = ev.get('forecast', 'N/A')
+                if ev.get("forecast_source"):
+                    forecast = f"{forecast}（{ev['forecast_source']}）"
+                actual = ev.get("actual", "N/A")
                 lines.append(
                     f"- {ev.get('date', '')} {ev.get('time_jst', '')} | "
                     f"{ev.get('country', '')} | {ev.get('indicator', '')} | "
-                    f"前回: {ev.get('previous', 'N/A')} | 予想: {ev.get('forecast', 'N/A')}"
+                    f"前回: {ev.get('previous', 'N/A')} | 予想: {forecast}"
+                    + (f" | 結果: {actual}" if actual not in (None, "", "N/A") else "")
                 )
         elif calendar.get("error"):
             lines.append(f"取得不可（{calendar['error']}）")
         else:
             lines.append("該当なし")
+        if calendar.get("events"):
+            lines.append("")
+            lines.extend(format_surprise_lines(data.get("macro_surprises") or []))
 
     # --- FedWatch（常時取得、Deep Bias 強化）---
     # 旧 is_fomc_week 分岐は撤廃。平時も次回 FOMC への利下げ確率を追跡する。
