@@ -2,7 +2,7 @@
 
 対象URL: https://www.investing.com/economic-calendar/
 取得データ: ハイインパクト指標（★★★）の今週・来週分
-各指標: 日付、時刻（JST）、国、指標名、前回値、予想値
+各指標: 日付、時刻（JST）、国、指標名、結果、前回値、予想値
 
 Investing.comはブラウザのタイムゾーンに合わせて時刻を表示するため、
 Playwrightで timezone_id="Asia/Tokyo" を設定し、表示時刻をそのままJSTとして扱う。
@@ -122,6 +122,7 @@ async def _scrape_week(page, week_label: str) -> list:
             if not indicator:
                 continue
 
+            actual = ""
             previous = ""
             forecast = ""
 
@@ -132,6 +133,8 @@ async def _scrape_week(page, week_label: str) -> list:
                 cell_texts.append(ct)
 
             if len(cell_texts) >= 8:
+                # 列: 時刻+通貨 / 時刻 / 通貨 / 指標 / 重要度 / 結果 / 予想 / 前回（2026-09-24 実表示で確認）
+                actual = cell_texts[5] if cell_texts[5] else ""
                 forecast = cell_texts[6] if cell_texts[6] else ""
                 previous = cell_texts[7] if cell_texts[7] else ""
             elif len(cell_texts) >= 2:
@@ -153,6 +156,7 @@ async def _scrape_week(page, week_label: str) -> list:
                 "time_jst": time_jst,
                 "country": country,
                 "indicator": indicator,
+                "actual": actual or "N/A",
                 "previous": previous or "N/A",
                 "forecast": forecast or "N/A",
             })
