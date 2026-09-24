@@ -35,3 +35,13 @@ The original `numeric_validation.py` preimage was not retained. `docs/runtime-pa
 `semanticAudit.reviewed` records that the parent inspected the hash-bound semantic audit; it is not a Jev pass. The written workflow requires unresolved or unassessed pairs to be checked against source material, while the current machine check only requires non-empty notes and blocks deterministic quote mismatches. This leaves semantic sufficiency as a human review responsibility. No Jev acceptance rule was changed here; local parent review still does not enable publication, and publication remains disabled.
 
 No report-generation run, external publication, schedule change, Brain access, or trade action was performed. The implementation and handoff are tracked on the branch above; the next scheduled invocation will use the committed runtime snapshot and retain the existing publication boundary.
+
+## 2026-09-24: chart-external inputs (liquidity, positioning, macro surprise)
+
+Scope confirmed by the owner: this report covers only information not visible on the chart — order concentration (liquidity), positioning ratios, and macro/rates/geopolitical bias. Design: Brain/Inbox `2026-09-24-チャート外分析ベストプラクティス.md`.
+
+- `4602a6b` Investing.com actual column is now stored; released events in the last 36h get `actual − forecast` and a rule-based gold direction (US indicators only). Missing forecasts are filled from the ForexFactory weekly feed only on country/±5 min/name match. Earlier note that "all forecasts were N/A" was wrong; the missing field was the actual.
+- `8750d13` Round-number levels (±2%, 50/100 USD) and an append-only positioning history (`output/history/positioning.jsonl`) with same-source percentiles; fewer than 20 samples → 判定保留. Backfill: `scripts/backfill_positioning.py`. Runtime history seeded 2026-09-24 with 45 scraped snapshots and 149 CFTC weeks (current published values, not first-release vintages).
+- `55d1ca8` Wired into `collect_all_data` / `format_scraped_data`; failures keep other inputs. `fe9fe1f` master prompts: operating rules, 取得不可/方向未定/中立 distinction, coverage line, `bias` non-zero only with ≥2 aligned independent drivers.
+- Verification: 421 tests; live full collection showed all three new sections. The 2026-09-24 09:00 Hermes run succeeded on snapshot `c93534f`; its Jev audit ran local-only because the parent set `summary_data_class: local`. The 18:00 run is the first to use `fe9fe1f`.
+- Not done: CME QuikStrike option OI (terms of use unconfirmed), OANDA order/position book (needs account and API key).
