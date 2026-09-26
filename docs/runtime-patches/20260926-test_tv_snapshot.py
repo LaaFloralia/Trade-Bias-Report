@@ -38,3 +38,22 @@ def test_missing_required_quote_is_reported(tmp_path, monkeypatch):
     assert t.main(str(p)) == 0
     assert 'TVC:US02Y' in (tmp_path / 'tv_facts.md').read_text()
     assert (tmp_path / 'hist.jsonl').read_text().count('\n') == 1
+
+
+def test_missing_update_time_falls_back_to_bar_date_and_delay():
+    r = raw()
+    r['quotes']['COMEX:GC1!'].update(update_mode='delayed_streaming_600')
+    s = t.summarize(r)
+    gc = s['quotes']['COMEX:GC1!']
+    assert gc['time'] is None and gc['bar_date'] == '1970-01-03' and gc['delayed_minutes'] == 10
+    assert '更新時刻なし・日足 1970-01-03 の値、10分遅延' in t.markdown(s)
+    assert s['quotes']['TVC:DXY']['time'] == 'x'
+
+
+def test_expected_move_uses_tv_gvz():
+    r = raw()
+    r['quotes']['OANDA:XAUUSD']['latest'] = 4284.97
+    m = t.summarize(r)['expected_move_tv']
+    assert m['move_1sd'] == round(4284.97 * 22.44 / 100 / 252 ** 0.5, 2)
+    assert '参考変動額（TVのGVZ・252日換算）' in t.markdown(t.summarize(r))
+    assert t._expected_move(None, 20) is None and t._expected_move(4000, 0) is None

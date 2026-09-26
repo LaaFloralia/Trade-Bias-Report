@@ -28,12 +28,17 @@ def _num(value):
     return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 
-def _quote(q):
+def _quote(q, bars=()):
+    """bars: 同じ銘柄の日足 [(t, close)]。提供元の更新時刻が無いとき、値の時点を最新日足の日付で示す。"""
     q = q if isinstance(q, dict) else {}
     latest, prev = _num(q.get('latest')), _num(q.get('previous_close'))
+    time_ = next((q[k] for k in ('time', 'update_time', 'last_update_time') if isinstance(q.get(k), str) and q[k]), None)
+    mode = q.get('update_mode') if isinstance(q.get('update_mode'), str) else None
     return {'latest': latest, 'previous_close': prev,
             'change': round(latest - prev, 6) if latest is not None and prev is not None else _num(q.get('change')),
-            'time': q.get('time') if isinstance(q.get('time'), str) else None,
+            'time': time_, 'bar_date': _day(bars[-1][0]) if bars else None,
+            'delayed_minutes': int(mode.rsplit('_', 1)[1]) // 60 if mode and mode.startswith('delayed_streaming_')
+            and mode.rsplit('_', 1)[1].isdigit() else None,
             'volume': _num(q.get('volume')), 'open_interest': _num(q.get('open_interest'))}
 
 
@@ -59,10 +64,10 @@ def oi_regime(price_change, oi_change):
 
 
 def summarize(raw: dict) -> dict:
-    quotes = {sym: _quote((raw.get('quotes') or {}).get(sym)) for sym in
+    series = raw.get('series') or {}
+    quotes = {sym: _quote((raw.get('quotes') or {}).get(sym), _series(series.get(sym), 'c')) for sym in
               ('TVC:DXY', 'TVC:US02Y', 'TVC:US10Y', 'COMEX:GC1!', 'OANDA:XAUUSD')}
     missing = [s for s in REQUIRED if quotes[s]['latest'] is None]
-    series = raw.get('series') or {}
     gc = _series(series.get('COMEX:GC1!'), 'c')
     oi = _series(series.get('COMEX:GC1!_OI'), 'close')
     gvz = _series(series.get('CBOE:GVZ'), 'close')
@@ -83,7 +88,18 @@ def summarize(raw: dict) -> dict:
     return {'retrieved_at': raw.get('retrieved_at'), 'missing_required': missing, 'quotes': quotes,
             'us02y_change_bp': bp('TVC:US02Y'), 'us10y_change_bp': bp('TVC:US10Y'),
             'gc_open_interest': oi_block,
-            'gvz_latest': {'date': _day(gvz[-1][0]), 'close': gvz[-1][1]} if gvz else None}
+            'gvz_latest': {'date': _day(gvz[-1][0]), 'close': gvz[-1][1]} if gvz else None,
+            'expected_move_tv': _expected_move(quotes['OANDA:XAUUSD']['latest'] or quotes['COMEX:GC1!']['latest'],
+                                               gvz[-1][1] if gvz else None)}
+
+
+def _expected_move(price, gvz):
+    """入力データの参考変動額と同じ式（価格×GVZ/100/√252）を、TV の新しい GVZ で計算する。"""
+    if price is None or gvz is None or price <= 0 or gvz <= 0:
+        return None
+    move = price * gvz / 100 / math.sqrt(252)
+    return {'price': price, 'gvz': gvz, 'move_1sd': round(move, 2),
+            'lower': round(price - move, 2), 'upper': round(price + move, 2)}
 
 
 def markdown(s: dict) -> str:
@@ -94,7 +110,9 @@ def markdown(s: dict) -> str:
     for sym, label in (('TVC:DXY', 'DXY'), ('TVC:US02Y', '米2年債'), ('TVC:US10Y', '米10年債'),
                        ('COMEX:GC1!', '金先物（期近）'), ('OANDA:XAUUSD', 'XAUUSD')):
         v = q[sym]
-        lines.append(f"- {label}: {fmt(v['latest'])}（前日終値 {fmt(v['previous_close'])}、差 {fmt(v['change'])}、時刻 {v['time'] or '不明'}）")
+        when = v['time'] or (f"更新時刻なし・日足 {v['bar_date']} の値" if v['bar_date'] else '時刻不明')
+        delay = f"、{v['delayed_minutes']}分遅延" if v['delayed_minutes'] else ''
+        lines.append(f"- {label}: {fmt(v['latest'])}（前日終値 {fmt(v['previous_close'])}、差 {fmt(v['change'])}、{when}{delay}）")
     lines.append(f"- 米2年債 {s['us02y_change_bp']}bp／米10年債 {s['us10y_change_bp']}bp（前日終値比）")
     oi = s['gc_open_interest']
     if oi:
@@ -105,6 +123,10 @@ def markdown(s: dict) -> str:
         lines.append('- 金先物の建玉: 取得不可')
     g = s['gvz_latest']
     lines.append(f"- GVZ 最新日足: {g['close']}（{g['date']}）" if g else '- GVZ: 取得不可')
+    m = s.get('expected_move_tv')
+    if m:
+        lines.append(f"- 参考変動額（TVのGVZ・252日換算）: ±{m['move_1sd']:,.2f}（{m['lower']:,.2f}〜{m['upper']:,.2f}、基準価格 {m['price']:,.2f}）。"
+                     "入力データの値より GVZ の日付が新しければ本文ではこちらを優先し、両方の日付を書く")
     if s['missing_required']:
         lines.append(f"- 取得できなかった必須銘柄: {'・'.join(s['missing_required'])}（該当項目は入力データの値を使う）")
     return '\n'.join(lines) + '\n'

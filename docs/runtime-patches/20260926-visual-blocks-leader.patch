@@ -1,0 +1,53 @@
+--- /Users/laa/.codex/jobs/chart-intel/backups/20260926-offchart/visual_blocks.py.orig	2026-09-26 23:09:54
++++ /Users/laa/.agents/skills/human-first-docs/scripts/visual_blocks.py	2026-09-26 23:10:27
+@@ -70,14 +70,46 @@
+         yy = y(tick)
+         parts.append(f'<line class="grid-line" x1="70" y1="{yy:.2f}" x2="406" y2="{yy:.2f}"/><text class="axis-label" x="57" y="{yy+4:.2f}" text-anchor="end">{tick:,.0f}</text>')
+         tick += step
+-    for item in items:
+-        yy, kind = y(item['value']), tone(item)
++    dots = [y(item['value']) for item in items]
++    if all(b - a >= LABEL_GAP for a, b in zip(dots, dots[1:])):
++        for item, yy in zip(items, dots):
++            kind = tone(item)
++            ref = kind == 'reference'
++            parts.append(f'<g class="{kind}"><line class="value-line {"dashed" if ref else ""}" x1="82" y1="{yy:.2f}" x2="403" y2="{yy:.2f}"/><circle class="value-dot" cx="87" cy="{yy:.2f}" r="5"/><rect class="label-ground" x="103" y="{yy-35:.2f}" width="294" height="28" rx="3"/><text class="plot-label" x="111" y="{yy-17:.2f}">{e(item["label"])}</text><text class="plot-value" x="395" y="{yy-17:.2f}" text-anchor="end">{e(item.get("display", item["value"]))}</text></g>')
++        parts.append(f'<text class="axis-caption" x="70" y="354">{e(fig.get("unit", ""))}</text></svg>')
++        return ''.join(parts)
++    # Close values: dots stay at their true price; labels move apart and a leader joins them.
++    rows = spread_labels(dots, top=24, gap=LABEL_GAP)
++    height = max(365, math.ceil(rows[-1] + 44))
++    parts[0] = svg_start(ident, fig['title'], desc, height)
++    for item, yy, ly in zip(items, dots, rows):
++        kind = tone(item)
+         ref = kind == 'reference'
+-        parts.append(f'<g class="{kind}"><line class="value-line {"dashed" if ref else ""}" x1="82" y1="{yy:.2f}" x2="403" y2="{yy:.2f}"/><circle class="value-dot" cx="87" cy="{yy:.2f}" r="5"/><rect class="label-ground" x="103" y="{yy-35:.2f}" width="294" height="28" rx="3"/><text class="plot-label" x="111" y="{yy-17:.2f}">{e(item["label"])}</text><text class="plot-value" x="395" y="{yy-17:.2f}" text-anchor="end">{e(item.get("display", item["value"]))}</text></g>')
+-    parts.append(f'<text class="axis-caption" x="70" y="354">{e(fig.get("unit", ""))}</text></svg>')
++        parts.append(f'<g class="{kind}"><line class="value-line {"dashed" if ref else ""}" x1="76" y1="{yy:.2f}" x2="118" y2="{yy:.2f}"/><circle class="value-dot" cx="87" cy="{yy:.2f}" r="5"/><polyline class="leader-line" points="118,{yy:.2f} 140,{yy:.2f} 160,{ly:.2f} 166,{ly:.2f}" fill="none"/><rect class="label-ground" x="166" y="{ly-14:.2f}" width="237" height="28" rx="3"/><text class="plot-label" x="172" y="{ly+6:.2f}">{e(item["label"])}</text><text class="plot-value" x="397" y="{ly+6:.2f}" text-anchor="end">{e(item.get("display", item["value"]))}</text></g>')
++    parts.append(f'<text class="axis-caption" x="70" y="{height-11}">{e(fig.get("unit", ""))}</text></svg>')
+     return ''.join(parts)
+ 
+ 
++LABEL_GAP = 32
++
++
++def spread_labels(targets, top, gap):
++    """Label centres for ascending targets: at least gap apart, each group centred on its targets, never above top."""
++    groups = []  # [first_row, [targets]]
++    for target in targets:
++        groups.append([target, [target]])
++        while True:
++            first, members = groups[-1]
++            first = max(top, sum(members) / len(members) - (len(members) - 1) * gap / 2)
++            groups[-1][0] = first
++            if len(groups) > 1 and groups[-2][0] + len(groups[-2][1]) * gap > first:
++                members = groups.pop()[1]
++                groups[-1][1].extend(members)
++                continue
++            break
++    return [first + i * gap for first, members in groups for i in range(len(members))]
++
++
+ def bars(fig, ident):
+     items = fig['items']
+     negative = any(float(x['value']) < 0 for x in items)
