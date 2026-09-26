@@ -195,7 +195,7 @@ def test_api_failure_never_exposes_exception_text(tmp_path):
 
 def test_shared_budget_exhaustion_prevents_transport(tmp_path):
     module = audit._load_jev_module()
-    ledger = module.BudgetLedger(tmp_path, "0.01")
+    ledger = module.BudgetLedger(tmp_path, audit.BUDGET_USD)
     while True:
         reservation, _ = ledger.reserve()
         if reservation is None:

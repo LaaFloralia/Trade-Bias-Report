@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from decimal import Decimal
 import hashlib
 import importlib.util
 import json
@@ -32,7 +33,7 @@ SCHEMA_VERSION = 1
 MAX_PAIRS = 64
 CONFIDENCE_THRESHOLD = 0.90
 TIMEOUT_SECONDS = 8.0
-BUDGET_USD = "0.01"
+BUDGET_USD = "0.20"  # 共有台帳のUTC日次上限（ニュース選別・X選別と共通。1回の監査は約0.001ドル）
 JEV_IMPLEMENTATION = Path("/Users/laa/.agents/skills/typesafe-ai/scripts/jev_filter.py")
 RELATIONS = frozenset({"supports", "contradicts", "insufficient"})
 MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -169,7 +170,7 @@ def _api_template(module):
         "actual_cost_usd": None,
         "unsettled_reserve_usd": "0.000000000",
         "daily_accounted_usd": None,
-        "budget_usd": "0.010000000",
+        "budget_usd": f"{Decimal(BUDGET_USD):.9f}",
         "budget_day_basis": "UTC",
         "decision_confidence_threshold": CONFIDENCE_THRESHOLD,
         "status": "not_requested",
