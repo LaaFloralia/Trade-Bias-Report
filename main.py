@@ -62,9 +62,11 @@ from scrapers.correlation import (
 )
 from scrapers.session_stats import compute_session_stats, format_session_stats_lines
 from scrapers.macro_surprise import (
-    JST, fetch_ff_week, fill_missing_forecasts, released_surprises, format_surprise_lines,
+    JST, archive_forecasts, fetch_ff_week, fill_missing_forecasts, format_surprise_lines,
+    load_forecast_history, released_surprises,
 )
-from scrapers.liquidity_levels import format_liquidity_lines
+from scrapers.liquidity_levels import build_liquidity, format_liquidity_lines
+from scrapers.fred import fetch_fred_series
 from scrapers.positioning_history import (
     append_snapshot, format_positioning_lines, load_history, snapshot_from_data,
 )
@@ -141,7 +143,25 @@ def enrich_offchart_inputs(results: dict) -> None:
                   + (f"（{ff['error']}）" if ff["error"] else ""))
         except Exception as e:
             print(f"  [WARN]  forecast_fallback: {e}")
-        results["macro_surprises"] = released_surprises(events, datetime.now(JST))
+        now = datetime.now(JST)
+        try:
+            history = load_forecast_history()
+            archived = archive_forecasts(events, now)
+            print(f"  [OK]    forecast_archive: 発表前の予想 {archived} 件を記録")
+        except Exception as e:
+            history = {}
+            print(f"  [WARN]  forecast_archive: {e}")
+        results["macro_surprises"] = released_surprises(events, now, forecast_history=history)
+    quote = results.get(f"_raw_quote_{DEFAULT_SYMBOL}") or {}
+    try:
+        price = float(quote.get("close"))
+    except (TypeError, ValueError):
+        price = None
+    try:
+        gvz = fetch_fred_series("GVZCLS")
+    except Exception as e:
+        gvz = {"error": type(e).__name__}
+    results["liquidity_levels"] = build_liquidity(price, gvz)
     try:
         snapshot = snapshot_from_data(results, str(results.get("timestamp")))
         history = load_history()
@@ -500,7 +520,14 @@ async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
     if symbol == DEFAULT_SYMBOL:
         try:
             xau_closes = daily_closes_from_h1(XAU_TF_H1_CSV)
+            if not xau_closes:
+                # XAU-TF 停止時は Twelve Data 日足（土日除外済み）の終値で代替する
+                xau_closes = {str(r.get("datetime"))[:10]: float(r["close"])
+                              for r in results.get(f"_raw_series_{DEFAULT_SYMBOL}") or []
+                              if isinstance(r, dict) and r.get("close") not in (None, "")}
             results["correlation"] = build_correlations(xau_closes, results.get("fred") or {})
+            if xau_closes and not daily_closes_from_h1(XAU_TF_H1_CSV):
+                results["correlation"]["xau_source"] = "Twelve Data 日足（土日除外）"
             pairs = results["correlation"].get("pairs", [])
             print(f"  [OK]    correlation: {len(pairs)} ペア算出"
                   f"（{', '.join(p['verdict'] for p in pairs)}）")
@@ -588,13 +615,8 @@ def format_scraped_data(data: dict) -> str:
     if price_data:
         lines.append(price_data)
         lines.append("")
-    xau_quote = data.get("_raw_quote_XAUUSD") or {}
-    if xau_quote:
-        try:
-            xau_price = float(xau_quote.get("close"))
-        except (TypeError, ValueError):
-            xau_price = None
-        lines.extend(format_liquidity_lines(xau_price))
+    if isinstance(data.get("liquidity_levels"), dict):
+        lines.extend(format_liquidity_lines(data["liquidity_levels"]))
         lines.append("")
 
     # --- DXY 価格データ ---
