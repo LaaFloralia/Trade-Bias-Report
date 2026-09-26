@@ -403,3 +403,23 @@ def test_enrich_uses_fresh_tv_gvz_for_liquidity(tmp_path, monkeypatch):
     assert liq["expected_move_1sd"] == round(4286.21 * 22.44 / 100 / 252 ** 0.5, 1)
     main.enrich_offchart_inputs(results, tv_history=tmp_path / "missing.jsonl", **kwargs)
     assert results["liquidity_levels"]["gvz"] == 23.59
+
+
+def test_calendar_reloads_once_when_week_tabs_yield_nothing():
+    import asyncio
+    from scrapers import economic_calendar as ec
+    calls = []
+
+    async def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            return [], ["This Week"], "No Events Scheduled"
+        return [{"date": "Tuesday, September 29, 2026", "indicator": "CB Consumer Confidence"}], [], ""
+
+    events, missing, body, attempts = asyncio.run(ec._load_with_retry(flaky))
+    assert len(events) == 1 and attempts == 2 and missing == [] and body == ""
+
+    async def empty():
+        return [], [], "No Events Scheduled"
+
+    assert asyncio.run(ec._load_with_retry(empty))[3] == 2

@@ -167,6 +167,17 @@ async def _scrape_week(page, week_label: str) -> list:
     return events
 
 
+async def _load_with_retry(load, attempts: int = 2):
+    """週タブの切替が効かず当日表示（休日は「No Events Scheduled」）だけを読む一時的な失敗に備え、
+    イベントが0件なら読み直す。戻り値は (events, missing_tabs, body_text, 試行回数)。"""
+    events, missing_tabs, body = [], [], ""
+    for attempt in range(1, attempts + 1):
+        events, missing_tabs, body = await load()
+        if events:
+            return events, missing_tabs, body, attempt
+    return events, missing_tabs, body, attempts
+
+
 async def scrape_economic_calendar() -> dict:
     """Investing.com から★★★経済指標を取得する。
 
@@ -193,30 +204,34 @@ async def scrape_economic_calendar() -> dict:
                 timezone_id="Asia/Tokyo",
                 ignore_https_errors=True,
             )
-            page = await context.new_page()
+            async def load_once():
+                page = await context.new_page()
+                try:
+                    await page.goto(url, timeout=BROWSER_TIMEOUT, wait_until="domcontentloaded")
+                    await page.wait_for_timeout(5000)
+                    events, missing_tabs = [], []
+                    for label in ("This Week", "Next Week"):
+                        button = await page.query_selector(f'a:has-text("{label}"), button:has-text("{label}")')
+                        if not button:
+                            missing_tabs.append(label)
+                            continue
+                        await button.click()
+                        await page.wait_for_timeout(3000)
+                        events.extend(await _scrape_week(page, label))
+                    body = "" if events else (await page.inner_text("body"))[:5000]
+                    return events, missing_tabs, body
+                finally:
+                    await page.close()
 
-            await page.goto(url, timeout=BROWSER_TIMEOUT, wait_until="domcontentloaded")
-            await page.wait_for_timeout(5000)
-
-            this_week_btn = await page.query_selector('a:has-text("This Week"), button:has-text("This Week")')
-            if this_week_btn:
-                await this_week_btn.click()
-                await page.wait_for_timeout(3000)
-
-            this_week_events = await _scrape_week(page, "This Week")
-            result["events"].extend(this_week_events)
-
-            next_week_btn = await page.query_selector('a:has-text("Next Week"), button:has-text("Next Week")')
-            if next_week_btn:
-                await next_week_btn.click()
-                await page.wait_for_timeout(3000)
-                next_week_events = await _scrape_week(page, "Next Week")
-                result["events"].extend(next_week_events)
-
-            if not result["events"]:
-                body_text = await page.inner_text("body")
-                result["raw_text"] = body_text[:5000]
-                result["error"] = "★★★イベントが見つかりませんでした。"
+            events, missing_tabs, body, attempts = await _load_with_retry(load_once)
+            result["events"] = events
+            result["attempts"] = attempts
+            if missing_tabs:
+                result["missing_tabs"] = missing_tabs
+            if not events:
+                result["raw_text"] = body
+                result["error"] = ("★★★イベントが見つかりませんでした。"
+                                   + (f"（週タブ未検出: {'・'.join(missing_tabs)}）" if missing_tabs else ""))
 
             await browser.close()
 
