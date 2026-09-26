@@ -15,7 +15,7 @@ COT は Daily / Weekly を問わず常時取得する (2026-08 の 2 本体制�
 import asyncio
 import sys
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from config import (
@@ -62,11 +62,13 @@ from scrapers.correlation import (
 )
 from scrapers.session_stats import compute_session_stats, format_session_stats_lines
 from scrapers.macro_surprise import (
-    JST, archive_forecasts, fetch_ff_week, fill_missing_forecasts, format_surprise_lines,
-    load_forecast_history, released_surprises,
+    JST, archive_actuals, archive_forecasts, fetch_ff_week, fill_missing_forecasts, format_surprise_lines,
+    load_actual_history, load_forecast_history, released_surprises,
 )
 from scrapers.liquidity_levels import build_liquidity, format_liquidity_lines
 from scrapers.fred import fetch_fred_series
+from scrapers.news_triage import build_news, format_news_lines
+from scrapers.offchart_features import build_features, save_features
 from scrapers.positioning_history import (
     append_snapshot, format_positioning_lines, load_history, snapshot_from_data,
 )
@@ -131,7 +133,7 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
 
 
 def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = None,
-                           gvz_fetch=None) -> None:
+                           gvz_fetch=None, news_builder=None, save=True) -> None:
     """指標サプライズ・流動性の目安・ポジショニング履歴・採点入力の取得状況を追加する。
 
     失敗しても他の入力は残す。now / gvz_fetch はテストで差し替えるための引数。
@@ -151,14 +153,15 @@ def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = 
         except Exception as e:
             print(f"  [WARN]  forecast_fallback: {e}")
         try:
-            history = load_forecast_history()
+            history, actuals = load_forecast_history(), load_actual_history()
             archived = archive_forecasts(events, now)
-            print(f"  [OK]    forecast_archive: 発表前の予想 {archived} 件を記録")
+            first_seen = archive_actuals(events, now, set(actuals))
+            print(f"  [OK]    forecast_archive: 発表前の予想 {archived} 件・結果の初回 {first_seen} 件を記録")
         except Exception as e:
-            history = {}
+            history, actuals = {}, {}
             print(f"  [WARN]  forecast_archive: {e}")
         results["macro_surprises"] = released_surprises(events, now, lookback_hours=lookback,
-                                                        forecast_history=history)
+                                                        forecast_history=history, actual_history=actuals)
     quote = results.get(f"_raw_quote_{DEFAULT_SYMBOL}") or {}
     try:
         price = float(quote.get("close"))
@@ -178,7 +181,21 @@ def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = 
     except Exception as e:
         results["positioning"] = {"error": str(e)}
         print(f"  [WARN]  positioning_history: {e}")
+    try:
+        results["news_headlines"] = (news_builder or build_news)(now.astimezone(timezone.utc), lookback)
+        sel = results["news_headlines"].get("selection") or {}
+        print(f"  [OK]    news_triage: 候補 {results['news_headlines'].get('candidate_count')} 件 → "
+              f"採用 {len(results['news_headlines'].get('kept') or [])} 件（{sel.get('mode')}）")
+    except Exception as e:
+        results["news_headlines"] = {"error": type(e).__name__}
+        print(f"  [WARN]  news_triage: {e}")
     results["input_status"] = build_input_status(results, weekly=weekly)
+    results["offchart_features"] = build_features(results, now, weekly=weekly)
+    if save:
+        try:
+            save_features(results["offchart_features"])
+        except Exception as e:
+            print(f"  [WARN]  offchart_features: {e}")
 
 
 def build_input_status(results: dict, weekly: bool = False) -> list[dict]:
@@ -205,7 +222,8 @@ def build_input_status(results: dict, weekly: bool = False) -> list[dict]:
          "同じ取得元の履歴で百分位が出ているか"),
         (3, "指標サプライズ・金利織り込み", bool(pre_release) or fed_prev,
          f"発表前記録つきサプライズ {len(pre_release)} 件、FedWatch {'前週' if weekly else '前日'}比較 {'あり' if fed_prev else 'なし'}"),
-        (4, "ファンダ大局", has_number(fred.get("DFII10"), "value"), "実質金利（DFII10）"),
+        (4, "ファンダ大局", has_number(fred.get("DFII10"), "value") and not (fred.get("DFII10") or {}).get("stale"),
+         f"実質金利（DFII10、{(fred.get('DFII10') or {}).get('as_of_date')}時点。古い値は取得不可扱い）"),
         (5, "週次アンカー", bool(weekly) and not weekly.get("stale"), "前回 Weekly（親レビュー通過版）"),
         (6, "イベント予定", bool(calendar.get("events")), "経済指標カレンダー"),
         (7, "相関", bool(corr_ok), f"20日相関が出たペア {len(corr_ok)} 件"),
@@ -696,6 +714,8 @@ def format_scraped_data(data: dict) -> str:
         )
         if dxy.get("note"):
             lines.append(f"※ {dxy['note']}")
+        if dxy.get("change_note"):
+            lines.append(f"※ {dxy['change_note']}（表示値 {dxy.get('change_reported')}）")
 
         # PDH/PDL等の出力（バリデーション結果を反映）
         for h_key, l_key, label in [("pdh", "pdl", "PDH/PDL"), ("pwh", "pwl", "PWH/PWL"), ("pmh", "pml", "PMH/PML")]:
@@ -1005,6 +1025,9 @@ def format_scraped_data(data: dict) -> str:
             lines.append("")
             lines.extend(format_surprise_lines(data.get("macro_surprises") or [],
                                                data.get("macro_surprise_hours") or 36))
+    if data.get("news_headlines"):
+        lines.append("")
+        lines.extend(format_news_lines(data.get("news_headlines")))
 
     # --- FedWatch（常時取得、Deep Bias 強化）---
     # 旧 is_fomc_week 分岐は撤廃。平時も次回 FOMC への利下げ確率を追跡する。

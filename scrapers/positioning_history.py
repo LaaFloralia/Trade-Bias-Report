@@ -154,3 +154,20 @@ def backfill_cot_history(market_name: str, weeks: int = 156, path: Path = HISTOR
         known.add(parsed["date"])
         added += 1
     return added
+
+
+def positioning_numbers(snapshot: dict, rows: list[dict]) -> dict:
+    """format_positioning_lines と同じ規則の数値版（自動売買などの機械利用向け）。"""
+    now = snapshot.get("recorded_at", "")
+    out = {"retail": {}, "cot_gold_mm": None}
+    for symbol, r in (snapshot.get("retail") or {}).items():
+        series = _retail_series(rows, symbol, r["source"], now)
+        out["retail"][symbol] = {"source": r["source"], "long_pct": r["long_pct"],
+                                 "percentile": percentile_rank(series, r["long_pct"]), "history_n": len(series)}
+    cot = snapshot.get("cot_gold_mm")
+    if cot:
+        weeks = _cot_by_week(rows, cot["report_date"])
+        out["cot_gold_mm"] = {"report_date": cot["report_date"], "mm_net_pct_oi": cot["mm_net_pct_oi"],
+                              "percentile": percentile_rank(list(weeks.values()), cot["mm_net_pct_oi"]),
+                              "window": [min(weeks), max(weeks)] if weeks else None, "history_n": len(weeks)}
+    return out
