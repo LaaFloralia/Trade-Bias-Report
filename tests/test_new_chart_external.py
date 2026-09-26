@@ -136,7 +136,7 @@ def test_correlation_format_renders_table():
         _closes([4000 + i for i in range(n)]), _fred("DFII10", [2.0 - i * 0.01 for i in range(n)])
     )
     text = "\n".join(correlation.format_correlation_lines(corr))
-    assert "| ペア | 20日 r | 60日 r |" in text
+    assert "| ペア | 20日 r（期間） | 60日 r（期間） |" in text
     assert "日次リターン" in text  # 方法論の明示
 
 

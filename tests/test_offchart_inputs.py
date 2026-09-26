@@ -32,6 +32,7 @@ def test_parse_value_handles_units_and_rejects_text():
 def test_surprise_direction_follows_indicator_meaning():
     strong_claims = ms.compute_surprise(_ev("Initial Jobless Claims", "215K", "201K"))
     assert strong_claims["diff"] == 14 and strong_claims["gold_direction"] == "金に上向き"
+    assert ms.compute_surprise(_ev("CPI (MoM) (Aug)", "0.4%", "0.2%"))["unit"] == "pp"
     hot_cpi = ms.compute_surprise(_ev("CPI (MoM) (Aug)", "0.4%", "0.2%"))
     assert hot_cpi["gold_direction"] == "金に下向き"
     assert ms.compute_surprise(_ev("CPI (MoM) (Aug)", "0.2%", "0.2%"))["gold_direction"] == "予想どおり"
@@ -67,10 +68,13 @@ def test_round_levels_mark_hundreds_and_stay_within_band():
     assert [lv["level"] for lv in levels if lv["major"]] == [4300.0]
     assert [lv["level"] for lv in levels] == [4250.0, 4300.0, 4350.0]
     text = "\n".join(format_liquidity_lines(build_liquidity(4312.21, {"value": 25.0, "as_of_date": "2026-09-25"})))
-    assert "4,350" in text and "4,300★（-12.2, -0.28%・想定値幅内）" in text and "QuikStrike" in text
-    assert "±67.9ドル" in text  # 4312.21 × 25% / √252
+    assert "4,350" in text and "4,300★（-12.2, -0.28%・参考変動額内）" in text and "QuikStrike" in text
+    assert "±67.9ドル" in text and "±56.4ドル" in text  # 252営業日換算と365暦日換算
+    assert "観測した注文集中（価格帯別の注文量）: 取得不可" in text
     no_gvz = "\n".join(format_liquidity_lines(build_liquidity(4312.21, {"error": "timeout"})))
-    assert "想定値幅: 取得不可（GVZ timeout）" in no_gvz and "想定値幅内" not in no_gvz
+    assert "参考変動額: 取得不可（GVZ timeout）" in no_gvz and "参考変動額内" not in no_gvz
+    assert build_liquidity(float("nan"), {"value": 25.0})["levels"] == []
+    assert build_liquidity(4000.0, {"value": float("nan")})["expected_move_1sd"] is None
     assert "キリ番: 取得不可" in "\n".join(format_liquidity_lines(None))
     assert expected_daily_move(4000, 0) is None
 
@@ -85,7 +89,7 @@ def test_positioning_percentile_waits_for_enough_history(tmp_path):
     snap = {"recorded_at": "2026-09-24T09:00:00", "retail": {"XAUUSD": {"source": "FXSSI", "long_pct": 63.0}},
             "cot_gold_mm": {"report_date": "2026-09-22", "mm_net_pct_oi": 32.8}}
     lines = "\n".join(ph.format_positioning_lines(snap, rows))
-    assert "96.0パーセンタイル" in lines
+    assert "94.0パーセンタイル" in lines  # 履歴 40〜64 の25件: 23件より大きく1件と同値 → (23+0.5)/25
     assert "判定保留（履歴0週" in lines
     other_source = {**snap, "retail": {"XAUUSD": {"source": "IG", "long_pct": 63.0}}}
     assert "判定保留（履歴0件" in "\n".join(ph.format_positioning_lines(other_source, rows))
@@ -109,14 +113,20 @@ def test_enrich_offchart_inputs_survives_feed_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(ph, "HISTORY_PATH", tmp_path / "positioning.jsonl")
     monkeypatch.setattr(main, "append_snapshot", lambda snap: ph.append_snapshot(snap, tmp_path / "positioning.jsonl"))
     monkeypatch.setattr(main, "load_history", lambda: ph.load_history(tmp_path / "positioning.jsonl"))
+    monkeypatch.setattr(main, "load_forecast_history", lambda: {})
+    monkeypatch.setattr(main, "archive_forecasts", lambda events, now: 0)
     results = {"timestamp": "2026-09-24T09:00:51",
                "economic_calendar": {"events": [_ev("Initial Jobless Claims", "N/A", "201K")]},
                "retail_sentiment": {"XAUUSD": {"source": "FXSSI", "long_pct": 62.4}}}
-    main.enrich_offchart_inputs(results)
+    main.enrich_offchart_inputs(results, now=datetime(2026, 9, 24, 9, 1, tzinfo=ms.JST),
+                                gvz_fetch=lambda sid: {"value": 24.0, "as_of_date": "2026-09-23"})
     assert results["economic_calendar"]["forecast_fallback"]["error"].startswith("ForexFactory")
     assert results["macro_surprises"] == []
     assert results["positioning"]["snapshot"]["retail"]["XAUUSD"]["long_pct"] == 62.4
     assert (tmp_path / "positioning.jsonl").exists()
+    status = {row["item"]: row["available"] for row in results["input_status"]}
+    assert status[6] is True and status[2] is False and status[3] is False
+    assert "取得済み" in main.format_input_status_lines(results["input_status"])[1]
 
 
 def test_backfill_cot_history_adds_each_week_once(tmp_path, monkeypatch):
@@ -179,3 +189,54 @@ def test_report_anchor_falls_back_to_parent_passed_editions(tmp_path, monkeypatc
     assert anchor["prev_daily"]["file"] == "Daily_Bias_Report_2026-09-25.md"  # 当日分・未通過版は使わない
     assert anchor["xau_tf"] is None
     assert "出所: chart-intel" in "\n".join(ra.format_anchor_lines(anchor))
+
+
+def test_forecast_fill_rejects_ambiguous_or_different_qualifiers():
+    when = datetime(2026, 10, 13, 21, 30, tzinfo=ms.JST)
+    ff = [{"country": "United States", "title": "Core CPI m/m", "forecast": "0.3%", "datetime_jst": when},
+          {"country": "United States", "title": "CPI m/m", "forecast": "0.2%", "datetime_jst": when},
+          {"country": "United States", "title": "CPI y/y", "forecast": "2.9%", "datetime_jst": when}]
+    base = dict(date="Tuesday, October 13, 2026", time="21:30")
+    headline = [_ev("CPI (MoM) (Sep)", "N/A", "N/A", **base)]
+    core = [_ev("Core CPI (MoM) (Sep)", "N/A", "N/A", **base)]
+    assert ms.fill_missing_forecasts(headline, [dict(r, title=r["title"].replace("m/m", "MoM").replace("y/y", "YoY")) for r in ff]) == 1
+    assert headline[0]["forecast"] == "0.2%"
+    assert ms.fill_missing_forecasts(core, [dict(r, title=r["title"].replace("m/m", "MoM").replace("y/y", "YoY")) for r in ff]) == 1
+    assert core[0]["forecast"] == "0.3%"
+    twins = [_ev("CPI (MoM) (Sep)", "N/A", "N/A", **base)]
+    dup = [{"country": "United States", "title": "CPI MoM", "forecast": x, "datetime_jst": when} for x in ("0.2%", "0.3%")]
+    assert ms.fill_missing_forecasts(twins, dup) == 0 and twins[0]["forecast"] == "N/A"
+
+
+def test_percentile_needs_variation_and_uses_mid_rank():
+    assert ph.percentile_rank([50.0] * 30, 50.0) is None           # 変化のない履歴
+    values = [float(v) for v in range(40, 70)]
+    assert ph.percentile_rank(values, 55.0) == 51.7                 # (15 + 0.5) / 30
+    assert ph.percentile_rank(values + [float("nan")], 55.0) == 51.7
+
+
+def test_weekly_surprise_window_is_seven_days():
+    now = datetime(2026, 9, 26, 7, 0, tzinfo=ms.JST)
+    events = [_ev("PPI (MoM)", "0.1%", "0.2%", date="Monday, September 21, 2026")]
+    assert ms.released_surprises(events, now) == []
+    assert len(ms.released_surprises(events, now, lookback_hours=7 * 24)) == 1
+    assert ms.format_surprise_lines([], 7 * 24)[0] == "### 指標サプライズ（発表済み・直近7日）"
+
+
+def test_anchor_reads_iso_generation_time():
+    from datetime import date
+    from scrapers import report_anchor as ra
+    text = "# t\nデータ基準日: 2026-09-26 ｜ 生成完了: 2026-09-26T20:42:18.484636+09:00 ｜ データ充足: 16/18\n"
+    assert ra._extract_generated_at(text, date(2026, 9, 26)) == "2026-09-26T20:42+09:00"
+
+
+def test_correlation_reports_periods_and_rejects_nan():
+    from scrapers import correlation as cr
+    assert cr._pearson([1.0, float("nan"), 3.0, 4.0], [1.0, 2.0, 3.0, 4.0]) is None
+    days = [f"2026-{m:02d}-{d:02d}" for m in (6, 7, 8) for d in range(1, 29)][:70]
+    xau = {d: 4000 + i * (1 if i % 2 else -1.5) for i, d in enumerate(days)}
+    fred = {"DFII10": {"observations": [(d, 2.0 + i * (0.01 if i % 2 else -0.012)) for i, d in enumerate(days)]}}
+    res = cr.build_correlations(xau, fred)
+    pair = res["pairs"][0]
+    assert pair["period_20d"].endswith(days[-1]) and pair["period_60d"]
+    assert "（2026-" in "\n".join(cr.format_correlation_lines(res))

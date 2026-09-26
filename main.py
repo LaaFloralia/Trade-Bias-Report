@@ -130,8 +130,15 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
     }
 
 
-def enrich_offchart_inputs(results: dict) -> None:
-    """指標サプライズとポジショニング履歴を追加する。失敗しても他の入力は残す。"""
+def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = None,
+                           gvz_fetch=None) -> None:
+    """指標サプライズ・流動性の目安・ポジショニング履歴・採点入力の取得状況を追加する。
+
+    失敗しても他の入力は残す。now / gvz_fetch はテストで差し替えるための引数。
+    """
+    now = now or datetime.now(JST)
+    lookback = 7 * 24 if weekly else 36
+    results["macro_surprise_hours"] = lookback
     calendar = results.get("economic_calendar")
     events = calendar.get("events") if isinstance(calendar, dict) else None
     if events:
@@ -143,7 +150,6 @@ def enrich_offchart_inputs(results: dict) -> None:
                   + (f"（{ff['error']}）" if ff["error"] else ""))
         except Exception as e:
             print(f"  [WARN]  forecast_fallback: {e}")
-        now = datetime.now(JST)
         try:
             history = load_forecast_history()
             archived = archive_forecasts(events, now)
@@ -151,14 +157,15 @@ def enrich_offchart_inputs(results: dict) -> None:
         except Exception as e:
             history = {}
             print(f"  [WARN]  forecast_archive: {e}")
-        results["macro_surprises"] = released_surprises(events, now, forecast_history=history)
+        results["macro_surprises"] = released_surprises(events, now, lookback_hours=lookback,
+                                                        forecast_history=history)
     quote = results.get(f"_raw_quote_{DEFAULT_SYMBOL}") or {}
     try:
         price = float(quote.get("close"))
     except (TypeError, ValueError):
         price = None
     try:
-        gvz = fetch_fred_series("GVZCLS")
+        gvz = (gvz_fetch or fetch_fred_series)("GVZCLS")
     except Exception as e:
         gvz = {"error": type(e).__name__}
     results["liquidity_levels"] = build_liquidity(price, gvz)
@@ -171,6 +178,51 @@ def enrich_offchart_inputs(results: dict) -> None:
     except Exception as e:
         results["positioning"] = {"error": str(e)}
         print(f"  [WARN]  positioning_history: {e}")
+    results["input_status"] = build_input_status(results)
+
+
+def build_input_status(results: dict) -> list[dict]:
+    """採点8項目の材料が判定に使える状態かをコードで数える（網羅率の根拠）。"""
+    def has_number(d, key):
+        return isinstance(d, dict) and isinstance(d.get(key), (int, float))
+
+    dxy = results.get("dxy") or {}
+    positioning_lines = "\n".join((results.get("positioning") or {}).get("lines") or [])
+    surprises = results.get("macro_surprises") or []
+    pre_release = [e for e in surprises if str(e.get("forecast_provenance", "")).startswith("発表前記録")]
+    fed = results.get("fedwatch") or {}
+    fed_prev = any(isinstance(r, dict) and r.get("prev_day") is not None for r in fed.get("target_rates") or [])
+    fred = results.get("fred") or {}
+    anchor = results.get("report_anchor") or {}
+    weekly = anchor.get("weekly") if isinstance(anchor, dict) else None
+    calendar = results.get("economic_calendar") or {}
+    corr = results.get("correlation") or {}
+    corr_ok = [p for p in corr.get("pairs") or [] if p.get("r_20d") is not None]
+    rows = [
+        (1, "DXY", has_number(dxy, "current_price") and has_number(dxy, "prev_close"), "DXY 現在値・前日終値"),
+        (2, "個人比率の百分位", "個人ロング比率" in positioning_lines and "パーセンタイル" in positioning_lines.split("金 Managed")[0],
+         "同じ取得元の履歴で百分位が出ているか"),
+        (3, "指標サプライズ・金利織り込み", bool(pre_release) or fed_prev,
+         f"発表前記録つきサプライズ {len(pre_release)} 件、FedWatch 前日比較 {'あり' if fed_prev else 'なし'}"),
+        (4, "ファンダ大局", has_number(fred.get("DFII10"), "value"), "実質金利（DFII10）"),
+        (5, "週次アンカー", bool(weekly) and not weekly.get("stale"), "前回 Weekly（親レビュー通過版）"),
+        (6, "イベント予定", bool(calendar.get("events")), "経済指標カレンダー"),
+        (7, "相関", bool(corr_ok), f"20日相関が出たペア {len(corr_ok)} 件"),
+        (8, "ETF・中銀フロー", bool(results.get("gold_etf")) and not (results.get("gold_etf") or {}).get("error"),
+         "GLD 保有量（中銀は月次）"),
+    ]
+    return [{"item": n, "name": name, "available": bool(ok), "basis": basis} for n, name, ok, basis in rows]
+
+
+def format_input_status_lines(status: list[dict]) -> list[str]:
+    available = [s for s in status if s["available"]]
+    missing = [f"#{s['item']}" for s in status if not s["available"]]
+    lines = ["### 採点入力の取得状況（コード集計）",
+             f"- 取得済み {len(available)}/{len(status)}（取得不可: {'・'.join(missing) or 'なし'}）。"
+             "セクション0のデータ網羅率はこの数を使う。材料があっても方向が出ない項目は「中立」「方向未定」で別に扱う"]
+    for s in status:
+        lines.append(f"- #{s['item']} {s['name']}: {'取得済み' if s['available'] else '取得不可'}（{s['basis']}）")
+    return lines
 
 
 async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
@@ -578,7 +630,7 @@ async def collect_all_data(weekly: bool = False, symbol: str = None) -> dict:
     # 共通メタデータスキーマ補完（source/symbol/timestamp/as_of_date/
     # stale/fallback_used/error/note）。既存キーは上書きしない。
     normalize_scraper_results(results)
-    enrich_offchart_inputs(results)
+    enrich_offchart_inputs(results, weekly=weekly)
 
     return results
 
@@ -950,7 +1002,8 @@ def format_scraped_data(data: dict) -> str:
             lines.append("該当なし")
         if calendar.get("events"):
             lines.append("")
-            lines.extend(format_surprise_lines(data.get("macro_surprises") or []))
+            lines.extend(format_surprise_lines(data.get("macro_surprises") or [],
+                                               data.get("macro_surprise_hours") or 36))
 
     # --- FedWatch（常時取得、Deep Bias 強化）---
     # 旧 is_fomc_week 分岐は撤廃。平時も次回 FOMC への利下げ確率を追跡する。
@@ -1199,6 +1252,10 @@ def format_scraped_data(data: dict) -> str:
                 if ("数値不正" in issue or "ゼロまたは負数" in issue) and " (" in issue:
                     displayed_issue = issue.split(" (", 1)[0]
                 lines.append(f"- {symbol}: データ異常: {displayed_issue}")
+
+    if data.get("input_status"):
+        lines.append("")
+        lines.extend(format_input_status_lines(data["input_status"]))
 
     result_text = "\n".join(lines)
 
