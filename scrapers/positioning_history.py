@@ -8,12 +8,15 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
 HISTORY_PATH = Path(__file__).parent.parent / "output" / "history" / "positioning.jsonl"
 MIN_SAMPLES = 20
+MIN_DISTINCT = 5          # 値の種類がこれ未満なら（変化がない履歴）百分位を出さない
+COT_WINDOW_WEEKS = 156    # 直前3年に固定（窓が伸び続けて比較基準が変わるのを防ぐ）
 
 
 def snapshot_from_data(data: dict, recorded_at: str) -> dict:
@@ -53,21 +56,24 @@ def load_history(path: Path = HISTORY_PATH) -> list[dict]:
 
 
 def percentile_rank(history: Iterable[float], value: float) -> Optional[float]:
-    """value 以下の割合（%）。履歴が MIN_SAMPLES 未満なら None。"""
-    values = [v for v in history if isinstance(v, (int, float))]
-    if len(values) < MIN_SAMPLES:
+    """中間順位による百分位（同値は半分に数える）。件数不足・変化のない履歴では None。"""
+    values = [v for v in history if isinstance(v, (int, float)) and math.isfinite(v)]
+    if len(values) < MIN_SAMPLES or len(set(values)) < MIN_DISTINCT:
         return None
-    return round(100 * sum(1 for v in values if v <= value) / len(values), 1)
+    below = sum(1 for v in values if v < value)
+    equal = sum(1 for v in values if v == value)
+    return round(100 * (below + 0.5 * equal) / len(values), 1)
 
 
 def _retail_series(rows: list[dict], symbol: str, source: str, before: str) -> list[float]:
-    # 同じ取得元の値だけ、1時間に1件へまとめる（同一データの重複記録で分布を歪めない）
-    by_hour = {}
+    # 同じ取得元の値だけ。提供元の観測時刻が同じ記録は1件に、無ければ1時間に1件へまとめる
+    by_obs = {}
     for row in rows:
         r = (row.get("retail") or {}).get(symbol)
         if r and r.get("source") == source and row.get("recorded_at", "") < before:
-            by_hour[row["recorded_at"][:13]] = r["long_pct"]
-    return list(by_hour.values())
+            key = r.get("source_timestamp") or row["recorded_at"][:13]
+            by_obs[key] = r["long_pct"]
+    return list(by_obs.values())
 
 
 def _cot_series(rows: list[dict], before_report: str) -> list[float]:
@@ -80,7 +86,7 @@ def _cot_by_week(rows: list[dict], before_report: str) -> dict:
         c = row.get("cot_gold_mm")
         if c and c.get("report_date") and c["report_date"] < before_report:
             by_week[c["report_date"]] = c["mm_net_pct_oi"]
-    return dict(sorted(by_week.items()))
+    return dict(sorted(by_week.items())[-COT_WINDOW_WEEKS:])
 
 
 def format_positioning_lines(snapshot: dict, rows: list[dict]) -> list[str]:
@@ -89,7 +95,8 @@ def format_positioning_lines(snapshot: dict, rows: list[dict]) -> list[str]:
     for symbol, r in (snapshot.get("retail") or {}).items():
         series = _retail_series(rows, symbol, r["source"], now)
         pct = percentile_rank(series, r["long_pct"])
-        rank = f"{pct}パーセンタイル" if pct is not None else f"判定保留（履歴{len(series)}件、{MIN_SAMPLES}件未満）"
+        rank = (f"{pct}パーセンタイル" if pct is not None
+                else f"判定保留（履歴{len(series)}件・値{len(set(series))}種。{MIN_SAMPLES}件・{MIN_DISTINCT}種以上で判定）")
         lines.append(f"- {symbol} 個人ロング比率（{r['source']}）: {r['long_pct']}% → 同じ取得元の履歴で {rank}")
     cot = snapshot.get("cot_gold_mm")
     if cot:
@@ -98,7 +105,7 @@ def format_positioning_lines(snapshot: dict, rows: list[dict]) -> list[str]:
         pct = percentile_rank(series, cot["mm_net_pct_oi"])
         window = f"比較窓 {min(weeks)}〜{max(weeks)} の{len(weeks)}週、CFTC現在公表値" if weeks else "比較窓なし"
         rank = (f"{pct}パーセンタイル（{window}）" if pct is not None
-                else f"判定保留（履歴{len(series)}週、{MIN_SAMPLES}週未満）")
+                else f"判定保留（履歴{len(series)}週。{MIN_SAMPLES}週以上で判定）")
         lines.append(f"- 金 Managed Money 純ロング/OI（{cot['report_date']}時点）: {cot['mm_net_pct_oi']}% → {rank}")
     if len(lines) == 1:
         lines.append("- 取得不可（比率・COT とも今回値なし）")
