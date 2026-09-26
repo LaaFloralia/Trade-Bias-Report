@@ -71,12 +71,16 @@ def _retail_series(rows: list[dict], symbol: str, source: str, before: str) -> l
 
 
 def _cot_series(rows: list[dict], before_report: str) -> list[float]:
+    return list(_cot_by_week(rows, before_report).values())
+
+
+def _cot_by_week(rows: list[dict], before_report: str) -> dict:
     by_week = {}
     for row in rows:
         c = row.get("cot_gold_mm")
         if c and c.get("report_date") and c["report_date"] < before_report:
             by_week[c["report_date"]] = c["mm_net_pct_oi"]
-    return list(by_week.values())
+    return dict(sorted(by_week.items()))
 
 
 def format_positioning_lines(snapshot: dict, rows: list[dict]) -> list[str]:
@@ -89,9 +93,12 @@ def format_positioning_lines(snapshot: dict, rows: list[dict]) -> list[str]:
         lines.append(f"- {symbol} 個人ロング比率（{r['source']}）: {r['long_pct']}% → 同じ取得元の履歴で {rank}")
     cot = snapshot.get("cot_gold_mm")
     if cot:
-        series = _cot_series(rows, cot["report_date"])
+        weeks = _cot_by_week(rows, cot["report_date"])
+        series = list(weeks.values())
         pct = percentile_rank(series, cot["mm_net_pct_oi"])
-        rank = f"{pct}パーセンタイル" if pct is not None else f"判定保留（履歴{len(series)}週、{MIN_SAMPLES}週未満）"
+        window = f"比較窓 {min(weeks)}〜{max(weeks)} の{len(weeks)}週、CFTC現在公表値" if weeks else "比較窓なし"
+        rank = (f"{pct}パーセンタイル（{window}）" if pct is not None
+                else f"判定保留（履歴{len(series)}週、{MIN_SAMPLES}週未満）")
         lines.append(f"- 金 Managed Money 純ロング/OI（{cot['report_date']}時点）: {cot['mm_net_pct_oi']}% → {rank}")
     if len(lines) == 1:
         lines.append("- 取得不可（比率・COT とも今回値なし）")

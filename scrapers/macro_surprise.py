@@ -11,13 +11,16 @@ Investing.com の表から結果・予想を取り、予想が空欄の指標だ
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import requests
 
 JST = timezone(timedelta(hours=9))
+FORECAST_HISTORY = Path(__file__).parent.parent / "output" / "history" / "calendar_forecasts.jsonl"
 FF_WEEK_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 FF_COUNTRY = {
     "USD": "United States", "EUR": "Euro Zone", "GBP": "United Kingdom", "JPY": "Japan",
@@ -100,8 +103,51 @@ def compute_surprise(event: dict) -> Optional[dict]:
             "gold_direction": direction}
 
 
-def released_surprises(events: list, now: datetime, lookback_hours: int = 36) -> list[dict]:
-    """発表済み（結果あり）で直近 lookback_hours 以内の指標にサプライズを付けて返す。"""
+def _event_key(ev: dict, when: datetime) -> str:
+    return f"{ev.get('country', '')}|{str(ev.get('indicator', '')).strip()}|{when.isoformat()}"
+
+
+def archive_forecasts(events: list, captured_at: datetime, path: Path = FORECAST_HISTORY) -> int:
+    """未発表の指標の予想を取得時刻つきで追記する（発表後に予想が書き換わっても事前値を残す）。"""
+    rows = []
+    for ev in events or []:
+        when = event_datetime_jst(ev)
+        if when is None or when <= captured_at or parse_value(ev.get("forecast")) is None:
+            continue
+        rows.append({"key": _event_key(ev, when), "forecast": ev.get("forecast"),
+                     "source": ev.get("forecast_source") or "Investing.com", "captured_at": captured_at.isoformat()})
+    if rows:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return len(rows)
+
+
+def load_forecast_history(path: Path = FORECAST_HISTORY) -> dict:
+    """key → 最も新しい発表前の記録（取得時刻順に上書き）。"""
+    latest = {}
+    if not path.exists():
+        return latest
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        prior = latest.get(row.get("key"))
+        if prior is None or row.get("captured_at", "") >= prior.get("captured_at", ""):
+            latest[row.get("key")] = row
+    return latest
+
+
+def released_surprises(events: list, now: datetime, lookback_hours: int = 36,
+                       forecast_history: Optional[dict] = None) -> list[dict]:
+    """発表済み（結果あり）で直近 lookback_hours 以内の指標にサプライズを付けて返す。
+
+    発表前に記録した予想があればそれを使い（時点が確定した値）、無ければ今回取得した
+    予想を使って「事前記録なし」と明記する。
+    """
+    history = forecast_history or {}
     out = []
     for ev in events or []:
         when = event_datetime_jst(ev)
@@ -109,7 +155,14 @@ def released_surprises(events: list, now: datetime, lookback_hours: int = 36) ->
             continue
         if parse_value(ev.get("actual")) is None:
             continue
-        out.append({**ev, "released_at_jst": when.isoformat(), "surprise": compute_surprise(ev)})
+        item = dict(ev)
+        prior = history.get(_event_key(ev, when))
+        if prior and prior.get("captured_at", "") < when.isoformat():
+            item["forecast"] = prior["forecast"]
+            item["forecast_provenance"] = f"発表前記録（{prior['captured_at'][:16].replace('T', ' ')} 取得・{prior['source']}）"
+        else:
+            item["forecast_provenance"] = "事前記録なし（発表後に取得した予想）"
+        out.append({**item, "released_at_jst": when.isoformat(), "surprise": compute_surprise(item)})
     return out
 
 
@@ -169,10 +222,12 @@ def format_surprise_lines(surprises: list) -> list[str]:
     for ev in surprises:
         s = ev.get("surprise")
         head = (f"- {ev.get('released_at_jst', '')[:16].replace('T', ' ')} JST | {ev.get('country', '')} | "
-                f"{ev.get('indicator', '')} | 結果 {ev.get('actual')} / 予想 {ev.get('forecast')} / 前回 {ev.get('previous')}")
+                f"{ev.get('indicator', '')} | 結果 {ev.get('actual')} / 予想 {ev.get('forecast')} / 前回 {ev.get('previous')}"
+                f" | 予想の出所: {ev.get('forecast_provenance', '不明')}")
         if s is None:
             lines.append(head + " | 差: 計算不可（予想欠測または単位不一致）")
         else:
             lines.append(head + f" | 差 {s['diff']:+g}{s['unit']} | 一般的な反応: {s['gold_direction']}")
-    lines.append("※ 反応方向は米指標の一般則。実際の金の値動きが逆なら、別の買い手・売り手の存在を示す材料として扱う")
+    lines.append("※ 結果は Investing.com の公表値表示、予想は市場予想（発表前記録があればその値）。反応方向は米指標の一般則。"
+                 "実際の金の値動きが逆なら、別の買い手・売り手の存在を示す材料として扱う")
     return lines
