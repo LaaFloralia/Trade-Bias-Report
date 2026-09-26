@@ -71,10 +71,13 @@ def observations(data, now=None):
 
     def add(ident, kind, title, unit, caption, source, observed, specs):
         items, item_rows, item_bindings = [], [], []
-        for label, value, pointer, digits, suffix, detail in specs:
+        for spec in specs:
+            # 7番目の要素は、図の既定と提供元・時点が異なる項目の観測時刻（例: 価格図の平均建値）。
+            label, value, pointer, digits, suffix, detail = spec[:6]
+            seen = spec[6] if len(spec) > 6 else observed
             value = number(value, digits)
             display = f'{value:,.{digits}f}{suffix}'
-            text = f'{label}: {display}。観測: {observed}。{detail}'.strip()
+            text = f'{label}: {display}。観測: {seen}。{detail}'.strip()
             item_rows.append(text)
             item = {'label': label, 'value': value, 'display': display, 'source_quote': text,
                     'tone': 'negative' if value < 0 else 'neutral'}
@@ -82,7 +85,7 @@ def observations(data, now=None):
                 item['detail'] = detail
             items.append(item)
             item_bindings.append({'figure': ident, 'label': label, 'path': pointer, 'value': value,
-                             'digits': digits, 'unit': unit, 'observedAt': observed})
+                             'digits': digits, 'unit': unit, 'observedAt': seen})
         rows.extend(item_rows)
         bindings.extend(item_bindings)
         figures.append({'id': ident, 'type': kind, 'title': title, 'unit': unit,
@@ -110,7 +113,8 @@ def observations(data, now=None):
         provider_url = 'https://fxssi.com/tools/current-ratio' if provider.upper() == 'FXSSI' else 'https://www.myfxbook.com/community/outlook'
         for key, label in (('avg_long_entry', 'Long 平均建値'), ('avg_short_entry', 'Short 平均建値')):
             if isinstance(r.get(key), (int, float)) and not isinstance(r.get(key), bool):
-                price_specs.append((label, r[key], f'retail_sentiment.XAUUSD.{key}', 2, '', '平均建値はSL位置や注文集中を示さない'))
+                price_specs.append((label, r[key], f'retail_sentiment.XAUUSD.{key}', 2, '',
+                                    f'{provider}の平均建値。SL位置や注文集中を示さない', rt))
     gvz_source = liq.get('gvz_source') or 'FRED GVZCLS'
     gvz_note = (f"GVZ {liq.get('gvz')}（{liq.get('gvz_as_of')}時点・{gvz_source}）" if liq.get('gvz') else 'GVZは取得できず、参考変動額は表示していません')
     add('price', 'price_map', '価格・参考変動額・キリ番', 'USD/oz',
