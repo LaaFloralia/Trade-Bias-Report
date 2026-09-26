@@ -1,0 +1,15 @@
+--- backups/20260926-offchart/test_runner.py	2026-09-12 15:07:34
++++ test_runner.py	2026-09-26 20:28:48
+@@ -180,7 +180,11 @@
+         self.assertEqual(runner.isolated_environment()['BRAIN_PATH'], str(runner.ROOT / 'disabled-brain'))
+         self.assertTrue(str(config.XAU_TF_H1_CSV).startswith(str(runner.ROOT)))
+         with patch('subprocess.run', side_effect=AssertionError('unexpected subprocess')):
+-            self.assertEqual(report_anchor.load_report_anchor(), {})
++            anchor = report_anchor.load_report_anchor()
++            # BRAIN_PATH is disabled: any anchor must come from this job's parent-passed editions.
++            self.assertTrue('chart-intel' in anchor.get('source', '')
++                            or not any(anchor.get(k) for k in ('weekly', 'prev_daily')))
++            self.assertIsNone(anchor.get('xau_tf'))
+             self.assertIsNone(weekly_review.build_weekly_review_block())
+             self.assertEqual(self.intel.generate_review_entry(), (None, []))
+             self.assertFalse(self.intel.commit_brain_outputs())
