@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -50,8 +50,13 @@ def _series(rows, key):
     return sorted(out)
 
 
+SESSION_SHIFT = timedelta(hours=10)
+
+
 def _day(t):
-    return datetime.fromtimestamp(t, timezone.utc).date().isoformat()
+    """TradingView の日足時刻はセッション開始（DXY 23:00・GC 22:00・XAUUSD 21:00 UTC は前日、GVZ 13:30 UTC は当日）。
+    10時間進めて取引日の日付にそろえる。"""
+    return (datetime.fromtimestamp(t, timezone.utc) + SESSION_SHIFT).date().isoformat()
 
 
 def oi_regime(price_change, oi_change):

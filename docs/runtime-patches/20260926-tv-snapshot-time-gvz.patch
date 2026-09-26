@@ -1,5 +1,14 @@
---- backups/20260926-offchart/tv_snapshot.before-time.py	2026-09-26 23:11:55
-+++ tv_snapshot.py	2026-09-26 23:13:03
+--- /Users/laa/.codex/jobs/chart-intel/backups/20260926-offchart/tv_snapshot.before-time.py	2026-09-26 23:11:55
++++ /Users/laa/.codex/jobs/chart-intel/tv_snapshot.py	2026-09-26 23:29:54
+@@ -16,7 +16,7 @@
+ import json
+ import math
+ import sys
+-from datetime import datetime, timezone
++from datetime import datetime, timedelta, timezone
+ from pathlib import Path
+ 
+ ROOT = Path(__file__).resolve().parent
 @@ -28,12 +28,17 @@
      return value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
  
@@ -20,7 +29,22 @@
              'volume': _num(q.get('volume')), 'open_interest': _num(q.get('open_interest'))}
  
  
-@@ -59,10 +64,10 @@
+@@ -45,8 +50,13 @@
+     return sorted(out)
+ 
+ 
++SESSION_SHIFT = timedelta(hours=10)
++
++
+ def _day(t):
+-    return datetime.fromtimestamp(t, timezone.utc).date().isoformat()
++    """TradingView の日足時刻はセッション開始（DXY 23:00・GC 22:00・XAUUSD 21:00 UTC は前日、GVZ 13:30 UTC は当日）。
++    10時間進めて取引日の日付にそろえる。"""
++    return (datetime.fromtimestamp(t, timezone.utc) + SESSION_SHIFT).date().isoformat()
+ 
+ 
+ def oi_regime(price_change, oi_change):
+@@ -59,10 +69,10 @@
  
  
  def summarize(raw: dict) -> dict:
@@ -33,7 +57,7 @@
      gc = _series(series.get('COMEX:GC1!'), 'c')
      oi = _series(series.get('COMEX:GC1!_OI'), 'close')
      gvz = _series(series.get('CBOE:GVZ'), 'close')
-@@ -83,9 +88,20 @@
+@@ -83,9 +93,20 @@
      return {'retrieved_at': raw.get('retrieved_at'), 'missing_required': missing, 'quotes': quotes,
              'us02y_change_bp': bp('TVC:US02Y'), 'us10y_change_bp': bp('TVC:US10Y'),
              'gc_open_interest': oi_block,
@@ -55,7 +79,7 @@
  def markdown(s: dict) -> str:
      q = s['quotes']
      fmt = lambda v, d=3: f'{v:,.{d}f}' if isinstance(v, (int, float)) else '取得不可'
-@@ -94,7 +110,9 @@
+@@ -94,7 +115,9 @@
      for sym, label in (('TVC:DXY', 'DXY'), ('TVC:US02Y', '米2年債'), ('TVC:US10Y', '米10年債'),
                         ('COMEX:GC1!', '金先物（期近）'), ('OANDA:XAUUSD', 'XAUUSD')):
          v = q[sym]
@@ -66,7 +90,7 @@
      lines.append(f"- 米2年債 {s['us02y_change_bp']}bp／米10年債 {s['us10y_change_bp']}bp（前日終値比）")
      oi = s['gc_open_interest']
      if oi:
-@@ -105,6 +123,10 @@
+@@ -105,6 +128,10 @@
          lines.append('- 金先物の建玉: 取得不可')
      g = s['gvz_latest']
      lines.append(f"- GVZ 最新日足: {g['close']}（{g['date']}）" if g else '- GVZ: 取得不可')

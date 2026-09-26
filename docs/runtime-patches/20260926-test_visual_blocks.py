@@ -15,13 +15,13 @@ def _fig(values):
 class PriceMapLayout(unittest.TestCase):
     def test_close_values_get_separated_labels_and_true_dots(self):
         svg = visual_blocks.price_map(_fig([4330, 4350, 4300, 4377.2, 4400, 4251, 4458.8]), 'figure-0')
-        grounds = sorted(float(y) for y in re.findall(r'<rect class="label-ground" x="166" y="([-\d.]+)"', svg))
+        grounds = sorted(float(y) for y in re.findall(r'<rect class="label-ground" x="132" y="([-\d.]+)"', svg))
         self.assertEqual(len(grounds), 7)
         self.assertTrue(all(b - a >= 28 for a, b in zip(grounds, grounds[1:])))
         self.assertEqual(svg.count('leader-line'), 7)
         height = float(re.search(r'viewBox="0 0 420 ([\d.]+)"', svg)[1])
         self.assertLessEqual(grounds[-1] + 28, height)
-        dots = [float(y) for y in re.findall(r'class="value-dot" cx="87" cy="([-\d.]+)"', svg)]
+        dots = [float(y) for y in re.findall(r'class="value-dot" cx="(?:87|80)" cy="([-\d.]+)"', svg)]
         self.assertEqual(dots, sorted(dots))  # highest price at top, positions unchanged
 
     def test_spread_values_keep_original_layout(self):

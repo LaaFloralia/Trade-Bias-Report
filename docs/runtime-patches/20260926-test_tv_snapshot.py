@@ -57,3 +57,10 @@ def test_expected_move_uses_tv_gvz():
     assert m['move_1sd'] == round(4284.97 * 22.44 / 100 / 252 ** 0.5, 2)
     assert '参考変動額（TVのGVZ・252日換算）' in t.markdown(t.summarize(r))
     assert t._expected_move(None, 20) is None and t._expected_move(4000, 0) is None
+
+
+def test_session_start_timestamps_map_to_trading_day():
+    # 2026-09-24 23:00 UTC（DXY）・21:00 UTC（XAUUSD）開始の日足は 9/25 の取引日、GVZ 13:30 UTC は当日
+    assert t._day(1790290800) == '2026-09-25'
+    assert t._day(1790283600) == '2026-09-25'
+    assert t._day(1790343000) == '2026-09-25'
