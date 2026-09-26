@@ -199,9 +199,9 @@ def test_forecast_fill_rejects_ambiguous_or_different_qualifiers():
     base = dict(date="Tuesday, October 13, 2026", time="21:30")
     headline = [_ev("CPI (MoM) (Sep)", "N/A", "N/A", **base)]
     core = [_ev("Core CPI (MoM) (Sep)", "N/A", "N/A", **base)]
-    assert ms.fill_missing_forecasts(headline, [dict(r, title=r["title"].replace("m/m", "MoM").replace("y/y", "YoY")) for r in ff]) == 1
+    assert ms.fill_missing_forecasts(headline, ff) == 1          # ForexFactory の実表記 m/m のまま
     assert headline[0]["forecast"] == "0.2%"
-    assert ms.fill_missing_forecasts(core, [dict(r, title=r["title"].replace("m/m", "MoM").replace("y/y", "YoY")) for r in ff]) == 1
+    assert ms.fill_missing_forecasts(core, ff) == 1
     assert core[0]["forecast"] == "0.3%"
     twins = [_ev("CPI (MoM) (Sep)", "N/A", "N/A", **base)]
     dup = [{"country": "United States", "title": "CPI MoM", "forecast": x, "datetime_jst": when} for x in ("0.2%", "0.3%")]
@@ -240,3 +240,17 @@ def test_correlation_reports_periods_and_rejects_nan():
     pair = res["pairs"][0]
     assert pair["period_20d"].endswith(days[-1]) and pair["period_60d"]
     assert "（2026-" in "\n".join(cr.format_correlation_lines(res))
+
+
+def test_liquidity_format_accepts_saved_json_without_calendar_move():
+    saved = {"price": 4286.1, "levels": round_levels(4286.1), "gvz": 23.59, "gvz_as_of": "2026-09-22",
+             "gvz_stale": False, "gvz_error": None, "expected_move_1sd": 63.7}   # 9/26 以前の保存形式
+    text = "\n".join(format_liquidity_lines(saved))
+    assert "±63.7ドル" in text and "暦日365日換算" not in text
+
+
+def test_weekly_input_status_uses_prev_week():
+    results = {"fedwatch": {"target_rates": [{"range": "3.75-4.00", "current": 33.4, "prev_day": None, "prev_week": 40.3}]}}
+    daily = {r["item"]: r["available"] for r in main.build_input_status(results)}
+    weekly = {r["item"]: r["available"] for r in main.build_input_status(results, weekly=True)}
+    assert daily[3] is False and weekly[3] is True

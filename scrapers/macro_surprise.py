@@ -196,8 +196,14 @@ def fetch_ff_week(timeout: int = 15) -> dict:
     return {"events": events, "error": None}
 
 
+_SHORTHAND = ((re.compile(r"\bm/m\b"), " mom "), (re.compile(r"\by/y\b"), " yoy "), (re.compile(r"\bq/q\b"), " qoq "))
+
+
 def _words(text: str) -> set[str]:
-    return set(_WORD_RE.findall(text.lower())) - _STOP_WORDS
+    text = text.lower()
+    for pattern, repl in _SHORTHAND:   # ForexFactory の m/m・y/y・q/q を Investing の MoM・YoY・QoQ にそろえる
+        text = pattern.sub(repl, text)
+    return set(_WORD_RE.findall(text)) - _STOP_WORDS
 
 
 def _names_match(investing: str, ff: str) -> bool:

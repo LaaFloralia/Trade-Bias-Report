@@ -66,14 +66,13 @@ def percentile_rank(history: Iterable[float], value: float) -> Optional[float]:
 
 
 def _retail_series(rows: list[dict], symbol: str, source: str, before: str) -> list[float]:
-    # 同じ取得元の値だけ。提供元の観測時刻が同じ記録は1件に、無ければ1時間に1件へまとめる
-    by_obs = {}
+    # 同じ取得元の値だけ、1時間に1件へまとめる（source_timestamp は取得時刻で観測時刻ではないため使わない）
+    by_hour = {}
     for row in rows:
         r = (row.get("retail") or {}).get(symbol)
         if r and r.get("source") == source and row.get("recorded_at", "") < before:
-            key = r.get("source_timestamp") or row["recorded_at"][:13]
-            by_obs[key] = r["long_pct"]
-    return list(by_obs.values())
+            by_hour[row["recorded_at"][:13]] = r["long_pct"]
+    return list(by_hour.values())
 
 
 def _cot_series(rows: list[dict], before_report: str) -> list[float]:

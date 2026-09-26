@@ -63,7 +63,8 @@ def format_liquidity_lines(liq: Optional[dict]) -> list[str]:
         cal = liq.get("expected_move_calendar")
         lines.append(f"- 参考変動額（1日・1標準偏差）: ±{move:,.1f}ドル → {price - move:,.1f}〜{price + move:,.1f}"
                      f"（GVZ {liq['gvz']:.2f}、{liq.get('gvz_as_of')}時点{'・古い値' if liq.get('gvz_stale') else ''}。"
-                     f"GLDオプション由来の30日予想変動率を252営業日で日次換算。暦日365日換算なら±{cal:,.1f}ドル。"
+                     "GLDオプション由来の30日予想変動率を252営業日で日次換算。"
+                     + (f"暦日365日換算なら±{cal:,.1f}ドル。" if isinstance(cal, (int, float)) else "") +
                      "到達範囲や日中高安幅の予測ではない）")
     else:
         lines.append(f"- 参考変動額: 取得不可（GVZ {liq.get('gvz_error') or '値なし'}）")

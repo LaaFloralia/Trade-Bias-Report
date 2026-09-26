@@ -178,10 +178,10 @@ def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = 
     except Exception as e:
         results["positioning"] = {"error": str(e)}
         print(f"  [WARN]  positioning_history: {e}")
-    results["input_status"] = build_input_status(results)
+    results["input_status"] = build_input_status(results, weekly=weekly)
 
 
-def build_input_status(results: dict) -> list[dict]:
+def build_input_status(results: dict, weekly: bool = False) -> list[dict]:
     """採点8項目の材料が判定に使える状態かをコードで数える（網羅率の根拠）。"""
     def has_number(d, key):
         return isinstance(d, dict) and isinstance(d.get(key), (int, float))
@@ -191,7 +191,8 @@ def build_input_status(results: dict) -> list[dict]:
     surprises = results.get("macro_surprises") or []
     pre_release = [e for e in surprises if str(e.get("forecast_provenance", "")).startswith("発表前記録")]
     fed = results.get("fedwatch") or {}
-    fed_prev = any(isinstance(r, dict) and r.get("prev_day") is not None for r in fed.get("target_rates") or [])
+    compare_key = "prev_week" if weekly else "prev_day"   # Weekly の採点は前週差、Daily は前日差
+    fed_prev = any(isinstance(r, dict) and r.get(compare_key) is not None for r in fed.get("target_rates") or [])
     fred = results.get("fred") or {}
     anchor = results.get("report_anchor") or {}
     weekly = anchor.get("weekly") if isinstance(anchor, dict) else None
@@ -203,7 +204,7 @@ def build_input_status(results: dict) -> list[dict]:
         (2, "個人比率の百分位", "個人ロング比率" in positioning_lines and "パーセンタイル" in positioning_lines.split("金 Managed")[0],
          "同じ取得元の履歴で百分位が出ているか"),
         (3, "指標サプライズ・金利織り込み", bool(pre_release) or fed_prev,
-         f"発表前記録つきサプライズ {len(pre_release)} 件、FedWatch 前日比較 {'あり' if fed_prev else 'なし'}"),
+         f"発表前記録つきサプライズ {len(pre_release)} 件、FedWatch {'前週' if weekly else '前日'}比較 {'あり' if fed_prev else 'なし'}"),
         (4, "ファンダ大局", has_number(fred.get("DFII10"), "value"), "実質金利（DFII10）"),
         (5, "週次アンカー", bool(weekly) and not weekly.get("stale"), "前回 Weekly（親レビュー通過版）"),
         (6, "イベント予定", bool(calendar.get("events")), "経済指標カレンダー"),
