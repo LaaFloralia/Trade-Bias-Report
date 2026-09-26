@@ -401,7 +401,7 @@ def test_price_figure_maps_expected_range_and_round_levels():
 
 def test_price_figure_average_entries_carry_their_own_observation_time():
     data=sample_data()
-    data['retail_sentiment']['XAUUSD'].update(avg_long_entry=3500.25,avg_short_entry=3300.75,as_of_date=None)
+    data['retail_sentiment']['XAUUSD'].update(avg_long_entry=3500.25,avg_short_entry=3300.75,as_of_date=None,source='MyFXBook')
     result=bundle.observations(data,NOW)
     price=next(f for f in result['figures'] if f['id']=='price')
     entries=[i for i in price['items'] if '平均建値' in i['label']]
@@ -410,6 +410,10 @@ def test_price_figure_average_entries_carry_their_own_observation_time():
         assert '観測時刻は未確認 / 記録 '+NOW.isoformat() in item['source_quote']
     quote_time=next(i for i in price['items'] if i['label']=='XAUUSD 記録価格')['source_quote'].split('観測: ')[1]
     assert all(quote_time.split('。')[0] not in i['source_quote'] for i in entries)
+    assert '価格の観測: ' in price['subtitle'] and '平均建値は' in price['caption']
+    assert '観測時刻は未確認 / 記録 '+NOW.isoformat() in price['caption']
+    assert any(link['url'].startswith('https://') and link['label']==data['retail_sentiment']['XAUUSD']['source']
+               for link in price['source_links'])
     bundle.check_bindings(data,result,result['figures'])
 
 
