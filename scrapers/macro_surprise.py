@@ -127,6 +127,42 @@ def archive_forecasts(events: list, captured_at: datetime, path: Path = FORECAST
     return len(rows)
 
 
+def archive_actuals(events: list, captured_at: datetime, known: set, path: Path = FORECAST_HISTORY) -> int:
+    """結果を初めて見た時刻を記録する（改定後の値で上書きされても初回値を残す）。"""
+    rows = []
+    for ev in events or []:
+        when = event_datetime_jst(ev)
+        if when is None or parse_value(ev.get("actual")) is None:
+            continue
+        key = _event_key(ev, when)
+        if key in known:
+            continue
+        known.add(key)
+        rows.append({"key": key, "type": "actual_first_seen", "actual": ev.get("actual"),
+                     "captured_at": captured_at.isoformat()})
+    if rows:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return len(rows)
+
+
+def load_actual_history(path: Path = FORECAST_HISTORY) -> dict:
+    """key → 結果を初めて見た記録。"""
+    first = {}
+    if not path.exists():
+        return first
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("type") == "actual_first_seen" and row.get("key") not in first:
+            first[row["key"]] = row
+    return first
+
+
 def load_forecast_history(path: Path = FORECAST_HISTORY) -> dict:
     """key → 最も新しい発表前の記録（取得時刻順に上書き）。"""
     latest = {}
@@ -136,6 +172,8 @@ def load_forecast_history(path: Path = FORECAST_HISTORY) -> dict:
         try:
             row = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if row.get("type") == "actual_first_seen":
             continue
         try:
             row["_captured"] = datetime.fromisoformat(row["captured_at"])
@@ -148,7 +186,7 @@ def load_forecast_history(path: Path = FORECAST_HISTORY) -> dict:
 
 
 def released_surprises(events: list, now: datetime, lookback_hours: int = 36,
-                       forecast_history: Optional[dict] = None) -> list[dict]:
+                       forecast_history: Optional[dict] = None, actual_history: Optional[dict] = None) -> list[dict]:
     """発表済み（結果あり）で直近 lookback_hours 以内の指標にサプライズを付けて返す。
 
     発表前に記録した予想があればそれを使い（時点が確定した値）、無ければ今回取得した
@@ -169,6 +207,10 @@ def released_surprises(events: list, now: datetime, lookback_hours: int = 36,
             item["forecast_provenance"] = f"発表前記録（{prior['captured_at'][:16].replace('T', ' ')} 取得・{prior['source']}）"
         else:
             item["forecast_provenance"] = "事前記録なし（発表後に取得した予想）"
+        first = (actual_history or {}).get(_event_key(ev, when))
+        if first and first.get("actual") != ev.get("actual"):
+            item["actual_first_seen"] = first["actual"]
+            item["actual_note"] = f"初回取得値 {first['actual']}（{first['captured_at'][:16].replace('T', ' ')}）から変化。改定の可能性"
         out.append({**item, "released_at_jst": when.isoformat(), "surprise": compute_surprise(item)})
     return out
 
@@ -250,7 +292,8 @@ def format_surprise_lines(surprises: list, lookback_hours: int = 36) -> list[str
         s = ev.get("surprise")
         head = (f"- {ev.get('released_at_jst', '')[:16].replace('T', ' ')} JST | {ev.get('country', '')} | "
                 f"{ev.get('indicator', '')} | 結果 {ev.get('actual')} / 予想 {ev.get('forecast')} / 前回 {ev.get('previous')}"
-                f" | 予想の出所: {ev.get('forecast_provenance', '不明')}")
+                f" | 予想の出所: {ev.get('forecast_provenance', '不明')}"
+                + (f" | {ev['actual_note']}" if ev.get("actual_note") else ""))
         if s is None:
             lines.append(head + " | 差: 計算不可（予想欠測または単位不一致）")
         else:

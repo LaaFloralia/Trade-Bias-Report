@@ -94,28 +94,36 @@ def observations(data, now=None):
         raise BundleError('Required XAUUSD quote is missing')
     r = (data.get('retail_sentiment') or {}).get('XAUUSD')
     quote_time = str(q.get('datetime') or q.get('timestamp') or '市場観測時刻は未確認')
+    liq = data.get('liquidity_levels') if isinstance(data.get('liquidity_levels'), dict) else {}
+    price_specs = [('XAUUSD 記録価格', q.get('close'), 'report_quote.close', 2, '', '')]
+    for key, label, detail in (('band_lower', '参考変動額 下限', 'GVZ（GLDオプション）を252営業日で日次換算した±1標準偏差'),
+                               ('band_upper', '参考変動額 上限', 'GVZ（GLDオプション）を252営業日で日次換算した±1標準偏差'),
+                               ('nearest_below', '下のキリ番', '50ドル刻み。為替研究による注目水準で金での注文量は未検証'),
+                               ('nearest_above', '上のキリ番', '50ドル刻み。為替研究による注目水準で金での注文量は未検証')):
+        if isinstance(liq.get(key), (int, float)) and not isinstance(liq.get(key), bool):
+            price_specs.append((label, liq[key], f'liquidity_levels.{key}', 2, '', detail))
+    r = (data.get('retail_sentiment') or {}).get('XAUUSD')
+    quote_time = str(q.get('datetime') or q.get('timestamp') or '市場観測時刻は未確認')
     if usable(r):
         rt = ('観測日 ' + str(r['as_of_date'])) if r.get('as_of_date') else ('観測時刻は未確認 / 記録 ' + str(r.get('timestamp') or '未確認'))
         provider = r.get('source') or '提供元は未確認'
         provider_url = 'https://fxssi.com/tools/current-ratio' if provider.upper() == 'FXSSI' else 'https://www.myfxbook.com/community/outlook'
-        try:
-            add('price', 'price_map', '価格とリテール平均建値', 'USD/oz',
-                '価格と建玉集計は別の系列です。観測時刻と時点の一致は未確認です。平均建値はSL位置や注文集中を示しません。小数第2位へ丸めています。',
-                ('Twelve Data / ' + provider, 'https://twelvedata.com/'),
-                f'価格 {quote_time} / 建玉 {rt}', [
-                    ('XAUUSD 記録価格', q.get('close'), 'report_quote.close', 2, '', ''),
-                    ('Long 平均建値', r.get('avg_long_entry'), 'retail_sentiment.XAUUSD.avg_long_entry', 2, '', ''),
-                    ('Short 平均建値', r.get('avg_short_entry'), 'retail_sentiment.XAUUSD.avg_short_entry', 2, '', '')])
-            figures[-1]['source_links'] = [{'label': 'Twelve Data', 'url': 'https://twelvedata.com/'},
-                                            {'label': provider, 'url': provider_url}]
-        except BundleError:
-            limitations.append('Long・Shortの平均建値は取得できず、価格との比較はできません。この比較に基づく方向判断は行いません')
-            add('price', 'price_map', '価格とリテール平均建値（比較不能）', 'USD/oz',
-                'Long平均建値: 取得できず／比較不能。Short平均建値: 取得できず／比較不能。XAUUSD記録価格だけを表示しています。欠測を高安や推測値に置き換えていません。',
-                ('Twelve Data', 'https://twelvedata.com/'), quote_time,
-                [('XAUUSD 記録価格', q.get('close'), 'report_quote.close', 2, '', '')])
-            figures[-1]['availability'] = 'partial'
-            rows.append(limitations[-1])
+        for key, label in (('avg_long_entry', 'Long 平均建値'), ('avg_short_entry', 'Short 平均建値')):
+            if isinstance(r.get(key), (int, float)) and not isinstance(r.get(key), bool):
+                price_specs.append((label, r[key], f'retail_sentiment.XAUUSD.{key}', 2, '', '平均建値はSL位置や注文集中を示さない'))
+    gvz_note = (f"GVZ {liq.get('gvz')}（{liq.get('gvz_as_of')}時点）" if liq.get('gvz') else 'GVZは取得できず、参考変動額は表示していません')
+    add('price', 'price_map', '価格・参考変動額・キリ番', 'USD/oz',
+        f'現在値の周りに、1日の参考変動額（{gvz_note}）と近いキリ番を並べています。到達範囲の予測や支持・抵抗の強さではありません。'
+        '観測した注文集中は取得できません。小数第2位へ丸めています。',
+        ('Twelve Data / FRED GVZCLS', 'https://twelvedata.com/'), quote_time, price_specs)
+    figures[-1]['source_links'] = [{'label': 'Twelve Data', 'url': 'https://twelvedata.com/'},
+                                    {'label': 'FRED GVZCLS', 'url': 'https://fred.stlouisfed.org/series/GVZCLS'}]
+    if len(price_specs) == 1:
+        figures[-1]['availability'] = 'partial'
+    if usable(r) and not all(isinstance(r.get(k), (int, float)) for k in ('avg_long_entry', 'avg_short_entry')):
+        limitations.append('Long・Shortの平均建値は取得できず、価格との比較はできません。この比較に基づく方向判断は行いません')
+        rows.append(limitations[-1])
+    if usable(r):
         try:
             long, short = number(r.get('long_pct')), number(r.get('short_pct'))
             if min(long, short) < 0 or abs(long + short - 100) > .01:

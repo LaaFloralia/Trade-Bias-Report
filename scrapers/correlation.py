@@ -109,7 +109,7 @@ def _classify(r_short: Optional[float], r_long: Optional[float], expected_sign: 
         return "反転（通常と逆符号）"
     if r_long is not None and abs(r_short) < abs(r_long) * 0.6:
         return "弱化（基準レジームより大幅に低下）"
-    return "正常"
+    return "正常" if r_long is not None else "正常（20日のみ・60日比較なし）"
 
 
 def build_correlations(xau_closes: dict[str, float], fred: dict) -> dict:

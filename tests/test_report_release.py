@@ -381,9 +381,21 @@ def test_optional_average_entries_are_explicitly_unavailable():
     assert result['missing']==[]
     assert result['limitations'] and '方向判断は行いません' in result['limitations'][0]
     price=next(f for f in result['figures'] if f['id']=='price')
-    assert '比較不能' in price['title'] and '取得できず' in price['caption']
-    assert len(price['items'])==1 and price['items'][0]['value']==3400.5
+    assert price['title']=='価格・参考変動額・キリ番' and '取得できず' in price['caption']
+    assert len(price['items'])==1 and price['items'][0]['value']==3400.5 and price['availability']=='partial'
     assert 'retail' in {f['id'] for f in result['figures']}
+    bundle.check_bindings(data,result,result['figures'])
+
+
+def test_price_figure_maps_expected_range_and_round_levels():
+    data=sample_data()
+    data['liquidity_levels']={'price':3400.5,'gvz':23.0,'gvz_as_of':'2026-09-28','band_lower':3351.23,
+                              'band_upper':3449.77,'nearest_below':3400.0,'nearest_above':3450.0}
+    result=bundle.observations(data,NOW)
+    price=next(f for f in result['figures'] if f['id']=='price')
+    labels=[i['label'] for i in price['items']]
+    assert labels[:5]==['XAUUSD 記録価格','参考変動額 下限','参考変動額 上限','下のキリ番','上のキリ番']
+    assert 'availability' not in price and 'GVZ 23.0' in price['caption']
     bundle.check_bindings(data,result,result['figures'])
 
 

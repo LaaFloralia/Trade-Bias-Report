@@ -33,6 +33,26 @@ from config import (
 # EUR/USD 逆数推定の係数・シンボルは config.yaml（SSoT）の dxy_estimate から供給される
 
 
+
+def _reconcile_change(result: dict) -> None:
+    """現在値・前日終値・前日比を揃える。
+
+    Investing.com の表示では前日比が別の基準（遅延気配など）で更新され、
+    現在値−前日終値と合わないことがある（2026-09-26: 表示 -0.31、計算 -0.27）。
+    前日終値があれば差を計算し直し、表示値と 0.02 以上ずれた場合は記録に残す。
+    """
+    cur, prev, shown = result.get("current_price"), result.get("prev_close"), result.get("change")
+    if prev is None and shown is not None:
+        result["prev_close"] = prev = cur - shown
+    if prev is not None:
+        computed = round(cur - prev, 4)
+        if shown is not None and abs(shown - computed) >= 0.02:
+            result["change_reported"] = shown
+            result["change_note"] = "表示の前日比が現在値−前日終値と不一致のため計算値を採用"
+        result["change"] = computed
+        if prev:
+            result["change_pct"] = round(computed / prev * 100, 4)
+
 def _estimate_dxy_from_eurusd(eurusd: float) -> float:
     return (1 / eurusd) * EURUSD_DXY_FACTOR
 
@@ -379,13 +399,7 @@ async def _scrape_investing() -> Optional[dict]:
             await browser.close()
 
             if result["current_price"] is not None:
-                if result["prev_close"] is None and result["change"] is not None:
-                    result["prev_close"] = result["current_price"] - result["change"]
-                if result["change"] is None and result["prev_close"] is not None:
-                    result["change"] = result["current_price"] - result["prev_close"]
-                if result["change_pct"] is None and result["prev_close"] and result["prev_close"] != 0:
-                    result["change_pct"] = (result["change"] / result["prev_close"]) * 100
-
+                _reconcile_change(result)
                 return result
 
     except Exception as e:
@@ -453,12 +467,7 @@ async def _scrape_marketwatch() -> Optional[dict]:
             await browser.close()
 
             if result["current_price"] is not None:
-                if result["prev_close"] is None and result["change"] is not None:
-                    result["prev_close"] = result["current_price"] - result["change"]
-                if result["change"] is None and result["prev_close"] is not None:
-                    result["change"] = result["current_price"] - result["prev_close"]
-                if result["change_pct"] is None and result["prev_close"] and result["prev_close"] != 0:
-                    result["change_pct"] = (result["change"] / result["prev_close"]) * 100
+                _reconcile_change(result)
                 return result
 
     except Exception as e:

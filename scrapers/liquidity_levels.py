@@ -48,7 +48,14 @@ def build_liquidity(price: Optional[float], gvz: Optional[dict] = None) -> dict:
     value = gvz.get("value") if isinstance(gvz.get("value"), (int, float)) else None
     move = expected_daily_move(price, value) if value is not None else None
     calendar_move = price * value / 100 / math.sqrt(365) if move else None
-    return {"price": price, "levels": round_levels(price),
+    levels = round_levels(price)
+    above = [lv["level"] for lv in levels if lv["distance"] > 0]
+    below = [lv["level"] for lv in levels if lv["distance"] <= 0]
+    return {"price": price, "levels": levels,
+            "band_upper": round(price + move, 2) if move else None,
+            "band_lower": round(price - move, 2) if move else None,
+            "nearest_above": min(above) if above else None,
+            "nearest_below": max(below) if below else None,
             "expected_move_calendar": round(calendar_move, 1) if calendar_move else None,
             "gvz": value, "gvz_as_of": gvz.get("as_of_date"), "gvz_stale": bool(gvz.get("stale")),
             "gvz_error": gvz.get("error"), "expected_move_1sd": round(move, 1) if move else None}

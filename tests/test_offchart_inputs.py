@@ -114,12 +114,17 @@ def test_enrich_offchart_inputs_survives_feed_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "append_snapshot", lambda snap: ph.append_snapshot(snap, tmp_path / "positioning.jsonl"))
     monkeypatch.setattr(main, "load_history", lambda: ph.load_history(tmp_path / "positioning.jsonl"))
     monkeypatch.setattr(main, "load_forecast_history", lambda: {})
+    monkeypatch.setattr(main, "load_actual_history", lambda: {})
+    monkeypatch.setattr(main, "archive_actuals", lambda events, now, known: 0)
     monkeypatch.setattr(main, "archive_forecasts", lambda events, now: 0)
     results = {"timestamp": "2026-09-24T09:00:51",
                "economic_calendar": {"events": [_ev("Initial Jobless Claims", "N/A", "201K")]},
                "retail_sentiment": {"XAUUSD": {"source": "FXSSI", "long_pct": 62.4}}}
     main.enrich_offchart_inputs(results, now=datetime(2026, 9, 24, 9, 1, tzinfo=ms.JST),
-                                gvz_fetch=lambda sid: {"value": 24.0, "as_of_date": "2026-09-23"})
+                                gvz_fetch=lambda sid: {"value": 24.0, "as_of_date": "2026-09-23"},
+                                news_builder=lambda now, hours: {"candidate_count": 0, "kept": [], "sources": [],
+                                                                 "selection": {"mode": "skipped"}},
+                                save=False)
     assert results["economic_calendar"]["forecast_fallback"]["error"].startswith("ForexFactory")
     assert results["macro_surprises"] == []
     assert results["positioning"]["snapshot"]["retail"]["XAUUSD"]["long_pct"] == 62.4
@@ -254,3 +259,105 @@ def test_weekly_input_status_uses_prev_week():
     daily = {r["item"]: r["available"] for r in main.build_input_status(results)}
     weekly = {r["item"]: r["available"] for r in main.build_input_status(results, weekly=True)}
     assert daily[3] is False and weekly[3] is True
+
+
+def test_dxy_change_is_recomputed_from_previous_close():
+    from scrapers.dxy import _reconcile_change
+    r = {"current_price": 100.97, "prev_close": 101.24, "change": -0.31, "change_pct": -0.31}
+    _reconcile_change(r)
+    assert r["change"] == -0.27 and r["change_reported"] == -0.31 and "不一致" in r["change_note"]
+    ok = {"current_price": 101.034, "prev_close": 101.249, "change": -0.215, "change_pct": None}
+    _reconcile_change(ok)
+    assert ok["change"] == -0.215 and "change_note" not in ok
+
+
+def test_news_selection_uses_jev_scores_and_falls_back_to_keywords():
+    from scrapers import news_triage as nt
+    now = datetime(2026, 9, 26, 12, 0, tzinfo=ms.JST)
+    body = b"""<rss><channel>
+      <item><title>Gold rises as Fed cut bets grow</title><link>https://www.fxstreet.com/a</link><pubDate>Sat, 26 Sep 2026 01:00:00 GMT</pubDate></item>
+      <item><title>South Korean Won supported by exports vs US Dollar</title><link>https://www.fxstreet.com/b</link><pubDate>Sat, 26 Sep 2026 01:30:00 GMT</pubDate></item>
+      <item><title>Old story</title><link>https://www.fxstreet.com/c</link><pubDate>Tue, 22 Sep 2026 01:00:00 GMT</pubDate></item>
+    </channel></rss>"""
+
+    class Resp:
+        status_code, content = 200, body
+    cands, sources = nt.collect_headlines(now, 36, fetch=lambda url: Resp())
+    assert len(cands) == 2 and sources[0]["items"] == 2      # 期間外を除外、同一見出しは重複除去
+    kept = nt.select_headlines(cands, {"n1": 0.97, "n2": 0.2})
+    assert [c["title"][:4] for c in kept[:1]] == ["Gold"] and kept[0]["p"] == 0.97
+    fallback = nt.select_headlines(cands, None)
+    assert {c["id"] for c in fallback} == {"n1", "n2"}      # キーワード規則は「dollar」も拾う（Jevが必要な理由）
+    news = nt.build_news(now, 36, fetch=lambda url: Resp(),
+                         runner=lambda *a, **k: (_ for _ in ()).throw(OSError("offline")))
+    assert news["selection"]["mode"] == "fallback" and "キーワード規則" in "\n".join(nt.format_news_lines(news))
+    assert nt.parse_feed.__doc__ and nt.FEEDS
+    try:
+        nt.parse_feed(b"<!DOCTYPE x [<!ENTITY a 'b'>]><rss/>", "x", now, now)
+        raise AssertionError("DTD must be rejected")
+    except ValueError:
+        pass
+
+
+def test_offchart_features_are_machine_readable(tmp_path):
+    from scrapers import offchart_features as of
+    now = datetime(2026, 9, 29, 18, 0, tzinfo=ms.JST)
+    results = {"timestamp": "2026-09-29T18:00:00",
+               "economic_calendar": {"events": [
+                   _ev("JOLTS Job Openings (Aug)", "N/A", "7.1M", date="Tuesday, September 29, 2026", time="23:00"),
+                   _ev("Fed Interest Rate Decision", "N/A", "4.00%", date="Wednesday, October 28, 2026", time="03:00")]},
+               "liquidity_levels": build_liquidity(4300.0, {"value": 23.0, "as_of_date": "2026-09-28"}),
+               "fred": {"DFII10": {"value": 2.85, "change": 0.09, "change_20obs": 0.51, "as_of_date": "2026-09-24"}},
+               "gold_etf": {"tonnes": 1054.55, "change_5d_t": 1.71, "change_20d_t": 9.05, "as_of_date": "2026-09-24"},
+               "input_status": [{"item": 1, "available": True}]}
+    feats = of.build_features(results, now)
+    assert [b["event"] for b in feats["event_blackouts"]] == ["JOLTS Job Openings (Aug)"]   # 36時間内のみ
+    assert feats["event_blackouts"][0]["window_start"].startswith("2026-09-29T22:30")
+    assert feats["expected_move"]["expected_move_1sd"] == 62.3 and 4300.0 in feats["round_levels"]
+    assert feats["rates"]["DFII10"]["change_20obs"] == 0.51 and feats["rates"]["DGS2"] is None
+    of.save_features(feats, tmp_path)
+    assert json.loads((tmp_path / "offchart_features_latest.json").read_text())["schema_version"] == 1
+    assert len((tmp_path / "history" / "offchart_features.jsonl").read_text().splitlines()) == 1
+
+
+def test_actual_first_seen_is_kept_and_revision_flagged(tmp_path):
+    path = tmp_path / "f.jsonl"
+    first = [_ev("Initial Jobless Claims", "215K", "201K")]
+    t1 = datetime(2026, 9, 24, 22, 0, tzinfo=ms.JST)
+    assert ms.archive_actuals(first, t1, set(), path) == 1
+    assert ms.archive_actuals(first, t1, set(ms.load_actual_history(path)), path) == 0
+    revised = [_ev("Initial Jobless Claims", "218K", "201K")]
+    out = ms.released_surprises(revised, datetime(2026, 9, 25, 9, 0, tzinfo=ms.JST),
+                                forecast_history=ms.load_forecast_history(path),
+                                actual_history=ms.load_actual_history(path))
+    assert out[0]["actual_first_seen"] == "215K" and "改定の可能性" in out[0]["actual_note"]
+    assert ms.load_forecast_history(path) == {}          # 結果の記録は予想の履歴に混ざらない
+
+
+def test_myfxbook_api_parses_outlook_and_always_logs_out():
+    from scrapers.myfxbook import fetch_outlook_api
+    calls = []
+
+    class R:
+        def __init__(self, data):
+            self.data = data
+
+        def json(self):
+            return self.data
+
+    def get(url, params):
+        calls.append(url.rsplit("/", 1)[-1])
+        if url.endswith("login.json"):
+            return R({"error": False, "session": "s"})
+        if url.endswith("get-community-outlook.json"):
+            return R({"error": False, "symbols": [{"name": "XAUUSD", "longPercentage": 67, "shortPercentage": 33,
+                                                   "avgLongPrice": 4458.8, "avgShortPrice": 4088.7,
+                                                   "longVolume": 1253.2, "shortVolume": 631.2,
+                                                   "longPositions": 9478, "shortPositions": 4627}]})
+        return R({"error": False})
+    out = fetch_outlook_api("XAUUSD", "e", "p", get=get)
+    assert out["long_pct"] == 67.0 and out["avg_long_entry"] == 4458.8 and out["long_positions"] == 9478
+    assert calls == ["login.json", "get-community-outlook.json", "logout.json"]
+    calls.clear()
+    assert fetch_outlook_api("EURUSD", "e", "p", get=get) is None and calls[-1] == "logout.json"
+    assert fetch_outlook_api("XAUUSD", "e", "p", get=lambda u, p: R({"error": True})) is None

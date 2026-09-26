@@ -105,7 +105,7 @@ def test_correlation_detects_normal_inverse_regime():
     corr = correlation.build_correlations(_closes(xau), _fred("DFII10", rate))
     entry = next(p for p in corr["pairs"] if p["series_id"] == "DFII10")
     assert entry["r_20d"] is not None and entry["r_20d"] < -0.9
-    assert entry["verdict"] == "正常"
+    assert entry["verdict"].startswith("正常")
 
 
 def test_correlation_detects_sign_flip():
