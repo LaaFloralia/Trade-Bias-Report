@@ -21,7 +21,7 @@ TRADING_DAYS = 252
 
 def round_levels(price: float, band_pct: float = 2.0, step: float = 50.0) -> list[dict]:
     """現在値 ±band_pct% 内の step 刻みの水準（100 刻みを major とする）。"""
-    if not math.isfinite(price) or price <= 0:
+    if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
         return []
     low, high = price * (1 - band_pct / 100), price * (1 + band_pct / 100)
     level = math.ceil(low / step) * step
@@ -35,7 +35,9 @@ def round_levels(price: float, band_pct: float = 2.0, step: float = 50.0) -> lis
 
 def expected_daily_move(price: float, gvz: float) -> Optional[float]:
     """GVZ（年率%）から1日の1標準偏差の値幅（ドル）。"""
-    if not (isinstance(price, (int, float)) and isinstance(gvz, (int, float))) or price <= 0 or gvz <= 0:
+    if not (isinstance(price, (int, float)) and isinstance(gvz, (int, float))):
+        return None
+    if not (math.isfinite(price) and math.isfinite(gvz)) or price <= 0 or gvz <= 0:
         return None
     return price * gvz / 100 / math.sqrt(TRADING_DAYS)
 
@@ -45,7 +47,9 @@ def build_liquidity(price: Optional[float], gvz: Optional[dict] = None) -> dict:
     gvz = gvz or {}
     value = gvz.get("value") if isinstance(gvz.get("value"), (int, float)) else None
     move = expected_daily_move(price, value) if value is not None else None
-    return {"price": price, "levels": round_levels(price) if isinstance(price, (int, float)) else [],
+    calendar_move = price * value / 100 / math.sqrt(365) if move else None
+    return {"price": price, "levels": round_levels(price),
+            "expected_move_calendar": round(calendar_move, 1) if calendar_move else None,
             "gvz": value, "gvz_as_of": gvz.get("as_of_date"), "gvz_stale": bool(gvz.get("stale")),
             "gvz_error": gvz.get("error"), "expected_move_1sd": round(move, 1) if move else None}
 
@@ -54,11 +58,15 @@ def format_liquidity_lines(liq: Optional[dict]) -> list[str]:
     lines = ["### 流動性の目安（キリ番・想定値幅）"]
     liq = liq or {}
     price, levels, move = liq.get("price"), liq.get("levels") or [], liq.get("expected_move_1sd")
+    lines.append("- 観測した注文集中（価格帯別の注文量）: 取得不可（無料で規約上自動取得できる金の全市場データなし）")
     if move:
-        lines.append(f"- 想定値幅（1日・1標準偏差）: ±{move:,.1f}ドル → {price - move:,.1f}〜{price + move:,.1f}"
-                     f"（GVZ {liq['gvz']:.2f}、{liq.get('gvz_as_of')}時点{'・古い値' if liq.get('gvz_stale') else ''}）")
+        cal = liq.get("expected_move_calendar")
+        lines.append(f"- 参考変動額（1日・1標準偏差）: ±{move:,.1f}ドル → {price - move:,.1f}〜{price + move:,.1f}"
+                     f"（GVZ {liq['gvz']:.2f}、{liq.get('gvz_as_of')}時点{'・古い値' if liq.get('gvz_stale') else ''}。"
+                     f"GLDオプション由来の30日予想変動率を252営業日で日次換算。暦日365日換算なら±{cal:,.1f}ドル。"
+                     "到達範囲や日中高安幅の予測ではない）")
     else:
-        lines.append(f"- 想定値幅: 取得不可（GVZ {liq.get('gvz_error') or '値なし'}）")
+        lines.append(f"- 参考変動額: 取得不可（GVZ {liq.get('gvz_error') or '値なし'}）")
     if not levels:
         lines.append("- キリ番: 取得不可（現在値なし）")
     else:
@@ -66,11 +74,12 @@ def format_liquidity_lines(liq: Optional[dict]) -> list[str]:
         below = [lv for lv in reversed(levels) if lv["distance"] <= 0]
 
         def text(lv):
-            inside = "・想定値幅内" if move and abs(lv["distance"]) <= move else ""
+            inside = "・参考変動額内" if move and abs(lv["distance"]) <= move else ""
             return f"{lv['level']:,.0f}{'★' if lv['major'] else ''}（{lv['distance']:+,.1f}, {lv['distance_pct']:+.2f}%{inside}）"
 
         for label, group in (("上", above), ("下", below)):
             lines.append(f"- {label}のキリ番: {' / '.join(text(lv) for lv in group[:4]) or 'なし（±2%内）'}")
-        lines.append("  ★=100ドル刻み。損切りは水準のすぐ外、利食いは水準ちょうどに集まりやすい（Osler 2003/2005、数時間単位の効果）")
+        lines.append("  参考キリ番（★=100ドル刻み）。為替では損切りが水準のすぐ外、利食いが水準ちょうどに集まりやすい"
+                     "（Osler 2003/2005、数時間単位）。金での有効性・注文量は未検証")
     lines.append("- CME金オプションの行使価格別建玉: 自動取得しない（CMEの利用規約が自動取得を禁止）。満期週は社長がQuikStrikeで目視確認")
     return lines

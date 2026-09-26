@@ -40,7 +40,7 @@ WEAK_THRESHOLD = 0.3
 
 def _pearson(xs: list[float], ys: list[float]) -> Optional[float]:
     n = len(xs)
-    if n < 3 or n != len(ys):
+    if n < 3 or n != len(ys) or not all(math.isfinite(v) for v in (*xs, *ys)):
         return None
     mx, my = sum(xs) / n, sum(ys) / n
     num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
@@ -80,7 +80,7 @@ def _series_from_fred(fred: dict, series_id: str) -> dict[str, float]:
             date, value = item[0], float(item[1])
         except (TypeError, ValueError, IndexError):
             continue
-        if date:
+        if date and math.isfinite(value):
             out[date] = value
     return out
 
@@ -138,6 +138,9 @@ def build_correlations(xau_closes: dict[str, float], fred: dict) -> dict:
         xau_chg = _changes(xau_closes, common, "pct")
         oth_chg = _changes(other, common, mode)
         entry["n"] = len(xau_chg)
+        entry["period_20d"] = f"{common[-SHORT_WINDOW - 1]}〜{common[-1]}"
+        entry["period_60d"] = (f"{common[-LONG_WINDOW - 1]}〜{common[-1]}"
+                               if len(common) > LONG_WINDOW else None)
         entry["r_20d"] = _pearson(xau_chg[-SHORT_WINDOW:], oth_chg[-SHORT_WINDOW:])
         if len(xau_chg) >= LONG_WINDOW:
             entry["r_60d"] = _pearson(xau_chg[-LONG_WINDOW:], oth_chg[-LONG_WINDOW:])
@@ -161,14 +164,16 @@ def format_correlation_lines(corr: dict) -> list[str]:
 
     if corr.get("xau_source"):
         lines.append(f"- XAUUSD 日足の出所: {corr['xau_source']}")
-    lines.append("| ペア | 20日 r | 60日 r | 判定 | 標本 |")
+    lines.append("| ペア | 20日 r（期間） | 60日 r（期間） | 判定 | 共通日数 |")
     lines.append("|---|---|---|---|---|")
     for p in corr["pairs"]:
-        r20 = f"{p['r_20d']:+.2f}" if p["r_20d"] is not None else "N/A"
-        r60 = f"{p['r_60d']:+.2f}" if p["r_60d"] is not None else "N/A"
-        lines.append(f"| {p['pair']} | {r20} | {r60} | {p['verdict']} | {p['n']}本 |")
+        r20 = f"{p['r_20d']:+.2f}（{p.get('period_20d')}）" if p["r_20d"] is not None else "N/A"
+        r60 = (f"{p['r_60d']:+.2f}（{p.get('period_60d')}）" if p["r_60d"] is not None
+               else f"N/A（60日分なし・{p['n']}本）")
+        lines.append(f"| {p['pair']} | {r20} | {r60} | {p['verdict']} | {p['n'] + 1 if p['n'] else 0}日 |")
     lines.append(
         "- 読み方: 水準ではなく日次リターンの相関。|r|<0.3 は「その相関に依拠した判断をしない」"
-        "の意。反転・無相関化が出ているペアは、そのドライバーを根拠から外すか重みを下げる。"
+        "の意（0.3 は検証前の運用閾値）。「正常」は想定どおりの符号で、60日分がない場合は20日だけで判定している。"
+        "反転・無相関化が出ているペアは、そのドライバーを根拠から外すか重みを下げる。"
     )
     return lines

@@ -170,6 +170,8 @@ def _extract_section(
     return section
 
 
+# chart-intel 版のヘッダ `生成完了: 2026-09-26T20:42:18.484636+09:00`
+_GENERATED_ISO_RE = re.compile(r"生成(?:完了|時刻|日時)?\s*[:：]\s*(\d{4}-\d{2}-\d{2}T[\d:.]+[+-]\d{2}:\d{2})")
 _GENERATED_AT_RE = re.compile(
     r"生成\s*[:：]\s*(?:(\d{4})[-/])?(\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})"
 )
@@ -183,6 +185,12 @@ def _extract_generated_at(text: str, fdate: date) -> Optional[str]:
     見つからない場合は None（呼び出し側は時刻フィルタなしで動く）。
     """
     for line in text.splitlines()[:10]:
+        iso = _GENERATED_ISO_RE.search(line)
+        if iso:
+            try:
+                return datetime.fromisoformat(iso.group(1)).astimezone(JST).isoformat(timespec="minutes")
+            except ValueError:
+                pass
         m = _GENERATED_AT_RE.search(line)
         if not m:
             continue
@@ -272,7 +280,7 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
         base["source"] = "chart-intel reports（親レビュー通過版）"
         base["note"] = "Brain 休止中のため chart-intel の親レビュー通過版を参照。XAU-TF は対象外"
         try:
-            weekly_found = _latest_chart_intel(reports, "weekly")
+            weekly_found = _latest_chart_intel(reports, "weekly", before=today + timedelta(days=1))
             if weekly_found:
                 base["weekly"] = _build_anchor(weekly_found, today, WEEKLY_STALE_DAYS,
                                                patterns=["セクション0", "エグゼクティブサマリー"])
