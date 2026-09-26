@@ -70,6 +70,8 @@ SERIES_CONFIG = {
     "VIXCLS": {"label": "CBOE Volatility Index: VIX", "stale_days": 5},
     # Business-daily.
     "VXVCLS": {"label": "CBOE 3-Month Volatility Index", "stale_days": 5},
+    # Business-daily. GLD オプション由来の30日予想変動率（liquidity_levels.py が想定値幅に使う）。
+    "GVZCLS": {"label": "CBOE Gold ETF Volatility Index", "stale_days": 5},
 }
 # main フロー（fetch_fred_data）で取得する系列。他系列は各スクレイパーが個別取得。
 SERIES_IDS = ["DGS10", "DGS2", "DTWEXBGS", "DFII10", "T10YIE"]
