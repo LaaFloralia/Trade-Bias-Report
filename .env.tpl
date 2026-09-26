@@ -8,3 +8,7 @@ FRED_API_KEY=op://Agents/Fred/credential
 # Bias Report HTML の発行先（Supabase Storage・固定 URL、2026-08-23〜）
 SUPABASE_URL=op://Agents/FundamentalMacroAnalysis/supabase_url
 SUPABASE_SERVICE_ROLE_KEY=op://Agents/FundamentalMacroAnalysis/supabase_service_role_key
+
+# MyFXBook 公式API（コミュニティ見通し。画面はボット確認で取得不可のため、2026-09-26〜）
+MYFXBOOK_USERNAME=op://Agents/Myfxbook/username
+MYFXBOOK_PASSWORD=op://Agents/Myfxbook/password

@@ -5,6 +5,8 @@
 """
 
 import asyncio
+import os
+from typing import Optional
 import re
 import sys
 from pathlib import Path
@@ -70,8 +72,49 @@ def _parse_outlook_text(page_text: str, result: dict) -> None:
             result["long_pct"] = float(table_long.group(1))
 
 
+API_BASE = "https://www.myfxbook.com/api"
+
+
+def fetch_outlook_api(symbol: str, email: str, password: str, get=None) -> Optional[dict]:
+    """MyFXBook 公式 API（login → get-community-outlook → logout）で比率と平均建値を取る。
+
+    画面は Cloudflare のボット確認で自動取得できない（2026-09-26 確認）ため、公式 API を優先する。
+    無料枠は community outlook が24時間100回。認証値・セッションは表示・保存しない。
+    失敗時は None を返し、呼び出し側が画面取得・FXSSI へ戻る。
+    """
+    import requests
+
+    get = get or (lambda url, params: requests.get(url, params=params, timeout=20))
+    session = None
+    try:
+        login = get(f"{API_BASE}/login.json", {"email": email, "password": password}).json()
+        if login.get("error") or not login.get("session"):
+            return None
+        session = login["session"]
+        outlook = get(f"{API_BASE}/get-community-outlook.json", {"session": session}).json()
+        if outlook.get("error"):
+            return None
+        row = next((s for s in outlook.get("symbols") or [] if str(s.get("name", "")).upper() == symbol.upper()), None)
+        if not row:
+            return None
+        num = lambda v: float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+        return {"long_pct": num(row.get("longPercentage")), "short_pct": num(row.get("shortPercentage")),
+                "avg_long_entry": num(row.get("avgLongPrice")), "avg_short_entry": num(row.get("avgShortPrice")),
+                "long_volume_lots": num(row.get("longVolume")), "short_volume_lots": num(row.get("shortVolume")),
+                "long_positions": int(row["longPositions"]) if isinstance(row.get("longPositions"), int) else None,
+                "short_positions": int(row["shortPositions"]) if isinstance(row.get("shortPositions"), int) else None}
+    except Exception:  # noqa: BLE001 — 例外文に認証値が含まれ得るため内容は出さない
+        return None
+    finally:
+        if session:
+            try:
+                get(f"{API_BASE}/logout.json", {"session": session})
+            except Exception:  # noqa: BLE001
+                pass
+
+
 async def scrape_myfxbook(symbol: str) -> dict:
-    """MyFXBookからセンチメントデータを取得する。
+    """MyFXBookからセンチメントデータを取得する（公式API優先、失敗時は画面取得）。
 
     Args:
         symbol: 銘柄名 (例: "XAUUSD", "USDJPY")
@@ -106,6 +149,14 @@ async def scrape_myfxbook(symbol: str) -> dict:
     }
 
     url = f"https://www.myfxbook.com/community/outlook/{symbol}"
+
+    email, password = os.environ.get("MYFXBOOK_USERNAME"), os.environ.get("MYFXBOOK_PASSWORD")
+    if email and password:
+        api = fetch_outlook_api(symbol, email, password)
+        if api and api.get("long_pct") is not None:
+            result.update(api)
+            result["method"] = "official_api"
+            return result
 
     try:
         async with async_playwright() as p:
