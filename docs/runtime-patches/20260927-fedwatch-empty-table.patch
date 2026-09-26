@@ -1,0 +1,16 @@
+--- /Users/laa/.codex/jobs/chart-intel/backups/20260926-offchart/numeric_validation.before-empty.py	2026-09-27 00:04:51
++++ /Users/laa/.codex/jobs/chart-intel/numeric_validation.py	2026-09-27 00:04:51
+@@ -112,7 +112,12 @@
+     lines = ['\n\n## 政策確率の照合', '',
+              '提供元のレンジ別確率を現行政策金利に対して分類し、同じ提供表の前日・前週欄から差を計算します。独自履歴とは比較基準を分けます。', '',
+              '| 目標レンジ（%） | 分類 | 確率 | 提供表の前日差 | 提供表の前週差 |', '|---|---|---|---|---|']
+-    if facts.get('distribution_status') == 'partial':
++    if not facts.get('rows'):
++        # 提供確率が全欠測なら見出しだけの空表を出さず、取得不可を明示する。
++        lines[2] = ('提供元のレンジ別確率を取得できなかったため、分類・確率・提供表の前日差と前週差はいずれも取得不可です。'
++                    '政策方向の判断は保留します。')
++        del lines[4:]
++    elif facts.get('distribution_status') == 'partial':
+         lines[2] = ('提供元のレンジ別確率を現行政策金利に対して照合します。'
+                     '一部レンジのcurrent確率が欠測しているため、欠測を0%補完せず、'
+                     '全体合計と政策方向別確率は未確定です。')
