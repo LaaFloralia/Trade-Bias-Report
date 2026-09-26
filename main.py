@@ -133,10 +133,10 @@ def _get_fomc_metadata(today: datetime = None) -> dict:
 
 
 def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = None,
-                           gvz_fetch=None, news_builder=None, save=True) -> None:
+                           gvz_fetch=None, news_builder=None, save=True, tv_history=TV_HISTORY) -> None:
     """指標サプライズ・流動性の目安・ポジショニング履歴・採点入力の取得状況を追加する。
 
-    失敗しても他の入力は残す。now / gvz_fetch はテストで差し替えるための引数。
+    失敗しても他の入力は残す。now / gvz_fetch / tv_history はテストで差し替えるための引数。
     """
     now = now or datetime.now(JST)
     lookback = 7 * 24 if weekly else 36
@@ -171,6 +171,7 @@ def enrich_offchart_inputs(results: dict, weekly: bool = False, now: datetime = 
         gvz = (gvz_fetch or fetch_fred_series)("GVZCLS")
     except Exception as e:
         gvz = {"error": type(e).__name__}
+    gvz = choose_gvz(gvz, latest_tv_gvz(now, tv_history) if tv_history else None)
     results["liquidity_levels"] = build_liquidity(price, gvz)
     try:
         snapshot = snapshot_from_data(results, str(results.get("timestamp")))

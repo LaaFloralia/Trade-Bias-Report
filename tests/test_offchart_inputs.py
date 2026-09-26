@@ -384,3 +384,22 @@ def test_tv_gvz_preferred_when_newer_and_fresh(tmp_path):
     assert ll.choose_gvz({"error": "HTTPError"}, tv)["value"] == 22.44
     hist.write_text("not json\n")
     assert ll.latest_tv_gvz(now, hist) is None
+
+
+def test_enrich_uses_fresh_tv_gvz_for_liquidity(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "append_snapshot", lambda snap: False)
+    monkeypatch.setattr(main, "load_history", lambda: [])
+    hist = tmp_path / "tv.jsonl"
+    hist.write_text(json.dumps({"retrieved_at": "2026-09-26T14:34:34.000Z",
+                                "gvz_latest": {"date": "2026-09-25", "close": 22.44}}) + "\n")
+    results = {"timestamp": "2026-09-26T23:34:44", "_raw_quote_XAUUSD": {"close": "4286.21"}}
+    kwargs = dict(now=datetime(2026, 9, 26, 23, 35, tzinfo=ms.JST),
+                  gvz_fetch=lambda sid: {"value": 23.59, "as_of_date": "2026-09-22", "source": "FRED"},
+                  news_builder=lambda now, hours: {"candidate_count": 0, "kept": [], "sources": [],
+                                                   "selection": {"mode": "skipped"}}, save=False)
+    main.enrich_offchart_inputs(results, tv_history=hist, **kwargs)
+    liq = results["liquidity_levels"]
+    assert liq["gvz"] == 22.44 and liq["gvz_source"].startswith("TradingView") and liq["gvz_fred"] == 23.59
+    assert liq["expected_move_1sd"] == round(4286.21 * 22.44 / 100 / 252 ** 0.5, 1)
+    main.enrich_offchart_inputs(results, tv_history=tmp_path / "missing.jsonl", **kwargs)
+    assert results["liquidity_levels"]["gvz"] == 23.59
