@@ -361,3 +361,26 @@ def test_myfxbook_api_parses_outlook_and_always_logs_out():
     calls.clear()
     assert fetch_outlook_api("EURUSD", "e", "p", get=get) is None and calls[-1] == "logout.json"
     assert fetch_outlook_api("XAUUSD", "e", "p", get=lambda u, p: R({"error": True})) is None
+
+
+def test_tv_gvz_preferred_when_newer_and_fresh(tmp_path):
+    from scrapers import liquidity_levels as ll
+    hist = tmp_path / "tv.jsonl"
+    hist.write_text(json.dumps({"retrieved_at": "2026-09-26T14:15:36Z",
+                                "gvz_latest": {"date": "2026-09-25", "close": 22.44}}) + "\n")
+    now = datetime(2026, 9, 26, 23, 30, tzinfo=ms.JST)
+    tv = ll.latest_tv_gvz(now, hist)
+    assert tv["value"] == 22.44 and tv["as_of_date"] == "2026-09-25"
+    fred = {"value": 23.59, "as_of_date": "2026-09-22"}
+    chosen = ll.choose_gvz(fred, tv)
+    assert chosen["source"].startswith("TradingView") and chosen["fred_value"] == 23.59
+    liq = build_liquidity(4286.21, chosen)
+    assert liq["gvz"] == 22.44 and liq["gvz_fred_as_of"] == "2026-09-22"
+    text = "\n".join(format_liquidity_lines(liq))
+    assert "TradingView CBOE:GVZ" in text and "FRED GVZCLS は 23.59（2026-09-22時点）" in text
+    # 古い取得記録・FREDの方が新しい場合は FRED のまま
+    assert ll.latest_tv_gvz(datetime(2026, 9, 27, 9, 0, tzinfo=ms.JST), hist) is None
+    assert ll.choose_gvz({"value": 22.0, "as_of_date": "2026-09-25"}, tv)["source"] == "FRED GVZCLS"
+    assert ll.choose_gvz({"error": "HTTPError"}, tv)["value"] == 22.44
+    hist.write_text("not json\n")
+    assert ll.latest_tv_gvz(now, hist) is None

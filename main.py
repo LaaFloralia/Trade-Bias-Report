@@ -65,7 +65,7 @@ from scrapers.macro_surprise import (
     JST, archive_actuals, archive_forecasts, fetch_ff_week, fill_missing_forecasts, format_surprise_lines,
     load_actual_history, load_forecast_history, released_surprises,
 )
-from scrapers.liquidity_levels import build_liquidity, format_liquidity_lines
+from scrapers.liquidity_levels import TV_HISTORY, build_liquidity, choose_gvz, format_liquidity_lines, latest_tv_gvz
 from scrapers.fred import fetch_fred_series
 from scrapers.news_triage import build_news, format_news_lines
 from scrapers.offchart_features import build_features, save_features

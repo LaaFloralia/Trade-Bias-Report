@@ -111,12 +111,15 @@ def observations(data, now=None):
         for key, label in (('avg_long_entry', 'Long 平均建値'), ('avg_short_entry', 'Short 平均建値')):
             if isinstance(r.get(key), (int, float)) and not isinstance(r.get(key), bool):
                 price_specs.append((label, r[key], f'retail_sentiment.XAUUSD.{key}', 2, '', '平均建値はSL位置や注文集中を示さない'))
-    gvz_note = (f"GVZ {liq.get('gvz')}（{liq.get('gvz_as_of')}時点）" if liq.get('gvz') else 'GVZは取得できず、参考変動額は表示していません')
+    gvz_source = liq.get('gvz_source') or 'FRED GVZCLS'
+    gvz_note = (f"GVZ {liq.get('gvz')}（{liq.get('gvz_as_of')}時点・{gvz_source}）" if liq.get('gvz') else 'GVZは取得できず、参考変動額は表示していません')
     add('price', 'price_map', '価格・参考変動額・キリ番', 'USD/oz',
         f'現在値の周りに、1日の参考変動額（{gvz_note}）と近いキリ番を並べています。到達範囲の予測や支持・抵抗の強さではありません。'
         '観測した注文集中は取得できません。小数第2位へ丸めています。',
         ('Twelve Data / FRED GVZCLS', 'https://twelvedata.com/'), quote_time, price_specs)
     figures[-1]['source_links'] = [{'label': 'Twelve Data', 'url': 'https://twelvedata.com/'},
+                                    {'label': 'TradingView CBOE:GVZ', 'url': 'https://www.tradingview.com/symbols/CBOE-GVZ/'}
+                                    if gvz_source.startswith('TradingView') else
                                     {'label': 'FRED GVZCLS', 'url': 'https://fred.stlouisfed.org/series/GVZCLS'}]
     if len(price_specs) == 1:
         figures[-1]['availability'] = 'partial'

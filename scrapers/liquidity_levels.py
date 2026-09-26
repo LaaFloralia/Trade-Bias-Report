@@ -8,15 +8,58 @@
 1日の1標準偏差（現在値 × GVZ / 100 / √252）として示す。市場が織り込む平均的な幅であり、
 方向の予測ではない。
 
+FRED の GVZCLS は数営業日遅れることがある。定期実行の親が収集前に TradingView 公式MCPで
+CBOE:GVZ を取得していれば（output/history/tv_snapshots.jsonl、3時間以内）、日付の新しい方を使う。
+Cboe 公式の履歴CSVは、規約が電子的な保存に事前同意を求めるため自動取得しない。
+
 CME 金オプションの行使価格別建玉は、CME の利用規約が自動取得を禁止しているため取得しない。
 """
 
 from __future__ import annotations
 
+import json
 import math
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 TRADING_DAYS = 252
+TV_HISTORY = Path(__file__).parent.parent / "output" / "history" / "tv_snapshots.jsonl"
+TV_MAX_AGE = timedelta(hours=3)
+TV_SOURCE = "TradingView CBOE:GVZ（親がMCPで取得）"
+
+
+def latest_tv_gvz(now: datetime, path: Path = TV_HISTORY, max_age: timedelta = TV_MAX_AGE) -> Optional[dict]:
+    """親が保存した直近の TradingView 取得記録から GVZ 日足を返す。古い・壊れた記録は使わない。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[-20:]
+    except OSError:
+        return None
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+            taken = datetime.fromisoformat(str(row["retrieved_at"]).replace("Z", "+00:00"))
+            g = row.get("gvz_latest") or {}
+            value, day = g.get("close"), str(g.get("date") or "")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            continue
+        if taken.tzinfo is None or not timedelta(0) <= now - taken <= max_age:
+            return None
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0 \
+                and len(day) == 10:
+            return {"value": float(value), "as_of_date": day, "source": TV_SOURCE, "retrieved_at": row["retrieved_at"]}
+        return None
+    return None
+
+
+def choose_gvz(fred: Optional[dict], tv: Optional[dict]) -> dict:
+    """日付の新しい GVZ を採る。TV を採ったときは FRED の値と日付も残す。"""
+    fred = dict(fred or {})
+    fred.setdefault("source", "FRED GVZCLS")
+    fred_ok = isinstance(fred.get("value"), (int, float)) and not fred.get("error")
+    if tv and (not fred_ok or str(tv["as_of_date"]) > str(fred.get("as_of_date") or "")):
+        return dict(tv, stale=False, fred_value=fred.get("value"), fred_as_of=fred.get("as_of_date"))
+    return fred
 
 
 def round_levels(price: float, band_pct: float = 2.0, step: float = 50.0) -> list[dict]:
@@ -58,7 +101,9 @@ def build_liquidity(price: Optional[float], gvz: Optional[dict] = None) -> dict:
             "nearest_below": max(below) if below else None,
             "expected_move_calendar": round(calendar_move, 1) if calendar_move else None,
             "gvz": value, "gvz_as_of": gvz.get("as_of_date"), "gvz_stale": bool(gvz.get("stale")),
-            "gvz_error": gvz.get("error"), "expected_move_1sd": round(move, 1) if move else None}
+            "gvz_error": gvz.get("error"), "gvz_source": gvz.get("source") or "FRED GVZCLS",
+            "gvz_fred": gvz.get("fred_value"), "gvz_fred_as_of": gvz.get("fred_as_of"),
+            "expected_move_1sd": round(move, 1) if move else None}
 
 
 def format_liquidity_lines(liq: Optional[dict]) -> list[str]:
@@ -69,7 +114,10 @@ def format_liquidity_lines(liq: Optional[dict]) -> list[str]:
     if move:
         cal = liq.get("expected_move_calendar")
         lines.append(f"- 参考変動額（1日・1標準偏差）: ±{move:,.1f}ドル → {price - move:,.1f}〜{price + move:,.1f}"
-                     f"（GVZ {liq['gvz']:.2f}、{liq.get('gvz_as_of')}時点{'・古い値' if liq.get('gvz_stale') else ''}。"
+                     f"（GVZ {liq['gvz']:.2f}、{liq.get('gvz_as_of')}時点・{liq.get('gvz_source') or 'FRED GVZCLS'}"
+                     f"{'・古い値' if liq.get('gvz_stale') else ''}"
+                     + (f"。FRED GVZCLS は {liq['gvz_fred']:.2f}（{liq.get('gvz_fred_as_of')}時点）" if isinstance(liq.get('gvz_fred'), (int, float)) else "")
+                     + "。"
                      "GLDオプション由来の30日予想変動率を252営業日で日次換算。"
                      + (f"暦日365日換算なら±{cal:,.1f}ドル。" if isinstance(cal, (int, float)) else "") +
                      "到達範囲や日中高安幅の予測ではない）")
