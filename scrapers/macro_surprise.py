@@ -47,8 +47,10 @@ US_GOLD_SIGN = (
 
 _VALUE_RE = re.compile(r"^\s*([-+]?\d[\d,]*\.?\d*)\s*([%KMBT]?)\s*$", re.IGNORECASE)
 _WORD_RE = re.compile(r"[a-z]{3,}")
-_STOP_WORDS = {"the", "and", "mom", "yoy", "qoq", "aug", "sep", "oct", "nov", "dec", "jan", "feb",
-               "mar", "apr", "may", "jun", "jul", "final", "prelim", "flash"}
+_MONTHS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"}
+_STOP_WORDS = {"the", "and"} | _MONTHS
+# 同名でも別物になる区分（総合/コア、前月比/前年比、速報/確報）。一致しなければ補完しない
+_QUALIFIERS = {"core", "mom", "yoy", "qoq", "final", "prelim", "flash", "advance", "revised", "annualized"}
 
 
 def parse_value(text) -> Optional[tuple[float, str]]:
@@ -98,7 +100,7 @@ def compute_surprise(event: dict) -> Optional[dict]:
         direction = "判定対象外" if sign == 0 else "予想どおり"
     else:
         direction = "金に上向き" if diff * sign > 0 else "金に下向き"
-    return {"diff": round(diff, 6), "unit": actual[1],
+    return {"diff": round(diff, 6), "unit": "pp" if actual[1] == "%" else actual[1],
             "relative": round(diff / abs(forecast[0]), 4) if forecast[0] else None,
             "gold_direction": direction}
 
@@ -112,7 +114,8 @@ def archive_forecasts(events: list, captured_at: datetime, path: Path = FORECAST
     rows = []
     for ev in events or []:
         when = event_datetime_jst(ev)
-        if when is None or when <= captured_at or parse_value(ev.get("forecast")) is None:
+        if (when is None or when <= captured_at or parse_value(ev.get("forecast")) is None
+                or parse_value(ev.get("actual")) is not None):
             continue
         rows.append({"key": _event_key(ev, when), "forecast": ev.get("forecast"),
                      "source": ev.get("forecast_source") or "Investing.com", "captured_at": captured_at.isoformat()})
@@ -134,8 +137,12 @@ def load_forecast_history(path: Path = FORECAST_HISTORY) -> dict:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        try:
+            row["_captured"] = datetime.fromisoformat(row["captured_at"])
+        except (KeyError, TypeError, ValueError):
+            continue
         prior = latest.get(row.get("key"))
-        if prior is None or row.get("captured_at", "") >= prior.get("captured_at", ""):
+        if prior is None or row["_captured"] >= prior["_captured"]:
             latest[row.get("key")] = row
     return latest
 
@@ -157,7 +164,7 @@ def released_surprises(events: list, now: datetime, lookback_hours: int = 36,
             continue
         item = dict(ev)
         prior = history.get(_event_key(ev, when))
-        if prior and prior.get("captured_at", "") < when.isoformat():
+        if prior and prior.get("_captured") and prior["_captured"] < when:
             item["forecast"] = prior["forecast"]
             item["forecast_provenance"] = f"発表前記録（{prior['captured_at'][:16].replace('T', ' ')} 取得・{prior['source']}）"
         else:
@@ -193,8 +200,22 @@ def _words(text: str) -> set[str]:
     return set(_WORD_RE.findall(text.lower())) - _STOP_WORDS
 
 
+def _names_match(investing: str, ff: str) -> bool:
+    """区分語が完全一致し、残りの語の7割以上が重なる場合だけ同じ指標とみなす。"""
+    a, b = _words(investing), _words(ff)
+    if (a & _QUALIFIERS) != (b & _QUALIFIERS):
+        return False
+    core_a, core_b = a - _QUALIFIERS, b - _QUALIFIERS
+    if not core_a or not core_b:
+        return False
+    return len(core_a & core_b) / min(len(core_a), len(core_b)) >= 0.7
+
+
 def fill_missing_forecasts(events: list, ff_events: list) -> int:
-    """予想が N/A の指標を、同じ国・同じ時刻（±5分）・名称の語が重なる FF 行で補う。"""
+    """予想が N/A の指標を、同じ国・同じ時刻（±5分）・同じ指標名（区分語まで一致）の FF 行で補う。
+
+    候補が2件以上ある場合は取り違えを避けるため補完しない。
+    """
     filled = 0
     for ev in events or []:
         if parse_value(ev.get("forecast")) is not None:
@@ -202,22 +223,22 @@ def fill_missing_forecasts(events: list, ff_events: list) -> int:
         when = event_datetime_jst(ev)
         if when is None:
             continue
-        words = _words(str(ev.get("indicator", "")))
-        for ff in ff_events:
-            if (ff["country"] == ev.get("country") and parse_value(ff["forecast"]) is not None
-                    and abs((ff["datetime_jst"] - when).total_seconds()) <= 300
-                    and words & _words(ff["title"])):
-                ev["forecast"] = ff["forecast"]
-                ev["forecast_source"] = "ForexFactory"
-                filled += 1
-                break
+        candidates = [ff for ff in ff_events
+                      if ff["country"] == ev.get("country") and parse_value(ff["forecast"]) is not None
+                      and abs((ff["datetime_jst"] - when).total_seconds()) <= 300
+                      and _names_match(str(ev.get("indicator", "")), ff["title"])]
+        if len(candidates) == 1:
+            ev["forecast"] = candidates[0]["forecast"]
+            ev["forecast_source"] = "ForexFactory"
+            filled += 1
     return filled
 
 
-def format_surprise_lines(surprises: list) -> list[str]:
-    lines = ["### 指標サプライズ（発表済み・直近36時間）"]
+def format_surprise_lines(surprises: list, lookback_hours: int = 36) -> list[str]:
+    span = "直近36時間" if lookback_hours == 36 else f"直近{lookback_hours // 24}日"
+    lines = [f"### 指標サプライズ（発表済み・{span}）"]
     if not surprises:
-        lines.append("- 該当なし（直近36時間に結果が出た★★★指標なし、または結果未取得）")
+        lines.append(f"- 該当なし（{span}に結果が出た★★★指標なし、または結果未取得）")
         return lines
     for ev in surprises:
         s = ev.get("surprise")
@@ -228,6 +249,7 @@ def format_surprise_lines(surprises: list) -> list[str]:
             lines.append(head + " | 差: 計算不可（予想欠測または単位不一致）")
         else:
             lines.append(head + f" | 差 {s['diff']:+g}{s['unit']} | 一般的な反応: {s['gold_direction']}")
-    lines.append("※ 結果は Investing.com の公表値表示、予想は市場予想（発表前記録があればその値）。反応方向は米指標の一般則。"
-                 "実際の金の値動きが逆なら、別の買い手・売り手の存在を示す材料として扱う")
+    lines.append("※ 結果は Investing.com の公表値表示、予想は市場予想（発表前記録があればその値）。%同士の差は pp。"
+                 "反応方向は米指標の一般則による仮説で、金利・ドルの実際の反応とは別に確認する。"
+                 "同時発表の総合/コア・前月比/前年比は同じ材料として1つに数える。逆の反応は「想定経路不成立・原因未特定」と扱う")
     return lines
