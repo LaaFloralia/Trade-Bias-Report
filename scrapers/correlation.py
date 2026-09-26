@@ -159,6 +159,8 @@ def format_correlation_lines(corr: dict) -> list[str]:
         lines.append("- 算出対象なし")
         return lines
 
+    if corr.get("xau_source"):
+        lines.append(f"- XAUUSD 日足の出所: {corr['xau_source']}")
     lines.append("| ペア | 20日 r | 60日 r | 判定 | 標本 |")
     lines.append("|---|---|---|---|---|")
     for p in corr["pairs"]:

@@ -71,6 +71,46 @@ def _resolve_brain_path() -> Path:
     return Path(os.environ.get("BRAIN_PATH") or (Path.home() / "Brain"))
 
 
+def _resolve_chart_intel_reports() -> Optional[Path]:
+    """Brain 休止時の代替: chart-intel の親レビュー通過版。
+
+    runtime では scrapers/ の2階層上が chart-intel ジョブのルートになる。
+    REPORT_ANCHOR_FALLBACK_DIR で明示指定もできる。
+    """
+    explicit = os.environ.get("REPORT_ANCHOR_FALLBACK_DIR")
+    candidate = Path(explicit) if explicit else Path(__file__).resolve().parents[2] / "reports"
+    return candidate if (candidate / "daily").is_dir() or (candidate / "weekly").is_dir() else None
+
+
+def _latest_chart_intel(
+    reports: Path, mode: str, before: Optional[date] = None,
+) -> Optional[tuple[Path, date, str]]:
+    """reports/<mode>/editions/*/ の親レビュー通過版から最新を返す（同日なら審査時刻が新しい方）。"""
+    import json
+
+    best = None
+    for review in (reports / mode / "editions").glob("*/*.parent-review.json"):
+        try:
+            data = json.loads(review.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if data.get("status") != "parent_passed":
+            continue
+        md = review.with_name(review.name.replace(".parent-review.json", ".md"))
+        m = _DATE_RE.search(md.name)
+        if not md.is_file() or not m:
+            continue
+        fdate = datetime.strptime(m.group(1), "%Y-%m-%d").date()
+        if before is not None and fdate >= before:
+            continue
+        key = (fdate, str(data.get("reviewedAt") or ""))
+        if best is None or key > best[0]:
+            best = (key, md, fdate)
+    if best is None:
+        return None
+    return best[1], best[2], "Weekly" if mode == "weekly" else "Daily"
+
+
 def _latest_report(
     brain: Path,
     dirs: list[tuple[str, str]],
@@ -225,7 +265,26 @@ def load_report_anchor(today: Optional[date] = None) -> dict:
             "prev_daily_exec": None, "xau_tf": None, "note": None, "error": None}
     brain = _resolve_brain_path()
     if not brain.is_dir():
-        base["note"] = f"Brain パスが存在しない ({brain})。アンカーなしで続行"
+        reports = _resolve_chart_intel_reports()
+        if reports is None:
+            base["note"] = f"Brain パスが存在しない ({brain})。アンカーなしで続行"
+            return base
+        base["source"] = "chart-intel reports（親レビュー通過版）"
+        base["note"] = "Brain 休止中のため chart-intel の親レビュー通過版を参照。XAU-TF は対象外"
+        try:
+            weekly_found = _latest_chart_intel(reports, "weekly")
+            if weekly_found:
+                base["weekly"] = _build_anchor(weekly_found, today, WEEKLY_STALE_DAYS,
+                                               patterns=["セクション0", "エグゼクティブサマリー"])
+            daily_found = _latest_chart_intel(reports, "daily", before=today)
+            if daily_found:
+                base["prev_daily"] = _build_anchor(daily_found, today, DAILY_STALE_DAYS,
+                                                   patterns=["ファンダメンタル大局"],
+                                                   fallback_patterns=["セクション0", "エグゼクティブサマリー"])
+                base["prev_daily_exec"] = _build_anchor(daily_found, today, DAILY_STALE_DAYS,
+                                                        patterns=["セクション0", "エグゼクティブサマリー"])
+        except Exception as e:  # noqa: BLE001 — アンカー失敗でパイプラインを止めない
+            base["error"] = f"{type(e).__name__}: {e}"
         return base
     try:
         weekly_found = _latest_report(brain, WEEKLY_DIRS)
@@ -278,6 +337,8 @@ def format_anchor_lines(anchor: dict) -> list[str]:
     if anchor.get("note") and not (anchor.get("weekly") or anchor.get("prev_daily")):
         lines.append(f"※ {anchor['note']}")
         return lines
+    if anchor.get("source") and "chart-intel" in anchor["source"]:
+        lines.append(f"出所: {anchor['source']}（独立レビュー未実施。前回結論の継承と照合に使う）")
 
     def _emit(label: str, a: Optional[dict], stale_days: int):
         if not a:
