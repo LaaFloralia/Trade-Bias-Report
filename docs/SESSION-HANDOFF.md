@@ -45,3 +45,15 @@ Scope confirmed by the owner: this report covers only information not visible on
 - `55d1ca8` Wired into `collect_all_data` / `format_scraped_data`; failures keep other inputs. `fe9fe1f` master prompts: operating rules, 取得不可/方向未定/中立 distinction, coverage line, `bias` non-zero only with ≥2 aligned independent drivers.
 - Verification: 421 tests; live full collection showed all three new sections. The 2026-09-24 09:00 Hermes run succeeded on snapshot `c93534f`; its Jev audit ran local-only because the parent set `summary_data_class: local`. The 18:00 run is the first to use `fe9fe1f`.
 - Not done: CME QuikStrike option OI (terms of use unconfirmed), OANDA order/position book (needs account and API key).
+
+## 2026-09-26: off-chart report redesign and data fixes
+
+OANDA REST API needs GOLD status (owner is SILVER) and CME's terms prohibit automated QuikStrike access, so neither is used. Instead:
+
+- `4153b41` GVZ (FRED `GVZCLS`) gives a 1-day ±1σ expected range; round numbers inside it are marked. CME option OI is explicitly not collected.
+- `9c07eb5` Forecasts of unreleased events are archived at each run (`output/history/calendar_forecasts.jsonl`); surprises use the pre-release record and state its provenance. COT percentile lines state the comparison window.
+- `68229f1` With Brain disabled, `report_anchor` reads this job's parent-passed editions (weekly, previous-day daily). Correlation falls back to weekday-filtered Twelve Data daily closes.
+- `f4f8782` Bug: the runner re-formats model input from saved JSON, which lacks `_raw_quote_*`, so the round-number section never reached the 9/24–9/25 reports. Liquidity is now built at collection time and stored.
+- `fb806e4` Daily/weekly prompts: sections keep their contract headings but now cover off-chart bias hypotheses with cancel conditions, no-trade windows, expected range and round numbers; score #3 is macro-surprise alignment, #2 uses own-history percentiles. Price structure/entries are left to the owner.
+- Runtime (outside Git): runner no longer stubs the anchor, sets `REPORT_ANCHOR_FALLBACK_DIR`, and its analysis rules accept pre-release forecasts and plan A/B as off-chart hypotheses. Diffs in `docs/runtime-patches/20260926-*.patch`; originals in `.codex/jobs/chart-intel/backups/20260926-offchart/`.
+- Trial run 2026-09-26 20:35 JST (Codex gpt-6-astra/high, same prompt as the scheduled daily, off-slot): `succeeded_local` / `parent_passed`, 42 images reviewed, 8/8 checks passed, snapshot `c408295`. Report now carries the off-chart bias table, GVZ range, round numbers, weekly/previous-daily anchors, restored correlation and COT percentile with window. Follow-ups from review: score item #3 now also counts a ±5pp FedWatch day-over-day shift (it was unscoreable); coverage count defined; report length 7,011 chars exceeds the 2,400–3,800 target; DXY provider change (-0.31) disagrees with close − previous close (-0.27) — investigate `scrapers/dxy.py`.
