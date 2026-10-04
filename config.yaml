@@ -165,4 +165,4 @@ xau_tf_engine:
 
 # --- レポート出力（PDF / Google Drive）---
 output:
-  gdrive_pdf_dir: "/Users/laa/Library/CloudStorage/GoogleDrive-laalabx@gmail.com/マイドライブ/Trading/Bias-Reports"
+  gdrive_pdf_dir: "/Users/laa/Library/CloudStorage/GoogleDrive-floralia@laa-inc.com/マイドライブ/トレーディング（ジャーナル）"
