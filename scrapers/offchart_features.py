@@ -74,7 +74,7 @@ def build_features(results: dict, now: datetime, weekly: bool = False) -> dict:
                        "pre_release_forecast": str(e.get("forecast_provenance", "")).startswith("発表前記録"),
                        **{k: (e.get("surprise") or {}).get(k) for k in ("diff", "unit", "gold_direction")}}
                       for e in results.get("macro_surprises") or []],
-        "fedwatch": {"target_rates": fed.get("target_rates"), "next_meeting": fed.get("meeting_date")},
+        "fedwatch": {"target_rates": fed.get("target_rates"), "next_meeting": fed.get("next_fomc_date")},
         "rates": {sid: _fred(results, sid) for sid in ("DFII10", "DGS2", "DGS10", "DTWEXBGS")},
         "correlation": [{k: p.get(k) for k in ("pair", "r_20d", "r_60d", "verdict", "period_20d")}
                         for p in (results.get("correlation") or {}).get("pairs") or []],

@@ -47,7 +47,8 @@ def test_config_yaml_loads_expected_shape():
 def test_output_setting_accessor_safe_on_missing_keys():
     """output セクションの安全アクセサ: 設定値を返し、キー欠落時は None。"""
     gdrive_dir = config.get_output_setting("gdrive_pdf_dir")
-    assert isinstance(gdrive_dir, str) and Path(gdrive_dir).is_absolute()
+    # 空文字は既存のDriveコピー停止設定。有効な保存先だけ絶対パスを要求する。
+    assert isinstance(gdrive_dir, str) and (not gdrive_dir or Path(gdrive_dir).is_absolute())
     assert config.get_output_setting("no_such_key") is None
 
 
