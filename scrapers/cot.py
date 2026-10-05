@@ -109,7 +109,9 @@ def fetch_cot_data(targets=None) -> dict:
     Returns:
         {
             "text": str,         # Claudeに渡すフォーマット済みテキスト
-            "report_date": str,  # 採用データのうち最も古いレポート日付
+            "report_date": str,  # 採用データのうち最も古い建玉観測日（公表日ではない）
+            "published_at": None,  # API選択項目に実公表日時はない
+            "retrieved_at": str | None,  # 採用値がある場合の取得処理完了時刻
             "error": str | None,
         }
     """
@@ -182,7 +184,7 @@ def fetch_cot_data(targets=None) -> dict:
 
             section_lines = [
                 f"[{display_name}]",
-                f"Report Date: {as_of.isoformat()}",
+                f"Report Date: {as_of.isoformat()}（観測日）",
                 f"Large Speculators: Long {fmt(current['ls_long'])} / Short {fmt(current['ls_short'])} / Net {fmt_net(current['ls_net'])} ({comparison_label}: {ls_net_diff})",
                 f"Commercials:       Long {fmt(current['cm_long'])} / Short {fmt(current['cm_short'])} / Net {fmt_net(current['cm_net'])} ({comparison_label}: {cm_net_diff})",
                 f"Small Speculators: Long {fmt(current['ss_long'])} / Short {fmt(current['ss_short'])} / Net {fmt_net(current['ss_net'])} ({comparison_label}: {ss_net_diff})",
@@ -196,10 +198,16 @@ def fetch_cot_data(targets=None) -> dict:
             sections.append(f"[{display_name}]\nCOT取得不可（{e}）")
 
     oldest_adopted_date = min(adopted_dates).isoformat() if adopted_dates else None
+    retrieved_at = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        if adopted_dates else None
+    )
     header_lines = [
         "=== COT Data (CFTC Legacy Futures Only) ===",
-        f"Report Date: {oldest_adopted_date or '不明'}",
-        "Report Date Policy: 採用した銘柄別日付のうち最も古い日付",
+        f"Report Date: {oldest_adopted_date or '不明'}（観測日）",
+        "Report Date Policy: 採用した銘柄別観測日のうち最も古い日付。公表日ではない",
+        "公表日時: 未確認（API選択項目に実公表日時なし）",
+        f"取得完了時刻: {retrieved_at or '未記録（採用値なし）'}",
         "",
     ]
     text = "\n".join(header_lines) + "\n\n".join(sections)
@@ -211,6 +219,8 @@ def fetch_cot_data(targets=None) -> dict:
         "source_url": BASE_URL,
         "timestamp": fetched_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "as_of_date": oldest_adopted_date,
+        "published_at": None,
+        "retrieved_at": retrieved_at,
         "instrument_dates": instrument_dates,
         "stale": stale_detected,
         "fallback_used": False,

@@ -112,6 +112,8 @@ def fetch_cot_disaggregated(market_name: str) -> dict:
         "source_url": BASE_URL,
         "timestamp": fetched_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
         "as_of_date": None,
+        "published_at": None,
+        "retrieved_at": None,
         "stale": False,
         "fallback_used": False,
         "error": None,
@@ -141,6 +143,7 @@ def fetch_cot_disaggregated(market_name: str) -> dict:
         return result
     result["data"] = _parse_row(rows[0])
     result["as_of_date"] = as_of.isoformat()
+    result["retrieved_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     return result
 
 
@@ -154,7 +157,8 @@ def format_disaggregated_lines(res: dict) -> list[str]:
 
     d = res["data"]
     mm, sw, pm = d["managed_money"], d["swap_dealers"], d["producer_merchant"]
-    lines.append(f"- Report Date: {d['date']} / Open Interest: {d['open_interest']:,}")
+    lines.append(f"- Report Date: {d['date']}（観測日） / Open Interest: {d['open_interest']:,}")
+    lines.append(f"- 公表日時: {res.get('published_at') or '未確認'} / 取得完了時刻: {res.get('retrieved_at') or '未記録'}")
 
     if mm["net"] is not None:
         chg = f"（前週比 {mm['net_change']:+,}）" if mm["net_change"] is not None else ""
