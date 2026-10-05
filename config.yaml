@@ -163,6 +163,7 @@ xau_tf_engine:
   repo_dir: "/Users/laa/dev/xauusd-smc-quant"
   h1_csv: "data/live-h1.csv"
 
-# --- レポート出力（PDF / Google Drive）---
+# --- レポート出力 ---
+# 2026-10-05 PDFとDrive配置を廃止（出力はHTMLとMarkdownのみ）。空ならDriveコピーをスキップする。
 output:
-  gdrive_pdf_dir: "/Users/laa/Library/CloudStorage/GoogleDrive-floralia@laa-inc.com/マイドライブ/トレーディング（ジャーナル）"
+  gdrive_pdf_dir: ""
