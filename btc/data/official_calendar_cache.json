@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "source_id": "bls_schedule_cache",
+  "publisher": "U.S. Bureau of Labor Statistics",
+  "verified_at": "2026-10-07T11:15:00Z",
+  "verified_by": "parent",
+  "timezone": "America/New_York",
+  "coverage_end": "2026-12-31",
+  "note": "BLSはMacから403のため、親が公式予定表で確認した日程を保存（PARENT-DECISIONS P8）。coverage_end以降は予定未確認。",
+  "events": [
+    {
+      "id": "bls.cpi.2026-10-14",
+      "name": "CPI（Consumer Price Index）",
+      "period": "2026年9月分",
+      "date": "2026-10-14",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "high",
+      "source_url": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "id": "bls.cpi.2026-11-10",
+      "name": "CPI（Consumer Price Index）",
+      "period": "2026年10月分",
+      "date": "2026-11-10",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "high",
+      "source_url": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "id": "bls.cpi.2026-12-10",
+      "name": "CPI（Consumer Price Index）",
+      "period": "2026年11月分",
+      "date": "2026-12-10",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "high",
+      "source_url": "https://www.bls.gov/schedule/news_release/cpi.htm"
+    },
+    {
+      "id": "bls.empsit.2026-11-06",
+      "name": "雇用統計（Employment Situation）",
+      "period": "2026年10月分",
+      "date": "2026-11-06",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "high",
+      "source_url": "https://www.bls.gov/schedule/news_release/empsit.htm"
+    },
+    {
+      "id": "bls.empsit.2026-12-04",
+      "name": "雇用統計（Employment Situation）",
+      "period": "2026年11月分",
+      "date": "2026-12-04",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "high",
+      "source_url": "https://www.bls.gov/schedule/news_release/empsit.htm"
+    },
+    {
+      "id": "bls.ppi.2026-10-15",
+      "name": "PPI（Producer Price Index）",
+      "period": "2026年9月分",
+      "date": "2026-10-15",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "medium",
+      "source_url": "https://www.bls.gov/schedule/news_release/ppi.htm"
+    },
+    {
+      "id": "bls.ppi.2026-11-13",
+      "name": "PPI（Producer Price Index）",
+      "period": "2026年10月分",
+      "date": "2026-11-13",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "medium",
+      "source_url": "https://www.bls.gov/schedule/news_release/ppi.htm"
+    },
+    {
+      "id": "bls.ppi.2026-12-15",
+      "name": "PPI（Producer Price Index）",
+      "period": "2026年11月分",
+      "date": "2026-12-15",
+      "time": "08:30",
+      "timezone": "America/New_York",
+      "category": "macro_release",
+      "importance": "medium",
+      "source_url": "https://www.bls.gov/schedule/news_release/ppi.htm"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+(version 1)
+; BTCUSD chart-intel worker boundary. btc/install_job.py fills in the job root and the worker
+; python's sys.prefix and sys.base_prefix (resolved at install time).
+; sandbox-exec -f boundary.sb -D TMPDIR=<private per-run temp dir> ...
+; Later rules win. Writes: nothing except the listed mutable areas. Reads under /Users/laa:
+; only the python, the bundled Chromium, the report renderer, the job root and the run TMPDIR.
+; No secret is ever inside the sandbox: op, the Keychain and the Security services are refused.
+; Code (runtime/), this policy, run.sh, runner.py, snapshot.json and run.lock stay read-only.
+(allow default)
+(deny file-write* (subpath "/"))
+(allow file-write*
+  (subpath "@ROOT@/reports")
+  (subpath "@ROOT@/work")
+  (subpath "@ROOT@/logs")
+  (subpath "@ROOT@/history")
+  (regex #"^@ROOT_RE@/\.?latest-(daily|weekly)\.json(\.[A-Za-z0-9_]+\.tmp)?$")
+  (subpath (param "TMPDIR"))
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/dtracehelper")
+  (regex #"^/dev/tty")
+  (regex #"^/dev/fd/"))
+(deny file-read-data (subpath "/Users/laa"))
+(allow file-read-data
+  (subpath "@PY_PREFIX@")
+  (subpath "@PY_BASE@")
+  (subpath "/Users/laa/Library/Caches/ms-playwright")
+  (subpath "/Users/laa/.agents/skills/human-first-docs")
+  (subpath "@ROOT@")
+  (subpath (param "TMPDIR")))
+; After the allow block, so that no allow can reopen them.
+(deny file-read*
+  (subpath "/Users/laa/Brain")
+  (subpath "/Users/laa/.codex/jobs/chart-intel")
+  (subpath "/Users/laa/Library/Keychains")
+  (subpath "/Library/Keychains"))
+(deny mach-lookup
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.securityd")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.security.agent")
+  (global-name "com.apple.security.authhost")
+  (global-name "com.apple.secd"))
+; Exec rules match the resolved binary: /opt/homebrew/bin/op is a symlink into the Caskroom.
+(deny process-exec
+  (literal "/usr/bin/security")
+  (literal "/opt/homebrew/bin/op")
+  (literal "/usr/local/bin/op")
+  (subpath "/opt/homebrew/Caskroom/1password-cli")
+  (subpath "/Applications/1Password.app")
+  (regex #"/op$"))

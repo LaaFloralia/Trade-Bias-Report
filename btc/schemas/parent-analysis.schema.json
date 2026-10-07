@@ -1,0 +1,349 @@
+{
+ "type": "object",
+ "additionalProperties": false,
+ "properties": {
+  "schema_version": {
+   "const": "btc-parent-analysis-1.0"
+  },
+  "edition_id": {
+   "type": "string",
+   "pattern": "^parent-(daily|weekly)-[0-9]{8}T[0-9]{6}-[0-9a-f]{8}$"
+  },
+  "input_manifest_sha256": {
+   "type": "string",
+   "pattern": "^[a-f0-9]{64}$"
+  },
+  "requested_status": {
+   "enum": [
+    "ready_for_validation",
+    "changes_requested"
+   ]
+  },
+  "thesis": {
+   "$ref": "#/$defs/claim"
+  },
+  "three_domains": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "liquidity": {
+     "$ref": "#/$defs/claim"
+    },
+    "positioning": {
+     "$ref": "#/$defs/claim"
+    },
+    "bias": {
+     "$ref": "#/$defs/claim"
+    }
+   },
+   "required": [
+    "liquidity",
+    "positioning",
+    "bias"
+   ]
+  },
+  "positioning_summary": {
+   "$ref": "#/$defs/claim"
+  },
+  "news_assessments": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "news_id": {
+      "type": "string"
+     },
+     "event_cluster_id": {
+      "type": "string"
+     },
+     "group_id": {
+      "enum": [
+       "macro",
+       "spot_demand",
+       "btc_specific_event",
+       "context_only"
+      ]
+     },
+     "impact": {
+      "enum": [
+       "supportive",
+       "adverse",
+       "mixed",
+       "unknown"
+      ]
+     },
+     "importance": {
+      "enum": [
+       "critical",
+       "high",
+       "medium",
+       "low"
+      ]
+     },
+     "verification": {
+      "enum": [
+       "primary_confirmed",
+       "secondary_body_confirmed",
+       "headline_only",
+       "disputed",
+       "retracted"
+      ]
+     },
+     "source_quote": {
+      "type": "string"
+     },
+     "fact_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "uniqueItems": true
+     },
+     "interpretation": {
+      "$ref": "#/$defs/claim"
+     }
+    },
+    "required": [
+     "news_id",
+     "event_cluster_id",
+     "group_id",
+     "impact",
+     "importance",
+     "verification",
+     "source_quote",
+     "fact_ids",
+     "interpretation"
+    ]
+   }
+  },
+  "scenarios": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "condition_rule_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "uniqueItems": true
+     },
+     "fact_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "uniqueItems": true
+     },
+     "expected_effect": {
+      "$ref": "#/$defs/claim"
+     },
+     "counter_case": {
+      "$ref": "#/$defs/claim"
+     },
+     "invalidation_rule_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "uniqueItems": true
+     }
+    },
+    "required": [
+     "id",
+     "condition_rule_ids",
+     "fact_ids",
+     "expected_effect",
+     "counter_case",
+     "invalidation_rule_ids"
+    ]
+   },
+   "minItems": 1
+  },
+  "destination_choice": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "side": {
+     "enum": [
+      "up",
+      "down",
+      "none"
+     ]
+    },
+    "kind": {
+     "enum": [
+      "observed_book_cluster",
+      "option_oi_cluster",
+      "none"
+     ]
+    },
+    "level_fact_ids": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    },
+    "rationale": {
+     "$ref": "#/$defs/claim"
+    },
+    "counter_case": {
+     "$ref": "#/$defs/claim"
+    },
+    "invalidation_rule_ids": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    }
+   },
+   "required": [
+    "side",
+    "kind",
+    "level_fact_ids",
+    "rationale",
+    "counter_case",
+    "invalidation_rule_ids"
+   ]
+  },
+  "counter_cases": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/claim"
+   },
+   "minItems": 1
+  },
+  "reevaluation_conditions": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/reevaluate"
+   },
+   "minItems": 1
+  },
+  "limitations": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/claim"
+   },
+   "minItems": 1
+  },
+  "issues": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+     "code": {
+      "type": "string"
+     },
+     "fact_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "uniqueItems": true
+     },
+     "description": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "code",
+     "fact_ids",
+     "description"
+    ]
+   }
+  }
+ },
+ "required": [
+  "schema_version",
+  "edition_id",
+  "input_manifest_sha256",
+  "requested_status",
+  "thesis",
+  "three_domains",
+  "positioning_summary",
+  "news_assessments",
+  "scenarios",
+  "destination_choice",
+  "counter_cases",
+  "reevaluation_conditions",
+  "limitations",
+  "issues"
+ ],
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "urn:laa:btc-offchart:parent:1.0:p9",
+ "title": "Parent-authored qualitative analysis; arithmetic and times are code-owned",
+ "$defs": {
+  "claim": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "text": {
+     "type": "string",
+     "minLength": 1
+    },
+    "fact_ids": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    },
+    "claim_kind": {
+     "enum": [
+      "fact_interpretation",
+      "hypothesis",
+      "limitation"
+     ]
+    }
+   },
+   "required": [
+    "text",
+    "fact_ids",
+    "claim_kind"
+   ]
+  },
+  "reevaluate": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "rule_id": {
+     "type": "string"
+    },
+    "fact_ids": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    },
+    "explanation": {
+     "$ref": "#/$defs/claim"
+    }
+   },
+   "required": [
+    "rule_id",
+    "fact_ids",
+    "explanation"
+   ]
+  }
+ },
+ "$comment": "Parent text uses {{fact:ID}} and {{event:ID:start_at}} tokens for quantities/times. No score/bias/confidence/numeric threshold fields. Runtime must reject unsupported quotes/references and validate source permissions."
+}

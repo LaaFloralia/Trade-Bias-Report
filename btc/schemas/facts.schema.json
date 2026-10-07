@@ -1,0 +1,539 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "urn:laa:btc-offchart:facts:1.0",
+ "title": "Frozen BTCUSD facts for one edition",
+ "type": "object",
+ "additionalProperties": false,
+ "properties": {
+  "schema_version": {
+   "const": "btc-facts-1.0"
+  },
+  "symbol": {
+   "const": "BTCUSD"
+  },
+  "asset": {
+   "const": "BTCUSD"
+  },
+  "mode": {
+   "enum": [
+    "daily",
+    "weekly"
+   ]
+  },
+  "session_slot": {
+   "enum": [
+    "am",
+    "pm",
+    "weekly"
+   ]
+  },
+  "as_of": {
+   "type": "string",
+   "format": "date-time",
+   "pattern": "Z$"
+  },
+  "collected_at": {
+   "type": "string",
+   "format": "date-time",
+   "pattern": "Z$"
+  },
+  "input_manifest_sha256": {
+   "type": "string",
+   "pattern": "^[a-f0-9]{64}$"
+  },
+  "facts": {
+   "type": "array",
+   "items": {
+    "$ref": "#/$defs/fact"
+   }
+  },
+  "state": {
+   "type": "object"
+  }
+ },
+ "required": [
+  "schema_version",
+  "symbol",
+  "asset",
+  "mode",
+  "session_slot",
+  "as_of",
+  "collected_at",
+  "input_manifest_sha256",
+  "facts",
+  "state"
+ ],
+ "$defs": {
+  "fact": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "fact_id": {
+     "type": "string",
+     "pattern": "^btc\\.[a-z0-9_.:-]+$"
+    },
+    "logical_id": {
+     "type": "string"
+    },
+    "revision": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "asset": {
+     "const": "BTCUSD"
+    },
+    "category": {
+     "type": "string"
+    },
+    "metric": {
+     "type": "string"
+    },
+    "source_id": {
+     "type": "string"
+    },
+    "value": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "unit": {
+     "type": "string"
+    },
+    "status": {
+     "enum": [
+      "ok",
+      "provisional",
+      "partial",
+      "stale",
+      "missing",
+      "invalid",
+      "conflict",
+      "warming_up",
+      "not_applicable",
+      "terms_restricted"
+     ]
+    },
+    "missing_reason": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "observed_at": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time",
+       "pattern": "Z$"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "observation_date": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "format": "date"
+    },
+    "period_start": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time",
+       "pattern": "Z$"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "period_end": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time",
+       "pattern": "Z$"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "published_at": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time",
+       "pattern": "Z$"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "first_seen_at": {
+     "type": "string",
+     "format": "date-time",
+     "pattern": "Z$"
+    },
+    "retrieved_at": {
+     "type": "string",
+     "format": "date-time",
+     "pattern": "Z$"
+    },
+    "retrieval_started_at": {
+     "type": "string",
+     "format": "date-time",
+     "pattern": "Z$"
+    },
+    "available_at": {
+     "type": "string",
+     "format": "date-time",
+     "pattern": "Z$"
+    },
+    "timestamp_quality": {
+     "enum": [
+      "source_observed",
+      "source_date",
+      "receipt_interval",
+      "unknown"
+     ]
+    },
+    "scheduled_release_at": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time",
+       "pattern": "Z$"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "stale_after_seconds": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "minimum": 0
+    },
+    "freshness_rule_id": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "stale": {
+     "type": "boolean"
+    },
+    "valid_until": {
+     "anyOf": [
+      {
+       "type": "string",
+       "format": "date-time",
+       "pattern": "Z$"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "venue": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "instrument": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "population": {
+     "type": "string"
+    },
+    "coverage": {
+     "$ref": "#/$defs/coverage"
+    },
+    "evidence_kind": {
+     "enum": [
+      "observed",
+      "derived",
+      "model_estimate",
+      "hypothesis"
+     ]
+    },
+    "method_id": {
+     "type": "string"
+    },
+    "method_version": {
+     "type": "string"
+    },
+    "source_fact_ids": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    },
+    "raw_sha256": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "pattern": "^[a-f0-9]{64}$"
+    },
+    "input_manifest_sha256": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "pattern": "^[a-f0-9]{64}$"
+    },
+    "display": {
+     "type": "string",
+     "minLength": 1
+    },
+    "display_value": {
+     "type": [
+      "number",
+      "null"
+     ]
+    }
+   },
+   "required": [
+    "fact_id",
+    "logical_id",
+    "revision",
+    "asset",
+    "category",
+    "metric",
+    "source_id",
+    "value",
+    "unit",
+    "status",
+    "missing_reason",
+    "observed_at",
+    "observation_date",
+    "period_start",
+    "period_end",
+    "published_at",
+    "first_seen_at",
+    "retrieved_at",
+    "retrieval_started_at",
+    "available_at",
+    "timestamp_quality",
+    "scheduled_release_at",
+    "stale_after_seconds",
+    "freshness_rule_id",
+    "stale",
+    "valid_until",
+    "venue",
+    "instrument",
+    "population",
+    "coverage",
+    "evidence_kind",
+    "method_id",
+    "method_version",
+    "source_fact_ids",
+    "raw_sha256",
+    "input_manifest_sha256",
+    "display",
+    "display_value"
+   ],
+   "allOf": [
+    {
+     "if": {
+      "properties": {
+       "status": {
+        "enum": [
+         "missing",
+         "invalid",
+         "terms_restricted",
+         "warming_up"
+        ]
+       }
+      }
+     },
+     "then": {
+      "properties": {
+       "value": {
+        "type": "null"
+       }
+      }
+     }
+    },
+    {
+     "if": {
+      "properties": {
+       "value": {
+        "type": "null"
+       }
+      }
+     },
+     "then": {
+      "properties": {
+       "missing_reason": {
+        "type": "string",
+        "minLength": 1
+       }
+      }
+     }
+    },
+    {
+     "if": {
+      "properties": {
+       "source_id": {
+        "const": "computed"
+       }
+      }
+     },
+     "then": {
+      "properties": {
+       "raw_sha256": {
+        "type": "null"
+       },
+       "input_manifest_sha256": {
+        "type": "string"
+       },
+       "evidence_kind": {
+        "enum": [
+         "derived",
+         "model_estimate",
+         "hypothesis"
+        ]
+       }
+      }
+     },
+     "else": {
+      "properties": {
+       "evidence_kind": {
+        "const": "observed"
+       }
+      }
+     }
+    },
+    {
+     "if": {
+      "properties": {
+       "source_id": {
+        "not": {
+         "const": "computed"
+        }
+       },
+       "status": {
+        "not": {
+         "enum": [
+          "missing",
+          "terms_restricted"
+         ]
+        }
+       }
+      }
+     },
+     "then": {
+      "properties": {
+       "raw_sha256": {
+        "type": "string"
+       }
+      }
+     }
+    },
+    {
+     "if": {
+      "properties": {
+       "value": {
+        "type": "null"
+       }
+      }
+     },
+     "then": {
+      "properties": {
+       "display_value": {
+        "type": "null"
+       }
+      }
+     }
+    },
+    {
+     "if": {
+      "properties": {
+       "source_id": {
+        "const": "computed"
+       },
+       "status": {
+        "not": {
+         "enum": [
+          "missing",
+          "warming_up",
+          "invalid"
+         ]
+        }
+       }
+      }
+     },
+     "then": {
+      "properties": {
+       "source_fact_ids": {
+        "minItems": 1
+       }
+      }
+     }
+    }
+   ]
+  },
+  "coverage": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "included_components": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    },
+    "expected_components": {
+     "type": "array",
+     "items": {
+      "type": "string",
+      "minLength": 1
+     },
+     "uniqueItems": true
+    },
+    "observed_count": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "minimum": 0
+    },
+    "expected_count": {
+     "type": [
+      "integer",
+      "null"
+     ],
+     "minimum": 0
+    },
+    "note": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "included_components",
+    "expected_components",
+    "observed_count",
+    "expected_count",
+    "note"
+   ]
+  }
+ }
+}
