@@ -588,7 +588,7 @@ def test_r2_01_recovery_needs_observations_after_the_notice(built, tmp_path):
     assert carry.recovery_problems(carry.open_incidents(hist)[0], {'news_id': 'n7', 'fact_ids': [oi]}, f) == []
 
 
-def test_r2_01_incident_without_affected_sources_is_not_released_by_the_parent(built, tmp_path):
+def test_r2_01_incident_without_affected_sources_is_not_released_by_the_parent(built, tmp_path, monkeypatch):
     _, facts, _ = built
     hist = tmp_path / 'history'
     t0 = as_of_of(facts)
@@ -609,6 +609,7 @@ def test_r2_01_incident_without_affected_sources_is_not_released_by_the_parent(b
     briefing = analysis_mod.briefing(f, scoring.evaluate(f, mode='daily'), edition_id='x', mode='daily', session_slot='pm')
     assert '親では解除できない' in briefing and '参照価格の新鮮さ' not in briefing
     # Only the owner's manual release clears it.
+    _fixed_clock(monkeypatch, t0 + timedelta(minutes=1))
     assert carry.main(['release', '--root', str(tmp_path), '--incident', incident_id, '--reason', '社長指示']) == 0
     f4 = _edition_facts(facts, hist, t0 + timedelta(hours=12), [])
     assert scoring.evaluate(f4, mode='daily', assessments=[])['trade_gate']['status'] != 'incident_hold'
@@ -917,6 +918,15 @@ def test_lagged_fallback_facts_to_md_html_machine(tmp_path):
 
 # ------------------------------------------------------------------ follow-up B: owner-only manual release
 
+def _fixed_clock(monkeypatch, when):
+    """Pin the CLI's release time (``released_at``) so later editions are evaluated after it (R4-01)."""
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return when.astimezone(tz) if tz else when
+    monkeypatch.setattr(carry, 'datetime', Clock)
+
+
 def _open_incident(built, hist):
     _, facts, _ = built
     t0 = as_of_of(facts)
@@ -928,10 +938,11 @@ def _open_incident(built, hist):
     return facts, ev['incidents_new'][0]['incident_id']
 
 
-def test_manual_release_cli(built, tmp_path, capsys):
+def test_manual_release_cli(built, tmp_path, capsys, monkeypatch):
     root = tmp_path / 'job'
     hist = root / 'history'
     facts, incident_id = _open_incident(built, hist)
+    _fixed_clock(monkeypatch, as_of_of(facts) + timedelta(minutes=1))
     assert carry.main(['release', '--root', str(root), '--incident', 'inc-nope', '--reason', 'x']) == 2
     assert 'incident_unknown' in capsys.readouterr().out
     assert carry.main(['release', '--root', str(root), '--incident', incident_id, '--reason', '  ']) == 2
@@ -1006,7 +1017,8 @@ def test_r2_04_invalid_carried_state_is_data_hold_and_never_overwritten(built, t
     facts, ev, md, html, machine = _edition(collection, tmp_path, 'bad', history_files=files)
     hist = tmp_path / 'bad' / 'history'
     assert facts['state']['carry'] == {'status': 'invalid', 'error': code}
-    assert facts['state']['news']['carried'] == [] and facts['state']['incidents'] == {'open': []}
+    assert facts['state']['news']['carried'] == []
+    assert facts['state']['incidents'] == {'open': [], 'released_ids': [], 'recently_released': []}
     assert 'carry_state_invalid' in ev['hard_invalid'] and ev['trade_gate']['status'] == 'data_hold'
     assert machine['no_trade'] is True
     for text in (md, html):

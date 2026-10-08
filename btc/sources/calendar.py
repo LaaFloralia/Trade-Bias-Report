@@ -51,19 +51,41 @@ def _month_overlaps(year: int, month: int, start: date, end: date) -> bool:
     return first <= end and last >= start
 
 
-def parse_fomc_detail(body: str, today: date) -> tuple[list[dict], dict]:
-    """FOMC meetings plus parse statistics (R2-05).
+MONTH_START = re.compile(r'([A-Z][a-z]+)(?:/([A-Z][a-z]+))?\b')
+# Entries the Fed lists inside a year section that are not scheduled meetings: a single day with a parenthetical
+# such as "22 (notation vote)" or "(unscheduled)". They carry no statement time, so they are excluded explicitly.
+FOMC_NON_MEETING = re.compile(r'\d{1,2} \((notation vote|unscheduled)\)')
 
-    Every month token inside a "YYYY FOMC Meetings" section is a meeting candidate. A candidate whose month
-    overlaps the target range (today-2 .. today+120) and whose day token is not "D-D" (optionally "*") is
-    counted as unparsed. ``coverage_end`` comes only from parsed structure: Dec 31 of the latest year with at
-    least one parsed meeting, capped at the 120-day window; yesterday when the current year has none.
+
+def _fomc_days(year: int, first: int, last: int, token: str):
+    """(start, end) dates of "D-D(*)", or None when the days do not form a valid meeting."""
+    days = FOMC_DAYS.fullmatch(token)
+    if not days:
+        return None
+    try:
+        begin = date(year, first, int(days.group(1)))
+        finish = date(year, last, int(days.group(2)))
+    except ValueError:
+        return None
+    return (begin, finish) if begin < finish <= begin + timedelta(days=3) else None
+
+
+def parse_fomc_detail(body: str, today: date) -> tuple[list[dict], dict]:
+    """FOMC meetings plus parse statistics (R2-05, R3-04).
+
+    Inside a "YYYY FOMC Meetings" section, any text token that STARTS with a month name (or Month/Month) is a
+    meeting candidate; it is in range when its month overlaps today-2 .. today+120. It counts as parsed only
+    when the token is exactly the month name(s) and the next token is a valid "D-D" (optionally "*") meeting;
+    anything else (e.g. "October 6 – 7*" in one token, "99-7*") is unparsed. A day marked "(notation vote)" or
+    "(unscheduled)" is not a scheduled meeting and is excluded explicitly. ``coverage_end`` comes only from
+    parsed structure: Dec 31 of the latest year with a parsed meeting, capped at the 120-day window; yesterday
+    when the current year has none.
     """
     parser = _Text()
     parser.feed(body)
     tokens = parser.parts
     start, end = today - timedelta(days=2), today + timedelta(days=120)
-    events, unparsed, parsed_years = [], [], set()
+    events, unparsed, excluded, parsed_years = [], [], [], set()
     candidates = parsed = 0
     year = None
     url = 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm'
@@ -72,21 +94,23 @@ def parse_fomc_detail(body: str, today: date) -> tuple[list[dict], dict]:
         if heading:
             year = int(heading.group(1))
             continue
-        month = MONTH_TOKEN.fullmatch(token)
+        month = MONTH_START.match(token)
         if not year or not month or month.group(1) not in MONTHS or (month.group(2) and month.group(2) not in MONTHS):
             continue
-        last_month = MONTHS[month.group(2) or month.group(1)]
-        in_range = _month_overlaps(year, last_month, start, end) or _month_overlaps(year, MONTHS[month.group(1)], start, end)
-        candidates += in_range
-        days = FOMC_DAYS.fullmatch(tokens[i + 1]) if i + 1 < len(tokens) else None
-        try:
-            day = date(year, last_month, int(days.group(2))) if days else None
-        except ValueError:
-            day = None
-        if day is None:
-            if in_range:
-                unparsed.append(f'{year} {token} {tokens[i + 1] if i + 1 < len(tokens) else ""}'.strip()[:80])
+        first, last = MONTHS[month.group(1)], MONTHS[month.group(2) or month.group(1)]
+        in_range = _month_overlaps(year, first, start, end) or _month_overlaps(year, last, start, end)
+        following = tokens[i + 1] if i + 1 < len(tokens) else ''
+        exact = MONTH_TOKEN.fullmatch(token) is not None
+        if exact and FOMC_NON_MEETING.fullmatch(following):
+            excluded.append(f'{year} {token} {following}'[:80])
             continue
+        candidates += in_range
+        meeting = _fomc_days(year, first, last, following) if exact else None
+        if meeting is None:
+            if in_range:
+                unparsed.append(f'{year} {token} {following if exact else ""}'.strip()[:80])
+            continue
+        day = meeting[1]
         parsed_years.add(year)
         parsed += in_range
         if start <= day <= end:
@@ -102,7 +126,7 @@ def parse_fomc_detail(body: str, today: date) -> tuple[list[dict], dict]:
     else:
         coverage_end = min(date(max(parsed_years), 12, 31), end).isoformat()
     stats = {'candidates_in_range': candidates, 'parsed_in_range': parsed, 'unparsed': unparsed,
-             'parsed_years': sorted(parsed_years), 'coverage_end': coverage_end}
+             'excluded_non_meetings': excluded, 'parsed_years': sorted(parsed_years), 'coverage_end': coverage_end}
     return events, stats
 
 
@@ -142,44 +166,58 @@ class _BeaRows(HTMLParser):
 BEA_WHEN = re.compile(r'([A-Z][a-z]+) (\d{1,2}) (\d{1,2}):(\d{2}) (AM|PM)')
 
 
-def parse_bea_detail(body: str, today: date) -> tuple[list[dict], dict]:
-    """BEA GDP/PCE releases plus parse statistics (R2-05).
+def _bea_when(cell: str, today: date):
+    """(date, hour24, minute) of "Month D H:MM AM|PM" with a valid date, hour 1-12 and minute 00-59, else None."""
+    when = BEA_WHEN.fullmatch(cell)
+    if not when or when.group(1) not in MONTHS:
+        return None
+    hour, minute = int(when.group(3)), int(when.group(4))
+    if not (1 <= hour <= 12 and 0 <= minute <= 59):
+        return None
+    try:
+        day = date(today.year, MONTHS[when.group(1)], int(when.group(2)))
+    except ValueError:
+        return None
+    if day < today - timedelta(days=180):
+        day = day.replace(year=today.year + 1)  # schedule pages list the coming months without a year
+    return day, hour % 12 + (12 if when.group(5) == 'PM' else 0), minute
 
-    Every table row with a release title is a candidate. A GDP/PCE row whose date cell is not
-    "Month D H:MM AM|PM" counts as unparsed ("To Be Announced" rows are counted separately; they carry no
-    date). ``coverage_end`` is the latest successfully parsed release date of any title.
+
+def parse_bea_detail(body: str, today: date) -> tuple[list[dict], dict]:
+    """BEA GDP/PCE releases plus parse statistics (R2-05, R3-04).
+
+    Every table row with a GDP/PCE release title in any cell is a candidate. It is unparsed when it has fewer
+    than the three cells (date, type, title) or its date cell is not a valid "Month D H:MM AM|PM" (hour 1-12,
+    minute 00-59). "To Be Announced" rows are counted separately; they carry no date. ``coverage_end`` is the
+    latest successfully parsed release date of any title.
     """
     parser = _BeaRows()
     parser.feed(body)
     events, unparsed, tba, dated = [], [], 0, []
     candidates = 0
     for row in parser.rows:
+        keep = any(BEA_KEEP.match(cell) for cell in row)
+        candidates += keep
+        if keep and row[0].startswith('To Be Announced'):
+            tba += 1
+            continue
         if len(row) < 3:
+            if keep:
+                unparsed.append(' | '.join(row)[:120])
             continue
         title = row[-1]
-        keep = bool(BEA_KEEP.match(title))
-        candidates += keep
-        when = BEA_WHEN.fullmatch(row[0])
-        day = None
-        if when and when.group(1) in MONTHS:
-            year = today.year
-            try:
-                day = date(year, MONTHS[when.group(1)], int(when.group(2)))
-            except ValueError:
-                day = None
-            if day and day < today - timedelta(days=180):
-                day = day.replace(year=year + 1)  # schedule pages list the coming months without a year
-        if day is None:
-            if row[0].startswith('To Be Announced'):
-                tba += keep
-            elif keep:
+        when = _bea_when(row[0], today)
+        if when is None:
+            if keep:
                 unparsed.append(f'{row[0]} | {title}'[:120])
             continue
+        day, hour, minute = when
         dated.append(day)
-        if not keep:
+        if not keep or not BEA_KEEP.match(title):
+            if keep:
+                unparsed.append(f'{row[0]} | {title}'[:120])  # release title not in the title cell
             continue
-        hour = int(when.group(3)) % 12 + (12 if when.group(5) == 'PM' else 0)
-        local = datetime(day.year, day.month, day.day, hour, int(when.group(4)), tzinfo=NY)
+        local = datetime(day.year, day.month, day.day, hour, minute, tzinfo=NY)
         kind = 'gdp' if title.upper().startswith('GDP') else 'pce'
         name = 'GDP（BEA）' if kind == 'gdp' else 'PCE・個人所得支出（BEA）'
         events.append(_event(f'bea.{kind}.{day.isoformat()}', f'{name} {title[:80]}', local, category='macro_release',

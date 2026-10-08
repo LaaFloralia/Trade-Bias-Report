@@ -53,6 +53,7 @@ INCIDENT_FILE = 'btc-incidents.json'
 KNOWN_RETENTION_DAYS = 180
 KNOWN_MAX_RECORDS = 5000
 BRIEFING_DAYS = 14
+RELEASE_VISIBLE_DAYS = 14
 SCORABLE = ('ok', 'provisional')
 INCIDENT_STATUSES = ('open', 'released', 'released_manually')
 OPTIONAL_STR = (str, type(None))
@@ -61,6 +62,9 @@ KNOWN_FIELDS = {'known_id': str, 'ids': list, 'first_known_at': 'time', 'adopted
 INCIDENT_FIELDS = {'incident_id': str, 'news_id': str, 'event_cluster_id': OPTIONAL_STR, 'url': OPTIONAL_STR,
                    'title': str, 'published_at': 'time', 'affected_source_ids': list, 'status': str,
                    'recorded_edition_id': str, 'recorded_as_of': 'time'}
+# Evidence each closed status must carry (R3-03): a release without its record never reads as valid.
+RELEASE_FIELDS = {'released': {'released_edition_id': str, 'released_as_of': 'time', 'recovery': dict},
+                  'released_manually': {'release_reason': str, 'released_at': 'time', 'released_by': str}}
 
 
 class CarryStateError(ValueError):
@@ -101,22 +105,41 @@ def _valid_record(record, fields: dict) -> bool:
     return True
 
 
+def _valid_incident(record) -> bool:
+    if not _valid_record(record, INCIDENT_FIELDS) or record['status'] not in INCIDENT_STATUSES:
+        return False
+    if not all(isinstance(x, str) for x in record['affected_source_ids']):
+        return False
+    extra = RELEASE_FIELDS.get(record['status'])
+    if extra is None:
+        return True
+    if not _valid_record(record, extra):
+        return False
+    if record['status'] == 'released_manually':
+        return bool(record['release_reason'].strip()) and record['released_by'] == 'owner_instruction'
+    return True
+
+
 def _read(path: Path) -> list[dict]:
-    """Strict read (R2-04): schema_version, record keys and types, enumerations. Raises CarryStateError."""
-    if not path.is_file():
-        return []
+    """Strict read (R2-04, R3-03): file type, schema_version, record keys and types, status-specific evidence.
+    Raises CarryStateError; a missing file is an empty state."""
     kind = 'incidents' if path.name == INCIDENT_FILE else 'known_news'
+    if not os.path.lexists(path):
+        return []
+    if not path.is_file():
+        raise CarryStateError(f'{kind}_not_a_file')
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise CarryStateError(f'{kind}_json_invalid') from None
     if not isinstance(data, dict) or set(data) != {'schema_version', 'records'} or not isinstance(data['records'], list):
         raise CarryStateError(f'{kind}_structure_invalid')
-    if data['schema_version'] != SCHEMA_VERSION:
+    version = data['schema_version']
+    if not isinstance(version, int) or isinstance(version, bool) or version != SCHEMA_VERSION:
         raise CarryStateError(f'{kind}_schema_version_unknown')
     for record in data['records']:
         if kind == 'incidents':
-            if not _valid_record(record, INCIDENT_FIELDS) or record['status'] not in INCIDENT_STATUSES:
+            if not _valid_incident(record):
                 raise CarryStateError('incidents_record_invalid')
         elif not _valid_record(record, KNOWN_FIELDS) or not isinstance(record.get('follow_up_of'), OPTIONAL_STR) \
                 or not all(isinstance(x, str) for x in record['ids'] + record['body_hashes'] + record['news_ids']):
@@ -162,23 +185,31 @@ def _new_known_id(identifiers: list[str], parent: str | None) -> str:
 
 
 def best_match(identifiers, links, known: list[dict]) -> dict | None:
-    """The known record an item belongs to (R2-03): a URL or body-hash match beats a cluster or parent link;
-    ties go to the latest ``first_known_at`` (an adopted follow-up over its original event)."""
+    """The known record an item belongs to (R2-03, R3-01). Tiers: an exact primary-body hash match, then a URL
+    match, then a code-cluster or parent ``known_event_ids`` link. Inside a tier the latest ``first_known_at`` wins
+    (an adopted follow-up over its original event)."""
     ids, links = set(identifiers), set(links or [])
-    strong = [k for k in known if any(x.startswith(('url:', 'body:')) for x in ids & set(k['ids']))]
-    weak = [k for k in known if k not in strong and (ids & set(k['ids']) or k['known_id'] in links)]
-    for group in (strong, weak):
+
+    def shared(record, prefix):
+        return any(x.startswith(prefix) for x in ids & set(record['ids']))
+    tiers = ([k for k in known if shared(k, 'body:')],
+             [k for k in known if shared(k, 'url:')],
+             [k for k in known if shared(k, 'cluster:') or k['known_id'] in links])
+    for group in tiers:
         if group:
             return max(group, key=lambda k: parse_time(k['first_known_at']))
     return None
 
 
-def is_follow_up(item: dict, assessment: dict, match: dict | None) -> bool:
-    """Parent flag + a primary body unknown to the matched record + published after it became known."""
+def is_follow_up(item: dict, assessment: dict, match: dict | None, known: list[dict]) -> bool:
+    """Parent flag + a primary body unknown to EVERY retained known record (R3-01) + published after the
+    matched record became known."""
     sha = (item.get('body') or {}).get('text_sha256')
-    return bool(match is not None and assessment.get('follow_up_new_facts') and sha
-                and sha not in match.get('body_hashes', [])
-                and parse_time(item['published_at']) > parse_time(match['first_known_at']))
+    if match is None or not assessment.get('follow_up_new_facts') or not sha:
+        return False
+    if any(sha in k.get('body_hashes', []) for k in known):
+        return False
+    return parse_time(item['published_at']) > parse_time(match['first_known_at'])
 
 
 # --------------------------------------------------------------------- read
@@ -192,6 +223,20 @@ def known_news(history_dir, as_of: datetime) -> list[dict]:
 
 def open_incidents(history_dir) -> list[dict]:
     return [r for r in _read(Path(history_dir) / INCIDENT_FILE) if r['status'] == 'open']
+
+
+def closed_at(record: dict) -> datetime | None:
+    """When an incident record was closed: ``released_at`` (manual) or ``released_as_of`` (recovery); None if open."""
+    if record['status'] == 'released_manually':
+        return parse_time(record['released_at'])
+    if record['status'] == 'released':
+        return parse_time(record['released_as_of'])
+    return None
+
+
+def incidents(history_dir) -> list[dict]:
+    """Every incident record (open and closed); closed ids keep the same article from re-opening (R3-02)."""
+    return _read(Path(history_dir) / INCIDENT_FILE)
 
 
 # ---------------------------------------------------------- record (accept)
@@ -216,7 +261,7 @@ def record_known(history_dir, facts: dict, analysis: dict, *, edition_id: str, m
             hashes = [x[5:] for x in ids if x.startswith('body:')]
             match = best_match(ids, a.get('known_event_ids'), records)
             published = parse_time(item['published_at']).astimezone(UTC)
-            if match is None or is_follow_up(item, a, match):
+            if match is None or is_follow_up(item, a, match, records):
                 parent = match['known_id'] if match is not None else None
                 records.append({'known_id': _new_known_id(ids, parent), 'ids': ids, 'first_known_at': published.isoformat(),
                                 'adopted_as_of': as_of, 'edition_id': edition_id, 'mode': mode,
@@ -336,8 +381,11 @@ MAX_REASON = 500
 
 def release_manually(history_dir, incident_id: str, reason: str, *, now: datetime | None = None) -> dict:
     """Owner instruction only: close one open incident without a code-verified recovery. Never deletes."""
-    reason = ' '.join((reason or '').split())
-    if not reason or len(reason) > MAX_REASON or re.search(r'[\x00-\x1f\x7f]', reason):
+    # Reject control characters (tab and newline included) in the raw text first, then normalise spaces (R3-05).
+    if not isinstance(reason, str) or re.search('[\x00-\x1f\x7f-\x9f\u2028\u2029]', reason):
+        raise ValueError('reason_invalid')
+    reason = ' '.join(reason.split())
+    if not reason or len(reason) > MAX_REASON:
         raise ValueError('reason_invalid')
     path = Path(history_dir) / INCIDENT_FILE
     if not path.is_file():

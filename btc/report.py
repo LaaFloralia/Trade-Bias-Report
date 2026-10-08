@@ -577,10 +577,28 @@ def section_macro(doc: Doc, facts: dict, ev: dict, index: dict, figs: Figures) -
     return {'group': group, 'calendar': cal_line}
 
 
+def incident_lines(doc: Doc, st: dict, ev: dict) -> None:
+    """Open incidents and every manual release of the last 14 days. ``released_by`` is the operator's own
+    assertion (no authentication), so the release stays visible in each edition instead."""
+    open_ = ev.get('incidents_open') or []
+    if open_:
+        for inc in open_:
+            doc.item(f'重大障害（継続中）: {inc["incident_id"]}「{md_safe(inc.get("title") or "")}」'
+                     f'（公表 {jst(inc["published_at"])}、影響source '
+                     f'{"、".join(inc.get("affected_source_ids") or []) or "指定なし（親では解除できない）"}）')
+    else:
+        doc.item('重大障害（継続中）: なし')
+    for r in st.get('incidents', {}).get('recently_released') or []:
+        doc.item(f'障害の手動解除（解除から14日間表示）: {r["incident_id"]}「{md_safe(r.get("title") or "")}」、'
+                 f'解除 {jst(r["released_at"])}、理由: {md_safe(r.get("release_reason") or "")}、'
+                 f'記録者: {md_safe(r.get("released_by") or "")}（実行者の申告で、認証ではない）')
+
+
 def section_news(doc: Doc, facts: dict, analysis: dict, ev: dict, index: dict, figs: Figures) -> dict:
     st = facts['state']
     news = st.get('news', {})
     doc.add(HEADINGS[7], '')
+    incident_lines(doc, st, ev)
     if news.get('status') == 'missing':
         line = doc.item('ニュース: 欠測（RSSを取得できず）')
         doc.add('')

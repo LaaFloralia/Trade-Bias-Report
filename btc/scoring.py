@@ -243,7 +243,7 @@ def eligible_news(facts: dict, assessments: list | None, mode: str, as_of: datet
         if match is not None:
             from btc import carry as carried_state
             first = parse_time(match['first_known_at'])
-            if carried_state.is_follow_up(item, a, match):
+            if carried_state.is_follow_up(item, a, match, known):
                 carry = {'known_id': match['known_id'], 'kind': 'follow_up_new_facts'}
             else:
                 effective = min(published, first)
@@ -281,7 +281,11 @@ def event_group(facts: dict, assessments: list | None, mode: str, as_of: datetim
 
 
 def incident_id(item: dict) -> str:
-    return 'inc-' + hashlib.sha256(f'{item.get("event_cluster_id")}|{item.get("url")}'.encode()).hexdigest()[:12]
+    """Identity of one incident publication: code cluster (normalised title), URL and ``published_at`` as stored on
+    the item. The identical publication keeps its id across editions (a closed incident stays closed, R3-02); the
+    same title and URL with another publication time is a new incident and holds again (R3-02b, fail closed)."""
+    key = f'{item.get("event_cluster_id")}|{item.get("url")}|{item.get("published_at")}'
+    return 'inc-' + hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
 def new_incidents(facts: dict, assessments: list | None) -> list[dict]:
@@ -324,7 +328,9 @@ def incident_status(facts: dict, assessments: list | None, recoveries: list | No
         else:
             released.append(dict(rec))
     open_ids = {i['incident_id'] for i in still}
-    new = [i for i in current if i['incident_id'] not in open_ids and i['incident_id'] not in {r['incident_id'] for r in released}]
+    # An incident already closed (recovery or owner's manual release) never re-opens from the same article (R3-02).
+    closed = set(facts['state'].get('incidents', {}).get('released_ids') or []) | {r['incident_id'] for r in released}
+    new = [i for i in current if i['incident_id'] not in open_ids and i['incident_id'] not in closed]
     return {'new': new, 'open': still + new, 'released': released, 'rejected': rejected}
 
 

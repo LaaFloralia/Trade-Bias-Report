@@ -349,6 +349,18 @@ def briefing(facts: dict, preview: dict, *, edition_id: str, mode: str, session_
                                     inc.get('title') or ''))
     else:
         lines.append('- なし')
+    released = st.get('incidents', {}).get('recently_released') or []
+    lines += ['', '## 手動解除された障害（直近14日・参考）', '',
+              '- 社長指示として記録された手動解除。記録者の表示は実行者の申告で、認証ではない。'
+              '同じ公表（見出し・URL・公表時刻が同じ）の障害は再び開かない。公表時刻が違えば新しい障害として扱う。'
+              '解除は解除時刻より後の版から反映する。', '']
+    if released:
+        lines += ['| incident_id | 解除 | 理由 | 記録者 | 見出し |', '|---|---|---|---|---|']
+        for r in released:
+            lines.append(_table_row(r['incident_id'], parse_time(r['released_at']).astimezone(JST).strftime('%m-%d %H:%M JST'),
+                                    r.get('release_reason') or '', r.get('released_by') or '', r.get('title') or ''))
+    else:
+        lines.append('- なし')
     lines += ['', '## 目的地の候補（level_fact_ids）', '']
     for w in st.get('liquidity', {}).get('walls', []):
         lines.append(f'- observed_book_cluster: {w["price_fact_id"]}（{w["venue"]} {w["side"]}）')

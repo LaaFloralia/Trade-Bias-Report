@@ -35,13 +35,32 @@ cd <job root>/runtime   # or the source repo
   `{"status": "invalid", "error": "<code>"}` and exits 2.
 
 - Sets `status: released_manually`, `release_reason`, `released_at` (UTC) and `released_by: owner_instruction`.
-- Refuses unknown ids, ids that are not open, and an empty or control-character reason (exit 2); never deletes records;
-  writes atomically under the same lock as acceptance.
+- Refuses unknown ids, ids that are not open, and a reason that is empty, longer than 500 characters or contains any
+  control character in the raw text (tab, newline and carriage return included; exit 2). Only then are runs of
+  spaces collapsed. Never deletes records; writes atomically under the same lock as acceptance.
 - `release` refuses to run while either carried file is invalid (exit 2, file untouched).
+- A released incident (code-verified recovery or manual) never re-opens from the identical publication. The
+  `incident_id` covers title cluster, URL and `published_at`, so the same title and URL with another publication time
+  (an in-place update, a re-post or a re-dated old article) is a new incident and holds again (safe side).
+- Closures and the 14-day display are evaluated as of the edition's `as_of`: a release made while an edition is being
+  built (or after an old collection) takes effect from the next edition; that edition still holds.
 - The parent and the scheduled run never use these commands (they are not in `PARENT-WORKFLOW.md`).
 
+Trust model. There is no local authentication barrier: `released_by: owner_instruction` is an operator assertion
+written by whoever runs the CLI, and the parent agent runs with full access, so a prompt-injected parent could call
+it. Protection is by operating rule plus visibility:
+
+- Operating rule: only the owner (or an operator acting on the owner's explicit instruction) runs `release`; the
+  parent workflow must never call the CLI, and `PARENT-WORKFLOW.md` never mentions it.
+- Visibility: for 14 days after a manual release, every edition shows it in the MD/HTML incident lines (section 7)
+  and in the parent briefing: `incident_id`, title, `released_at` in JST, reason and `released_by`
+  (`state.incidents.recently_released`). A `released_manually` record without a matching audit entry needs no other
+  check; the visible line is the control.
+
 Carried files (`btc-known-news.json`, `btc-incidents.json`) are validated strictly on every read (schema version,
-record keys and types, incident status). An invalid file never reads as "nothing known, nothing open": the edition
+record keys and types, incident status, and the evidence each closed status needs: `released` has
+`released_edition_id`, `released_as_of` and `recovery`; `released_manually` has a non-empty `release_reason`,
+`released_at` and `released_by: owner_instruction`). A path that exists but is not a regular file is invalid. An invalid file never reads as "nothing known, nothing open": the edition
 goes to `data_hold` (`carry_state_invalid`), acceptance skips every carry write (`carry.skipped`), and the file is
 left byte-for-byte for the owner to inspect and repair.
 

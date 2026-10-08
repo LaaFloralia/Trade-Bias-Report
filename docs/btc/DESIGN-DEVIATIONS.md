@@ -36,9 +36,12 @@ or narrows it.
   - Every source fails closed (`state.calendar.sources`): the record must be fully parsed (`ok`), verified at or
     before `as_of` (fetched pages within 24 h), and its `coverage_end` must reach the end of the next 24 h (New York
     date). The Fed `coverage_end` is Dec 31 of the latest year the page lists (capped at the 120-day parse window);
-    the BEA one is its latest listed release. Only parsed structure sets `coverage_end`. Any date candidate in the
-    parse range that does not parse (FOMC month/day tokens, BEA release rows other than "To Be Announced") makes
-    the source `partial`, so the next 24 h become unknown (no silent partial parse).
+    the BEA one is its latest listed release. Only parsed structure sets `coverage_end`. Candidates are captured
+    before strict parsing: in a Fed year section any token that starts with a month name (in range), and on the BEA
+    page any row with a GDP/PCE title in any cell. A candidate that does not parse exactly (one-token "October 6 –
+    7*", invalid days, a short BEA row, hour outside 1–12 or minute outside 00–59) makes the source `partial`, so
+    the next 24 h become unknown. Fed entries "D (notation vote)" / "D (unscheduled)" are not scheduled meetings
+    and are excluded explicitly (`excluded_non_meetings`); BEA "To Be Announced" rows are counted separately.
   - CME expiry is "unconfirmed" unless an official per-contract calendar is available (B8).
 - **News:**
   - Clustering uses a hash of the normalised title, so the same story from different publishers forms separate
@@ -51,14 +54,21 @@ or narrows it.
     detectable by the code. Known events count from `first_known_at` (no extension); `follow_up_new_facts` needs a
     new primary body published after the event became known. Matching retention (180 days, at most 5000 records,
     oldest dropped) is separate from the scoring window; the parent briefing lists only the last 14 days. A
-    URL/body match wins over a cluster/link match, ties go to the latest `first_known_at`. An adopted follow-up is
-    its own record (`follow_up_of`) counted from its own publication.
+    primary-body match wins over a URL match, which wins over a cluster/link match; ties go to the latest
+    `first_known_at`. A follow-up needs a body unknown to every retained record. An adopted follow-up is its own
+    record (`follow_up_of`) counted from its own publication.
   - Both files are validated strictly on read; an invalid file gives `carry_state_invalid` (data_hold), acceptance
     skips carry writes and the file is never overwritten.
   - An incident is released only by an `incident_recoveries` entry (official primary body after the incident and
     facts for every `affected_source_ids` source observed on the exchange after the recovery notice; derived facts
     need every input to pass, date-only facts never count). An incident without `affected_source_ids` cannot be
-    released by the parent; only the owner's manual release (`btc.carry release`) clears it.
+    released by the parent; only the owner's manual release (`btc.carry release`) clears it. A closed incident
+    never re-opens from the identical publication; `incident_id` hashes the code cluster, URL and `published_at`,
+    so an updated or re-dated article with the same title and URL is a new incident (fail closed). This identity
+    changed before production had any `btc-incidents.json`, so no migration exists.
+    Closures (`released_at` / `released_as_of`) and the 14-day display are evaluated as of the edition's `as_of`; a
+    release made while an edition is being built takes effect from the next edition. `released_by` is an operator assertion, not authentication; each manual
+    release stays visible in every edition (MD/HTML section 7 and the parent briefing) for 14 days.
   - Reactions use contiguous, deduplicated, closed 1 m bars per segment; a segment with a gap is not computed
     (status `partial`/`missing`). The bars used are kept in the news record with the raw hash.
 

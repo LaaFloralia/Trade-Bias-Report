@@ -1414,20 +1414,34 @@ def carry_state(state: dict, history_dir, as_of: datetime):
     from btc import carry
     try:
         known = carry.known_news(history_dir, as_of)
-        incidents = carry.open_incidents(history_dir)
+        records = carry.incidents(history_dir)
     except carry.CarryStateError as error:
         state['carry'] = {'status': 'invalid', 'error': error.code}
         state['news']['carried'] = []
-        state['incidents'] = {'open': []}
+        state['incidents'] = {'open': [], 'released_ids': [], 'recently_released': []}
         return
+    fields = ('incident_id', 'news_id', 'event_cluster_id', 'url', 'title', 'published_at', 'affected_source_ids',
+              'recorded_edition_id', 'recorded_as_of')
+    # Every record is evaluated as of this edition (R4-01): a closure made after as_of (owner release between
+    # collection and facts build, or an old collection rebuilt) does not exist yet; the incident was still open.
+    open_, released_ids, recent = [], [], []
+    for r in records:
+        closed_at = carry.closed_at(r)
+        if closed_at is not None and closed_at <= as_of:
+            released_ids.append(r['incident_id'])
+            if r['status'] == 'released_manually' and \
+                    closed_at <= as_of <= closed_at + timedelta(days=carry.RELEASE_VISIBLE_DAYS):
+                # Visible in every edition for 14 days (operator assertion, not authentication).
+                recent.append({k: r.get(k) for k in ('incident_id', 'title', 'released_at', 'release_reason',
+                                                      'released_by')})
+        elif parse_time(r['recorded_as_of']) <= as_of:
+            open_.append({k: r.get(k) for k in fields})
     state['carry'] = {'status': 'ok'}
     state['news']['carried'] = [
         {k: r.get(k) for k in ('known_id', 'ids', 'first_known_at', 'adopted_as_of', 'edition_id', 'mode', 'title',
                                'body_hashes', 'follow_up_of')} for r in known]
-    state['incidents'] = {'open': [
-        {k: r.get(k) for k in ('incident_id', 'news_id', 'event_cluster_id', 'url', 'title', 'published_at',
-                               'affected_source_ids', 'recorded_edition_id', 'recorded_as_of')}
-        for r in incidents if parse_time(r['recorded_as_of']) <= as_of]}
+    # Closed ids never re-open from the identical publication (R3-02, R3-02b).
+    state['incidents'] = {'open': open_, 'released_ids': sorted(released_ids), 'recently_released': recent}
 
 
 def _safe_body(body: dict) -> dict:
