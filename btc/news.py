@@ -205,23 +205,51 @@ def reaction(f: Fetcher, published_at: str, now: datetime, others: list[str]) ->
     try:
         r = f.get('https://api.binance.com/api/v3/klines', params={
             'symbol': 'BTCUSDT', 'interval': '1m', 'startTime': int(before_open.timestamp() * 1000), 'limit': 14})
-        bars = {int(row[0]): float(row[4]) for row in r.json() if int(row[6]) < int(now.timestamp() * 1000)}
+        rows = r.json()
         out['raw_sha256'] = r.raw_sha256
+        now_ms = int(now.timestamp() * 1000)
+        bars: dict[int, float] = {}
+        duplicated = set()
+        for row in rows:
+            open_ms, close, close_ms = int(row[0]), float(row[4]), int(row[6])
+            if close_ms >= now_ms or close_ms != open_ms + 59_999:
+                continue  # not a closed 1 m bar
+            if open_ms in bars and bars[open_ms] != close:
+                duplicated.add(open_ms)  # same minute twice with different closes: unusable
+            bars[open_ms] = close
+        for open_ms in duplicated:
+            bars.pop(open_ms)
     except (FetchError, ValueError, TypeError, IndexError):
         out['note'] += ' 分足を取得できず。'
         return out
 
-    def close_of(open_time):
-        return bars.get(int(open_time.timestamp() * 1000))
-    base = close_of(base_open)
-    pre = close_of(before_open)
-    after1 = close_of(end1 - timedelta(minutes=1))
-    after5 = close_of(end5 - timedelta(minutes=1))
-    bps = lambda end, start: round(10000 * (end / start - 1), 1) if end and start else None  # noqa: E731
-    out.update(return_before_5m_bps=bps(base, pre), return_after_1m_bps=bps(after1, base),
-               return_after_5m_bps=bps(after5, base))
-    out['status'] = 'ok' if None not in (out['return_before_5m_bps'], out['return_after_1m_bps'],
-                                          out['return_after_5m_bps']) else 'partial'
+    def minutes(first: datetime, last: datetime) -> list[int]:
+        """Open times (ms) of every 1 m bar from ``first`` to ``last`` inclusive."""
+        count = int((last - first).total_seconds() // 60) + 1
+        return [int((first + timedelta(minutes=k)).timestamp() * 1000) for k in range(count)]
+
+    def segment(first: datetime, last: datetime):
+        """Close-to-close return over contiguous confirmed bars only (design 6.3); no forward fill."""
+        need = minutes(first, last)
+        gaps = [m for m in need if m not in bars]
+        if gaps:
+            return None, gaps
+        return round(10000 * (bars[need[-1]] / bars[need[0]] - 1), 1), []
+
+    before, gap_b = segment(before_open, base_open)
+    after1, gap_1 = segment(base_open, end1 - timedelta(minutes=1))
+    after5, gap_5 = segment(base_open, end5 - timedelta(minutes=1))
+    out.update(return_before_5m_bps=before, return_after_1m_bps=after1, return_after_5m_bps=after5)
+    used = minutes(before_open, end5 - timedelta(minutes=1))
+    # The bars used are kept with the raw hash so every bp value can be recomputed from the saved sources.
+    out['bars'] = [[z(datetime.fromtimestamp(m / 1000, UTC)), bars[m]] for m in used if m in bars]
+    out['bars_required'] = len(used)
+    out['bars_missing'] = [z(datetime.fromtimestamp(m / 1000, UTC)) for m in sorted(set(gap_b + gap_1 + gap_5))]
+    out['bars_duplicated'] = [z(datetime.fromtimestamp(m / 1000, UTC)) for m in sorted(duplicated)]
+    values = [before, after1, after5]
+    out['status'] = 'ok' if None not in values else 'partial' if any(v is not None for v in values) else 'missing'
+    if out['bars_missing']:
+        out['note'] += f' 必要な1分足{len(used)}本のうち{len(out["bars_missing"])}本が欠落・未確定（欠けた区間は算出しない）。'
     out['confounded'] = any(abs((datetime.fromisoformat(o) - t_event).total_seconds()) <= 900 for o in others)
     return out
 

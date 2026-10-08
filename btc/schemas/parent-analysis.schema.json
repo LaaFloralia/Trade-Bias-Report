@@ -103,6 +103,32 @@
      },
      "interpretation": {
       "$ref": "#/$defs/claim"
+     },
+     "known_event_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 120
+      },
+      "uniqueItems": true,
+      "maxItems": 20,
+      "$comment": "R-05: known_id values from the known-event list when this item re-reports an adopted event (different URL / updated headline)."
+     },
+     "follow_up_new_facts": {
+      "type": "boolean",
+      "$comment": "R-05: the item adds new primary facts to a known event; the code also requires a new primary body published after the event became known."
+     },
+     "affected_source_ids": {
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1,
+       "maxLength": 120
+      },
+      "uniqueItems": true,
+      "maxItems": 20,
+      "$comment": "R-04: for a critical incident, the source_ids (venues/data) whose fresh data must be confirmed before release."
      }
     },
     "required": [
@@ -266,6 +292,39 @@
      "fact_ids",
      "description"
     ]
+   }
+  },
+  "incident_recoveries": {
+   "type": "array",
+   "maxItems": 10,
+   "$comment": "R-04: release of a persisted incident. Code checks: incident open, news item is an official primary body published after the incident, every fact fresh, all affected sources covered.",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "incident_id",
+     "news_id",
+     "fact_ids"
+    ],
+    "properties": {
+     "incident_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "news_id": {
+      "type": "string",
+      "minLength": 1
+     },
+     "fact_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+       "type": "string",
+       "minLength": 1
+      }
+     }
+    }
    }
   }
  },

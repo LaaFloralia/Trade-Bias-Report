@@ -315,6 +315,32 @@ def render_package(job: Job, package_path, expected_mode: str | None, stages: St
         return 1
 
 
+def carry_forward(job: Job, record: dict, mode: str) -> dict:
+    """On adoption only: persist the edition's known news (R-05) and its incident openings/releases (R-04)."""
+    from btc import carry, scoring
+    outputs = record['outputs']
+    facts = read_json(contained(outputs['facts_path'], job.reports))
+    analysis = read_json(contained(outputs['analysis_path'], job.reports))
+    if 'news_assessments' not in analysis:
+        # Only stage stubs in tests lack it: the parent-analysis schema requires the key.
+        return {'skipped': 'analysis_without_news_assessments'}
+    if facts['state'].get('carry', {}).get('status') == 'invalid':
+        # Never write over a carried file this edition could not read (R2-04).
+        return {'skipped': 'carry_state_invalid', 'error': facts['state']['carry'].get('error')}
+    try:
+        carry.check(job.history)
+    except carry.CarryStateError as error:
+        return {'skipped': 'carry_state_invalid', 'error': error.code}
+    ev = scoring.evaluate(facts, mode=mode, assessments=analysis['news_assessments'],
+                          recoveries=analysis.get('incident_recoveries') or [])
+    edition_id = Path(outputs['md_path']).parent.name
+    added = carry.record_known(job.history, facts, analysis, edition_id=edition_id, mode=mode)
+    incidents = carry.record_incidents(job.history, facts, analysis, ev, edition_id=edition_id)
+    return {'known_news_added': added, 'incidents_opened': incidents['opened'],
+            'incidents_released': incidents['released'],
+            'incidents_open_after': [i['incident_id'] for i in carry.open_incidents(job.history)]}
+
+
 def accept_review(job: Job, review_path, expected_mode: str | None, now: datetime | None = None) -> int:
     from btc.review import review_report
     record = {'mode': expected_mode or 'daily', 'ok': False, 'status': 'running', 'stage': 'parent_review',
@@ -337,6 +363,8 @@ def accept_review(job: Job, review_path, expected_mode: str | None, now: datetim
         path, accepted = review_report(outputs['html_path'], outputs['bundle_path'], outputs['render_evidence_path'],
                                        evidence_path=review_path, now=now)
         outputs['parent_review_path'] = path
+        if accepted:
+            record['carry'] = carry_forward(job, record, mode)
         record.update(ok=accepted, status='succeeded_local' if accepted else 'needs_attention',
                       review_status='parent_passed' if accepted else 'changes_requested',
                       independent_review_status='not_performed', publication_ready=False,

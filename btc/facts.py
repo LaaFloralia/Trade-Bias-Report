@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 from btc import SYMBOL
 from btc.common import JST, digest, parse_time
+from btc import us_calendar
 from btc.history import History, comparison_stats, describe, describe_window
 from btc.text import md_safe
 
@@ -92,6 +93,11 @@ def jdate(value: str) -> str:
 
 def _usable(record: dict | None) -> bool:
     return bool(record) and record.get('status') in ('ok', 'partial', 'stale')
+
+
+def _fresh(fact: dict | None) -> bool:
+    """Scorable at as_of: ok/provisional, not stale, with a value (R-02)."""
+    return bool(fact) and fact['status'] in ('ok', 'provisional') and not fact.get('stale') and fact['value'] is not None
 
 
 class Facts:
@@ -560,12 +566,33 @@ def derivatives_facts(F: Facts, S: dict, state: dict, history: History, as_of: d
                         missing_reason=None if v.get('oi_btc') is not None else 'single_sided_oi_missing',
                         method_id='single_sided_open_interest', population=f'{venue} {instrument} 片側OI')
         entry['oi_fact'] = oi
+        mark_part = {'binance': 'premium', 'bybit': 'ticker', 'okx': 'mark'}[venue]
+        mark = F.observed(record=rec, raw=parts.get(mark_part), domain='derivatives', provider=venue,
+                          instrument=instrument, metric='mark_price', value=v.get('mark_price'), unit='USDT',
+                          display=f'{v["mark_price"]:,.1f} USDT' if v.get('mark_price') is not None else '—',
+                          observed_at=v.get('mark_time'), stale_after=DERIV_STALE, venue=venue,
+                          method_id='provider_mark_price', population=f'{venue} {instrument} マーク価格（USDT建て）')
         if oi['value'] is not None:
-            oi_usd = oi['value'] * v['mark_price']
-            entry['oi_usd_fact'] = F.derived(sources=[oi], domain='derivatives', provider=venue, instrument=instrument,
-                                             metric='oi_usd', value=round(oi_usd, 0), unit='USD',
-                                             display=f'{oi_usd / 1e9:,.2f}十億USD', display_value=round(oi_usd / 1e9, 2),
-                                             method_id='oi_btc_times_mark', venue=venue, observed_at=v.get('oi_time'))
+            # R-09: USDT-margined OI is native USDT notional; USD only through a fresh USDTUSD mid.
+            native = oi['value'] * mark['value'] if mark['value'] is not None else None
+            entry['oi_usdt_fact'] = F.derived(
+                sources=[oi, mark], domain='derivatives', provider=venue, instrument=instrument,
+                metric='oi_notional_usdt', value=round(native, 0) if native is not None else None, unit='USDT',
+                display=f'{native / 1e9:,.2f}十億USDT' if native is not None else '—',
+                display_value=round(native / 1e9, 2) if native is not None else None,
+                method_id='oi_btc_times_mark_usdt', venue=venue, observed_at=v.get('oi_time'))
+            usdt = F.index.get((state.get('quotes') or {}).get('kraken_usdt') or '')
+            if native is not None and _fresh(usdt) and _fresh(mark):
+                usd = native * usdt['value']
+                entry['oi_usd_fact'] = F.derived(
+                    sources=[oi, mark, usdt], domain='derivatives', provider=venue, instrument=instrument,
+                    metric='oi_usd', value=round(usd, 0), unit='USD', display=f'{usd / 1e9:,.2f}十億USD',
+                    display_value=round(usd / 1e9, 2), method_id='oi_usdt_notional_times_usdtusd_mid', venue=venue,
+                    observed_at=v.get('oi_time'), population=f'{venue} 片側OI × マーク価格(USDT) × Kraken USDTUSD mid')
+            else:
+                entry['oi_usd_fact'] = F.missing(domain='derivatives', provider=venue, instrument=instrument,
+                                                 metric='oi_usd', unit='USD', reason='usdtusd_conversion_missing',
+                                                 source_id='computed')
             records.append({'source': venue, 'instrument': instrument, 'metric': 'oi_btc', 'observed_at': v['oi_time'],
                             'value': oi['value'], 'retrieved_at': rec['retrieved_at']})
         # 24 h OI change: provider hourly series (one series at a time), else own history.
@@ -599,7 +626,9 @@ def derivatives_facts(F: Facts, S: dict, state: dict, history: History, as_of: d
                                                     status='warming_up', display='履歴不足（24時間前の自前観測なし）')
         venues.append(entry)
     # OI-weighted 8 h funding over venues that have both.
-    pairs = [(e['funding_fact'], e['oi_usd_fact']) for e in venues if e.get('funding_fact') and e.get('oi_usd_fact')]
+    # Weights use the native USDT notional (a common USDTUSD factor cancels out of the weights).
+    pairs = [(e['funding_fact'], e['oi_usdt_fact']) for e in venues
+             if _fresh(e.get('funding_fact')) and _fresh(e.get('oi_usdt_fact'))]
     if len(pairs) >= 2:
         w = sum(o['value'] for _, o in pairs)
         val = sum(f['value'] * o['value'] for f, o in pairs) / w
@@ -613,7 +642,7 @@ def derivatives_facts(F: Facts, S: dict, state: dict, history: History, as_of: d
                     'funding_percentile_fact_id': e['funding_percentile']['fact_id'] if e.get('funding_percentile') else None,
                     'oi_fact_id': e['oi_fact']['fact_id'], 'oi_change_fact_id': e['oi_change_fact']['fact_id'] if e.get('oi_change_fact') else None}
                    for e in venues],
-        'current_ok': sum(1 for e in venues if e.get('funding_fact') and e['oi_fact']['value'] is not None),
+        'current_ok': sum(1 for e in venues if _fresh(e.get('funding_fact')) and _fresh(e['oi_fact'])),
     }
 
 
@@ -784,7 +813,7 @@ def options_facts(F: Facts, S: dict, state: dict, history: History, as_of: datet
             state['options']['skew'][name + '_percentile'] = perc['fact_id']
             history.append([{'source': 'deribit', 'instrument': f'skew_{target}d', 'metric': 'skew_25d_pp',
                              'observed_at': fact['retrieved_at'], 'value': fact['value']}])
-    state['options'].update(status='ok', total_fact_id=tot['fact_id'], pcr_fact_id=pcr['fact_id'],
+    state['options'].update(status='ok' if _fresh(tot) else tot['status'], total_fact_id=tot['fact_id'], pcr_fact_id=pcr['fact_id'],
                             scope='Deribit BTC inverse options のみ')
 
 
@@ -824,57 +853,68 @@ def _skew(quotes: list) -> dict:
     return out
 
 
-def _us_business_day_before(day: date) -> date:
-    day -= timedelta(days=1)
-    while day.weekday() >= 5:
-        day -= timedelta(days=1)
-    return day
-
-
-def expected_etf_date(as_of: datetime) -> date:
-    """Last completed US session (16:00 ET). US holidays are not modelled (noted in limitations)."""
+def expected_etf_date(as_of: datetime) -> date | None:
+    """Last completed US session (16:00 ET) on the NYSE calendar; None beyond the calendar's coverage."""
     ny = as_of.astimezone(NY)
     day = ny.date()
-    if day.weekday() < 5 and (ny.hour, ny.minute) >= (16, 0):
+    trading = us_calendar.is_trading_day(day)
+    if trading is None:
+        return None
+    if trading and (ny.hour, ny.minute) >= (16, 0):
         return day
-    return _us_business_day_before(day)
+    return us_calendar.previous_trading_day(day)
 
 
-def business_lag(latest: date, expected: date) -> int:
-    lag, day = 0, expected
-    while day > latest:
-        day = _us_business_day_before(day)
-        lag += 1
-    return lag
+def business_lag(latest: date, expected: date) -> int | None:
+    """US trading days between the latest row and the expected session (None if the calendar is unknown)."""
+    return us_calendar.trading_days_between(latest, expected)
+
+
+def _etf_row_quality(row: dict | None) -> dict:
+    """Publication lag, all-columns-numeric and total reconciliation are tracked separately (R-01)."""
+    if row is None:
+        return {'present': False, 'complete': False, 'reconciled': False, 'conflict': False}
+    return {'present': True, 'complete': bool(row['table_complete']), 'conflict': bool(row['conflict']),
+            'reconciled': bool(row['table_complete']) and not row['conflict'] and row['validated_total_musd'] is not None}
 
 
 def etf_facts(F: Facts, S: dict, state: dict, history: History, as_of: datetime):
     rec = S.get('farside')
     expected = expected_etf_date(as_of)
-    state['etf'] = {'status': 'missing', 'trade_date': None, 'expected_trade_date': expected.isoformat(),
-                    'universe': [], 'flow_fact_ids': [], 'five_day_fact_id': None, 'lag_business_days': None}
+    state['etf'] = {'status': 'missing', 'trade_date': None,
+                    'expected_trade_date': expected.isoformat() if expected else None,
+                    'universe': [], 'flow_fact_ids': [], 'five_day_fact_id': None, 'lag_business_days': None,
+                    'expected_day': _etf_row_quality(None), 'five_day_window': [], 'conflict_dates': [],
+                    'trading_calendar': {'source_url': us_calendar.SOURCE_URL, 'verified_at': us_calendar.VERIFIED_AT,
+                                         'coverage_end': us_calendar.COVERAGE_END.isoformat()}}
     if not _usable(rec):
         F.missing(domain='etf', provider='farside', instrument='us_spot_btc_etf', metric='etf_netflow_usd', unit='USD',
                   reason=(rec or {}).get('error_kind') or 'source_unavailable', source_id='farside', window='1d')
+        return
+    if expected is None:
+        state['etf']['status'] = 'unknown'
+        F.missing(domain='etf', provider='farside', instrument='us_spot_btc_etf', metric='etf_netflow_usd', unit='USD',
+                  reason='trading_calendar_beyond_coverage', source_id='farside', window='1d')
         return
     v = rec['values']
     raw = v['raw_parts']['r0']
     # Rows after the last completed US session (today's row while the session runs) are not results yet:
     # they never become the latest day nor enter the 5-day window.
     rows = [r for r in v['rows'] if r['trade_date'] <= expected.isoformat()][-20:]
+    by_day = {r['trade_date']: r for r in rows}
     state['etf']['in_progress_rows'] = [r['trade_date'] for r in v['rows'] if r['trade_date'] > expected.isoformat()]
+    seen_before = {r.get('trade_date'): r for r in history.read('farside', 'all', 'etf_row_seen') if r.get('trade_date')}
     facts_by_date = {}
     arrival = []
     for row in rows:
         day = row['trade_date']
         if row['conflict']:
             value, status, reason = None, 'conflict', 'provider_total_mismatch'
-        elif row['validated_total_musd'] is not None:
+        elif _etf_row_quality(row)['reconciled']:
             value, status, reason = row['validated_total_musd'] * 1e6, 'provisional', None
         else:
             value, status, reason = None, 'partial', 'incomplete_row'
-        prior = [r for r in history.read('farside', 'all', 'etf_row_seen') if r.get('trade_date') == day]
-        first_seen = prior[0]['observed_at'] if prior else rec['retrieved_at']
+        first_seen = seen_before[day]['observed_at'] if day in seen_before else rec['retrieved_at']
         fact = F.observed(record=rec, raw=raw, domain='etf', provider='farside', instrument='us_spot_btc_etf',
                           metric='etf_netflow_usd', value=value, unit='USD', window='1d', key=day.replace('-', ''),
                           display=f'{value / 1e6:+,.1f}百万USD' if value is not None else missing_display(reason),
@@ -887,62 +927,106 @@ def etf_facts(F: Facts, S: dict, state: dict, history: History, as_of: datetime)
                           method_id='farside_validated_total')
         if row['known_sum_musd'] is not None and value is None:
             F.observed(record=rec, raw=raw, domain='etf', provider='farside', instrument='us_spot_btc_etf',
-                       metric='etf_known_partial_sum_usd', value=row['known_sum_musd'] * 1e6, unit='USD', window='1d',
+                       metric='etf_known_partial_sum_usd', value=round(row['known_sum_musd'] * 1e6), unit='USD', window='1d',
                        key=day.replace('-', ''), display=f'{row["known_sum_musd"]:+,.1f}百万USD（既知分のみ）',
-                       display_value=row['known_sum_musd'], observation_date=day, status='partial',
-                       missing_reason='known_funds_only', timestamp_quality='source_date',
-                       method_id='farside_known_sum')
+                       display_value=row['known_sum_musd'], observation_date=day,
+                       status='conflict' if row['conflict'] else 'partial',
+                       missing_reason='provider_total_mismatch' if row['conflict'] else 'known_funds_only',
+                       timestamp_quality='source_date', method_id='farside_known_sum')
+        if row['conflict'] and row['reported_total_musd'] is not None:
+            # Both values are kept (design 4.1) and neither is scored.
+            F.observed(record=rec, raw=raw, domain='etf', provider='farside', instrument='us_spot_btc_etf',
+                       metric='etf_reported_total_usd', value=round(row['reported_total_musd'] * 1e6), unit='USD', window='1d',
+                       key=day.replace('-', ''), display=f'{row["reported_total_musd"]:+,.1f}百万USD（提供元合計・照合不一致）',
+                       display_value=row['reported_total_musd'], observation_date=day, status='conflict',
+                       missing_reason='provider_total_mismatch', timestamp_quality='source_date',
+                       method_id='farside_reported_total')
         facts_by_date[day] = fact
     latest_day = rows[-1]['trade_date'] if rows else None
-    if latest_day:
-        lag = business_lag(date.fromisoformat(latest_day), expected)
-        for fact in facts_by_date.values():
-            if lag >= 2:
-                fact['status'] = 'stale' if fact['value'] is not None else fact['status']
-                fact['stale'] = True
-        # Arrival record for the expected trade date (P8: row_present / full_numeric / changed_since_previous).
-        target = next((r for r in rows if r['trade_date'] == expected.isoformat()), None)
-        previous = [r for r in history.read('farside', 'all', 'etf_total_seen') if r.get('trade_date') == expected.isoformat()]
-        changed = None
-        if target is not None and previous:
-            changed = 1 if previous[-1].get('value') != target['reported_total_musd'] else 0
-        stamp = rec['retrieved_at']
-        arrival = [
-            {'source': 'farside', 'instrument': 'all', 'metric': 'etf_row_present', 'observed_at': stamp,
-             'value': 1 if target else 0, 'trade_date': expected.isoformat()},
-            {'source': 'farside', 'instrument': 'all', 'metric': 'etf_full_numeric', 'observed_at': stamp,
-             'value': 1 if target and target['table_complete'] else 0, 'trade_date': expected.isoformat()},
-            {'source': 'farside', 'instrument': 'all', 'metric': 'etf_changed_since_previous', 'observed_at': stamp,
-             'value': changed, 'trade_date': expected.isoformat()},
-        ]
-        if target is not None:
-            arrival.append({'source': 'farside', 'instrument': 'all', 'metric': 'etf_total_seen', 'observed_at': stamp,
-                            'value': target['reported_total_musd'], 'trade_date': expected.isoformat()})
-        for row in rows:
-            if not [r for r in history.read('farside', 'all', 'etf_row_seen') if r.get('trade_date') == row['trade_date']]:
-                arrival.append({'source': 'farside', 'instrument': 'all', 'metric': 'etf_row_seen', 'observed_at': stamp,
-                                'value': 1, 'trade_date': row['trade_date']})
-        history.append(arrival)
-        last5 = [facts_by_date[r['trade_date']] for r in rows[-5:]]
-        if len(last5) == 5 and all(f['value'] is not None for f in last5):
-            total = sum(f['value'] for f in last5)
-            five = F.derived(sources=last5, domain='etf', provider='farside', instrument='us_spot_btc_etf',
-                             metric='etf_netflow_usd_5d', value=total, unit='USD', window='5d',
-                             display=f'{total / 1e6:+,.1f}百万USD', display_value=round(total / 1e6, 1),
-                             observation_date=latest_day, key=latest_day.replace('-', ''),
-                             method_id='sum_5_us_trading_days', status='provisional',
-                             coverage=_coverage(observed=5, expected_count=5,
-                                                note=f'{rows[-5]["trade_date"]}〜{latest_day}'))
-        else:
-            five = F.missing(domain='etf', provider='farside', instrument='us_spot_btc_etf', metric='etf_netflow_usd_5d',
-                             unit='USD', window='5d', reason='five_day_window_incomplete', source_id='computed')
-        status = 'ok' if lag == 0 else ('lagged' if lag == 1 else 'stale')
-        state['etf'].update(status=status, trade_date=latest_day, universe=v['universe'], lag_business_days=lag,
-                            flow_fact_ids=[f['fact_id'] for f in facts_by_date.values()],
-                            five_day_fact_id=five['fact_id'],
-                            last_day_fact_id=facts_by_date[latest_day]['fact_id'],
-                            arrival={'row_present': arrival[0]['value'], 'full_numeric': arrival[1]['value'],
-                                     'changed_since_previous': arrival[2]['value']})
+    if not latest_day:
+        state['etf']['status'] = 'missing'
+        return
+    lag = business_lag(date.fromisoformat(latest_day), expected)
+    for fact in facts_by_date.values():
+        if lag is None or lag >= 2:
+            fact['status'] = 'stale' if fact['value'] is not None else fact['status']
+            fact['stale'] = True
+    # Arrival record for the expected trade date (P8: row_present / full_numeric / changed_since_previous).
+    target = by_day.get(expected.isoformat())
+    quality = _etf_row_quality(target)
+    previous = [r for r in history.read('farside', 'all', 'etf_total_seen') if r.get('trade_date') == expected.isoformat()]
+    changed = None
+    if target is not None and previous:
+        changed = 1 if previous[-1].get('value') != target['reported_total_musd'] else 0
+    stamp = rec['retrieved_at']
+    arrival = [
+        {'source': 'farside', 'instrument': 'all', 'metric': 'etf_row_present', 'observed_at': stamp,
+         'value': 1 if target else 0, 'trade_date': expected.isoformat()},
+        {'source': 'farside', 'instrument': 'all', 'metric': 'etf_full_numeric', 'observed_at': stamp,
+         'value': 1 if quality['complete'] else 0, 'trade_date': expected.isoformat()},
+        {'source': 'farside', 'instrument': 'all', 'metric': 'etf_changed_since_previous', 'observed_at': stamp,
+         'value': changed, 'trade_date': expected.isoformat()},
+    ]
+    if target is not None:
+        arrival.append({'source': 'farside', 'instrument': 'all', 'metric': 'etf_total_seen', 'observed_at': stamp,
+                        'value': target['reported_total_musd'], 'trade_date': expected.isoformat()})
+    for row in rows:
+        if row['trade_date'] not in seen_before:
+            # The history key includes trade_date (R-08): several days seen in one fetch are all kept.
+            arrival.append({'source': 'farside', 'instrument': 'all', 'metric': 'etf_row_seen', 'observed_at': stamp,
+                            'value': 1, 'trade_date': row['trade_date']})
+    history.append(arrival)
+    # 5-day window (R-06): the 5 US trading days ending at the latest row, fixed by the NYSE calendar first.
+    # Every day must be present, all-numeric and reconciled; a gap is never filled with an older row.
+    # Lagged fallback (design 5 / 7.3): the expected session's row is present but not yet all-numeric (and not a
+    # conflict) -> use the window ending at the previous trading day if all 5 of its days are reconciled. It is
+    # shown with its dates as 1 trading day lagged and never counts toward normal coverage.
+    fallback = None
+    if lag == 0 and quality['present'] and not quality['reconciled'] and not quality['conflict']:
+        prev = us_calendar.previous_trading_day(expected)
+        prev_window = us_calendar.trading_days_ending(prev, 5) if prev else None
+        if prev_window and all(_etf_row_quality(by_day.get(d.isoformat()))['reconciled'] for d in prev_window):
+            fallback = prev.isoformat()
+    used_day = fallback or latest_day
+    window = us_calendar.trading_days_ending(date.fromisoformat(used_day), 5)
+    window_days = [d.isoformat() for d in window] if window else []
+    usable = [d for d in window_days if _etf_row_quality(by_day.get(d))['reconciled']]
+    if window and len(usable) == 5:
+        last5 = [facts_by_date[d] for d in window_days]
+        total = sum(f['value'] for f in last5)
+        note = f'{window_days[0]}〜{used_day}（NYSE営業日）'
+        if fallback:
+            note += f'・1営業日遅れ（期待日 {expected.isoformat()} は全銘柄の値が未確定）'
+        five = F.derived(sources=last5, domain='etf', provider='farside', instrument='us_spot_btc_etf',
+                         metric='etf_netflow_usd_5d', value=total, unit='USD', window='5d',
+                         display=f'{total / 1e6:+,.1f}百万USD', display_value=round(total / 1e6, 1),
+                         observation_date=used_day, key=used_day.replace('-', ''),
+                         method_id='sum_5_us_trading_days', status='provisional',
+                         coverage=_coverage(window_days, window_days, 5, 5, note))
+    else:
+        five = F.missing(domain='etf', provider='farside', instrument='us_spot_btc_etf', metric='etf_netflow_usd_5d',
+                         unit='USD', window='5d', source_id='computed',
+                         reason='trading_calendar_beyond_coverage' if window is None else 'five_day_window_incomplete')
+        five['coverage'] = _coverage(usable, window_days, len(usable), 5,
+                                     '欠落・未確定・照合不一致: ' + '、'.join(d for d in window_days if d not in usable))
+    if lag is None:
+        status = 'unknown'
+    elif fallback:
+        status, lag = 'lagged', 1
+    elif lag == 0:
+        status = 'ok' if quality['reconciled'] else 'conflict' if quality['conflict'] else 'incomplete'
+    else:
+        status = 'lagged' if lag == 1 else 'stale'
+    conflicts = sorted({d for d in window_days + [expected.isoformat()] if (by_day.get(d) or {}).get('conflict')})
+    state['etf'].update(status=status, trade_date=used_day, universe=v['universe'], lag_business_days=lag,
+                        flow_fact_ids=[f['fact_id'] for f in facts_by_date.values()],
+                        five_day_fact_id=five['fact_id'],
+                        last_day_fact_id=facts_by_date[used_day]['fact_id'],
+                        lagged_fallback={'reason': 'expected_day_incomplete', 'expected_trade_date': expected.isoformat(),
+                                         'used_trade_date': fallback} if fallback else None,
+                        expected_day=quality, five_day_window=window_days, conflict_dates=conflicts,
+                        arrival={'row_present': arrival[0]['value'], 'full_numeric': arrival[1]['value'],
+                                 'changed_since_previous': arrival[2]['value']})
 
 
 def fgi_facts(F: Facts, S: dict, state: dict):
@@ -1026,7 +1110,8 @@ def stable_facts(F: Facts, S: dict, state: dict):
                        observed_at=None, population='DefiLlama peggedUSD 全ステーブル合計（名目供給）',
                        method_id='provider_daily_aggregate',
                        valid_until=z(datetime.fromisoformat(last_day + 'T00:00:00+00:00') + timedelta(days=1, seconds=STABLE_STALE)))
-    out = {'status': 'ok', 'total_fact_id': total['fact_id']}
+    # R-02: a supply total that is stale at as_of keeps its display but is not a scoring input.
+    out = {'status': 'ok' if _fresh(total) else total['status'], 'total_fact_id': total['fact_id']}
     for days in (7, 30):
         base_day = (date.fromisoformat(last_day) - timedelta(days=days)).isoformat()
         if base_day in daily and daily[base_day] > 0:
@@ -1182,23 +1267,57 @@ def macro_facts(F: Facts, S: dict, state: dict, as_of: datetime):
     state['macro'] = out
 
 
+CALENDAR_VERIFY_MAX_AGE = timedelta(hours=24)
+
+
 def calendar_events(S: dict, as_of: datetime, cache: dict) -> tuple[list, dict]:
+    """Official calendars, fail closed (R-03).
+
+    Each source must be fully parsed (record status ``ok``), verified at or before ``as_of``
+    (fetched sources within 24 h), and its ``coverage_end`` must reach the end of the next 24 h
+    (New York date). Out of range, missing, partial, stale or unverified -> ``next_24h=unknown``.
+    A verified range with zero events in the next 24 h is ``ok``.
+    """
     events = []
+    horizon = (as_of + timedelta(hours=24)).astimezone(NY).date()
     status = {'bls_cache': 'ok', 'fed': 'missing', 'bea': 'missing', 'coverage_end': cache['coverage_end'],
-              'verified_at': cache['verified_at'], 'reasons': []}
+              'verified_at': cache['verified_at'], 'reasons': [], 'horizon_date': horizon.isoformat(), 'sources': {}}
     for event in cache['events']:
         events.append(dict(event))
-    if (as_of + timedelta(hours=24)).date() > date.fromisoformat(cache['coverage_end']):
+    verified = parse_time(cache['verified_at'])
+    if horizon > date.fromisoformat(cache['coverage_end']):
         status['bls_cache'] = 'beyond_coverage'
         status['reasons'].append('BLS予定はキャッシュ範囲外（予定未確認）')
+    elif verified > as_of:
+        status['bls_cache'] = 'unverified'
+        status['reasons'].append('BLS予定の確認時刻が評価時刻より後（予定未確認）')
+    status['sources']['bls_schedule_cache'] = {'status': status['bls_cache'], 'coverage_end': cache['coverage_end'],
+                                               'verified_at': cache['verified_at']}
     for key, source_id in (('fed', 'fed_calendar'), ('bea', 'bea_calendar')):
         rec = S.get(source_id)
-        if _usable(rec):
-            status[key] = 'ok'
-            for event in rec['values']['events']:
-                events.append(dict(event, verified_at=rec['retrieved_at']))
+        values = (rec or {}).get('values') or {}
+        coverage_end = values.get('coverage_end')
+        retrieved = (rec or {}).get('retrieved_at')
+        if not rec or rec.get('status') != 'ok':
+            state_, why = ((rec or {}).get('status') or 'missing'), (rec or {}).get('error_kind') or (
+                'partial_or_stale' if rec else 'source_unavailable')
+        elif not coverage_end:
+            state_, why = 'unverified', 'coverage_end_missing'
+        elif not retrieved or parse_time(retrieved) > as_of or as_of - parse_time(retrieved) > CALENDAR_VERIFY_MAX_AGE:
+            state_, why = 'unverified', 'verification_time_out_of_range'
+        elif date.fromisoformat(coverage_end[:10]) < horizon:
+            state_, why = 'beyond_coverage', f'coverage_end_{coverage_end[:10]}'
         else:
-            status['reasons'].append(f'{source_id}: {(rec or {}).get("error_kind") or "source_unavailable"}（予定未確認）')
+            state_, why = 'ok', None
+        status[key] = state_
+        status['sources'][source_id] = {'status': state_, 'coverage_end': coverage_end, 'verified_at': retrieved,
+                                        'reason': why}
+        if _usable(rec):
+            # Parsed events stay visible (and still open stop windows) even when coverage is not confirmed.
+            for event in values.get('events', []):
+                events.append(dict(event, verified_at=rec['retrieved_at']))
+        if state_ != 'ok':
+            status['reasons'].append(f'{source_id}: {why}（予定未確認）')
     status['next_24h'] = 'ok' if status['bls_cache'] == 'ok' and status['fed'] == 'ok' and status['bea'] == 'ok' else 'unknown'
     # B8: CME contract calendars are not reachable from the Mac (403); expiries stay unconfirmed and never
     # create a stop window from a "last Friday" estimate.
@@ -1286,6 +1405,31 @@ def news_state(F: Facts, S: dict, state: dict):
                      'lookback_hours': v['lookback_hours'], 'feeds_ok': v['feeds_ok']}
 
 
+def carry_state(state: dict, history_dir, as_of: datetime):
+    """Known events and unresolved incidents from adopted editions (R-04, R-05); scoring reads them.
+
+    An invalid carried file never raises here and never reads as "nothing known, nothing open": it sets
+    ``state.carry`` invalid with a fixed code, which scoring turns into the hard invalid
+    ``carry_state_invalid`` (R2-04)."""
+    from btc import carry
+    try:
+        known = carry.known_news(history_dir, as_of)
+        incidents = carry.open_incidents(history_dir)
+    except carry.CarryStateError as error:
+        state['carry'] = {'status': 'invalid', 'error': error.code}
+        state['news']['carried'] = []
+        state['incidents'] = {'open': []}
+        return
+    state['carry'] = {'status': 'ok'}
+    state['news']['carried'] = [
+        {k: r.get(k) for k in ('known_id', 'ids', 'first_known_at', 'adopted_as_of', 'edition_id', 'mode', 'title',
+                               'body_hashes', 'follow_up_of')} for r in known]
+    state['incidents'] = {'open': [
+        {k: r.get(k) for k in ('incident_id', 'news_id', 'event_cluster_id', 'url', 'title', 'published_at',
+                               'affected_source_ids', 'recorded_edition_id', 'recorded_as_of')}
+        for r in incidents if parse_time(r['recorded_as_of']) <= as_of]}
+
+
 def _safe_body(body: dict) -> dict:
     out = dict(body)
     if 'excerpt' in out:
@@ -1327,6 +1471,7 @@ def build(collection: dict, *, mode: str, session_slot: str, collection_path, hi
     macro_facts(F, S, state, as_of)
     events_state(F, S, state, as_of)
     news_state(F, S, state)
+    carry_state(state, history_dir, as_of)
     state['source_health'] = source_health(S, as_of)
     state['terms_restricted'] = [{'source_id': t['source_id'], 'reason': t['reason']}
                                  for t in collection.get('terms_restricted', []) if t.get('status') == 'terms_restricted']

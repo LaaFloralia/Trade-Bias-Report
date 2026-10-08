@@ -14,19 +14,53 @@ or narrows it.
   24-hour-old observation exists.
 - **ETF days:** a Farside row dated after the last completed US session (today's row while the session runs) is
   excluded from the latest day and from the 5-day sum. These rows are listed in `state.etf.in_progress_rows`.
-  - US holidays are not modelled.
-  - When the expected day's row is still incomplete, the 5-day sum is missing ("5営業日がそろわない").
+  - US trading days come from a static NYSE full-day holiday table (`btc/us_calendar.py`, 2026–2028, verified
+    2026-10-08). Beyond its coverage end the trading calendar is unknown (ETF status `unknown`), never plain weekdays.
+    Extend the table before 2028-12-31.
+  - Lag, all-columns-numeric and total reconciliation are tracked separately (`state.etf.expected_day`). The ETF
+    bundle counts only when the expected session's row is complete and reconciled; `incomplete`, `lagged` and
+    `stale` days do not count toward normal coverage.
+  - A provider total mismatch keeps both values (`etf_reported_total_usd` and the known partial sum, status
+    `conflict`), scores neither and is the hard invalid `etf_total_mismatch` (data_hold).
+  - The 5-day sum covers the 5 NYSE trading days ending at the latest row; every one must be complete and
+    reconciled, and a gap is never filled with an older row.
+  - Lagged fallback (design 5, 7.3): when the expected session's row is present but not all-numeric (and not a
+    conflict), the 5-day sum uses the 5 trading days ending at the previous trading day if all of them are
+    reconciled. The ETF status is `lagged` (lag 1, `state.etf.lagged_fallback`), the dates are printed, the bundle is
+    not counted, and the expected day stays shown as incomplete. Any gap in that window keeps the sum missing.
 - **Macro group:** it needs a recent common date for the 2-year yield and DTWEXBGS. DTWEXBGS is a weekly H.10 series
   with a lag, so the group is often "unknown" (`common_observation_stale`).
 - **Calendar:**
   - FOMC times are tentative: the date comes from the Fed page, the 14:00 ET time is convention.
   - The BLS schedule is a parent-verified cache, valid until its `coverage_end`.
+  - Every source fails closed (`state.calendar.sources`): the record must be fully parsed (`ok`), verified at or
+    before `as_of` (fetched pages within 24 h), and its `coverage_end` must reach the end of the next 24 h (New York
+    date). The Fed `coverage_end` is Dec 31 of the latest year the page lists (capped at the 120-day parse window);
+    the BEA one is its latest listed release. Only parsed structure sets `coverage_end`. Any date candidate in the
+    parse range that does not parse (FOMC month/day tokens, BEA release rows other than "To Be Announced") makes
+    the source `partial`, so the next 24 h become unknown (no silent partial parse).
   - CME expiry is "unconfirmed" unless an official per-contract calendar is available (B8).
 - **News:**
   - Clustering uses a hash of the normalised title, so the same story from different publishers forms separate
     clusters.
   - Only official bodies count toward the BTC-specific event group, which limits double counting.
   - Body checks are capped at 8 articles and 90 s.
+  - Known events and unresolved incidents are carried in the job's `history/` (`btc-known-news.json`,
+    `btc-incidents.json`), written only when an edition passes parent review. Matching is by URL, code cluster,
+    primary body hash or the parent's `known_event_ids` link; a headline rewrite with a new body and no link is not
+    detectable by the code. Known events count from `first_known_at` (no extension); `follow_up_new_facts` needs a
+    new primary body published after the event became known. Matching retention (180 days, at most 5000 records,
+    oldest dropped) is separate from the scoring window; the parent briefing lists only the last 14 days. A
+    URL/body match wins over a cluster/link match, ties go to the latest `first_known_at`. An adopted follow-up is
+    its own record (`follow_up_of`) counted from its own publication.
+  - Both files are validated strictly on read; an invalid file gives `carry_state_invalid` (data_hold), acceptance
+    skips carry writes and the file is never overwritten.
+  - An incident is released only by an `incident_recoveries` entry (official primary body after the incident and
+    facts for every `affected_source_ids` source observed on the exchange after the recovery notice; derived facts
+    need every input to pass, date-only facts never count). An incident without `affected_source_ids` cannot be
+    released by the parent; only the owner's manual release (`btc.carry release`) clears it.
+  - Reactions use contiguous, deduplicated, closed 1 m bars per segment; a segment with a gap is not computed
+    (status `partial`/`missing`). The bars used are kept in the news record with the raw hash.
 
 ## Facts and scoring
 
@@ -38,6 +72,11 @@ or narrows it.
   - Walls need book depth reaching at least 100 bp on that side.
   - The 25 bp bucket that holds the best quote is excluded (it is always thick).
 - **Funding percentiles:** need at least 42 settled observations.
+- **Scorable facts:** only `ok`/`provisional`, non-stale, valued facts enter scoring and bundles. Stale, partial
+  and conflict facts are displayed but are unknown for scoring.
+- **Open interest:** USDT-margined OI is kept as native USDT notional (`oi_notional_usdt`). `oi_usd` exists only
+  when a fresh Kraken USDTUSD mid is available (mark price and rate in `source_fact_ids`); otherwise it is missing.
+  The OI-weighted funding uses the USDT notional as weights.
 - **Settled funding (B3):** comes from Binance and Bybit `fundingRate` history and OKX realized rates. Current or
   predicted funding is shown separately and is never scored.
 - **Freshness (B5):** the code checks freshness at collection time. At finalize it lists the values that have expired.

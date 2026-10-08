@@ -1,7 +1,8 @@
 """Job-owned observation history: append-only JSONL under ``<root>/history/``.
 
 - One file per series (source, instrument, metric).
-- Unique key (P8): source + instrument + metric + observed_at + revision.
+- Unique key (P8): source + instrument + metric + observed_at + revision (+ trade_date when the
+  record has one, e.g. ETF arrival records).
   A repeated key is not counted twice; a repeated key with a different value
   keeps the first record and is reported as a conflict (a provider revision
   must use a new ``revision``).
@@ -64,8 +65,10 @@ def normalize_record(record: dict, recorded_at: str | None = None) -> dict:
 
 
 def record_key(record: dict) -> tuple:
+    # trade_date (ETF arrival records) is part of the identity: one fetch can see several trade dates (R-08).
     return (record['source'], record['instrument'], record['metric'],
-            parse_time(record['observed_at']).astimezone(UTC).isoformat(), str(record.get('revision', 0)))
+            parse_time(record['observed_at']).astimezone(UTC).isoformat(), str(record.get('revision', 0)),
+            str(record.get('trade_date') or ''))
 
 
 class History:

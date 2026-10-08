@@ -44,6 +44,13 @@ XAU との違いは次のとおりです。
      - `source_quote` は見出しか抜粋の原文の一部です。
      - 見出しのみの材料に方向（supportive/adverse）を付けるなら、`interpretation` は `hypothesis` にします。
      - BTC固有イベント群に数えるかはコードが判定します。対象は一次本文確認済み・high/critical・supportive/adverse・期間内のものだけです。
+     - **既知イベント:** 入力資料の「既知イベント」表は、親レビューを通過した過去の版（Daily・Weekly とも）で評価済みの出来事です。同じ出来事の再報道（URL違い・見出しの更新を含む）には `known_event_ids` にその `known_id` を書きます。URL・コードのcluster・一次本文が一致するものはコードが自動で結びつけます。既知の出来事は初出時刻から期間を数えるので、再報道で加点期間は延びません。表は直近14日に初出のものだけですが、コードは180日以内の既知の出来事すべてと照合し、それより古い `known_id` も書けます。
+     - **続報:** 新しい一次事実を伴う続報だけ `follow_up_new_facts: true` を付けます（`known_event_ids` が必要）。新規に数えるのは、コードが既知と異なる一次本文と初出より後の公表を確認できた場合だけです。採用された続報は別の `known_id` になり、続報自身の公表時刻から期間を数えます。
+     - **重大障害:** 一次本文で確認した重大な侵害・主要 venue の停止（`importance: critical`、`impact: adverse`/`mixed`）には、`affected_source_ids` に影響を受ける source_id（例 `binance_derivatives`）を書きます。`affected_source_ids` は任意ですが、書かずに記録された障害は親の `incident_recoveries` では解除できません（拒否理由 `recovery_affected_sources_unspecified`）。影響を受ける source が分かるときは必ず書きます。
+   - **`incident_recoveries`（任意）:** 入力資料の「未解決の重大障害」表にある障害は、親レビューを通過した版で記録され、記事が選別から外れても・次の版でも・再起動後も `incident_hold` が続きます。解除するときだけ次を書きます。
+     - `{"incident_id": "<表の値>", "news_id": "<公式の復旧発表>", "fact_ids": ["<新鮮なfact>", ...]}`
+     - コードの検査: 障害が未解決であること、`news_id` がコード確認「公式の本文取得済み」で障害より後の公表であること、`fact_ids` がすべて新鮮（ok/速報・期限内）で、`affected_source_ids` の各 source を復旧発表の公表より後に取引所で観測した値であること（計算値は元の値すべてが対象。日付だけの値は数えない）。満たさなければ分析JSONは拒否されます。
+     - 解除は、この版が親レビューを通過した時点で記録されます（手順7）。
    - **シナリオ:** `scenarios`（1件以上）、`counter_cases`・`reevaluation_conditions`・`limitations`（各1件以上）を書きます。条件と無効化は、入力資料の `rule_id` 一覧から選びます。
    - **`destination_choice`:**
      - `level_fact_ids` には、入力資料に挙がった観測板の壁（`observed_book_cluster`）かオプション建玉（`option_oi_cluster`）の fact だけを入れます。
@@ -77,7 +84,7 @@ XAU との違いは次のとおりです。
    - 見る画像は、少なくとも PC/スマホの overview、全ての図、PC/スマホの本文画像です。機械のはみ出し検査を目視とは呼びません。
    - 結論が「データ不足・保留」と「下向き」を取り違えていないか。向きと停止時間・NO-TRADE が一目で区別できるか。
    - 数値がファクト一覧（第10章）と一致するか。単位・時点・母集団（venue、Deribit のみ等）が読めるか。あわせて次も確かめます。
-     - ETF の対象日と速報の別
+     - ETF の対象日と速報の別、期待日の状態（全銘柄数値・合計の照合。未確定や照合不一致は採点も正常な充足にも数えない）
      - FGI の隣の「出典: Alternative.me」
      - Funding の確定/予定の別
      - 満期時刻
@@ -96,6 +103,7 @@ XAU との違いは次のとおりです。
 
 7. **確定する（parent-review）。** `run.sh <mode> --parent-review <review.jsonの絶対パス>` を実行します。
    - 合格なら `succeeded_local` / `parent_passed` になります。これはローカル資料の完成で、`independent_review_status: not_performed`、`publication_ready: false`、`publication_status: disabled` のままです。
+   - 合格時に、この版で評価したニュースを既知イベントへ、重大障害の発生と解除を `history/btc-incidents.json` へ記録します（`history/btc-known-news.json` と併せ、次の版の入力に引き継がれる）。結果は `.edition.json` の `carry` に残ります。
    - 不合格なら `needs_attention`（`review_status: changes_requested`）です。直すときは analysis.json を直して手順4を再実行します（`-r2` 以降の版になる。収集から6時間以内）。
    - 親の自己レビューを独立レビューとは呼びません。
 

@@ -41,7 +41,7 @@ def binance_derivatives(f: Fetcher) -> SourceResult:
         'oi_hourly': [{'t': from_ms(row['timestamp']), 'oi_btc': num(row['sumOpenInterest'])}
                       for row in sorted(json_of(oi_hist), key=lambda x: x['timestamp'])],
     }
-    values['oi_usd'] = values['oi_btc'] * mark
+    values['oi_notional_usdt'] = values['oi_btc'] * mark
     return ok('binance_derivatives', {'premium': premium, 'funding_history': history, 'oi': oi, 'oi_hourly': oi_hist}, values, observed_at=values['oi_time'])
 
 
@@ -101,7 +101,7 @@ def bybit_derivatives(f: Fetcher) -> SourceResult:
                       for row in sorted(_bybit(json_of(oi_hist))['list'], key=lambda x: int(x['timestamp']))],
         'oi_hourly_convention': 'provider_openInterest_series',
     }
-    values['oi_usd'] = single * mark if single is not None else None
+    values['oi_notional_usdt'] = single * mark if single is not None else None
     return ok('bybit_derivatives', {'ticker': ticker, 'funding_history': history, 'oi_hourly': oi_hist}, values, observed_at=values['oi_time'],
               status='ok' if single is not None else 'partial', notes=notes)
 
@@ -128,5 +128,5 @@ def okx_derivatives(f: Fetcher) -> SourceResult:
         'funding_settled': _settlements(_okx(json_of(history)), 'fundingTime', 'realizedRate'),
         'oi_btc': num(o['oiCcy']), 'oi_time': from_ms(o['ts']), 'oi_hourly': [],
     }
-    values['oi_usd'] = values['oi_btc'] * mark
+    values['oi_notional_usdt'] = values['oi_btc'] * mark
     return ok('okx_derivatives', {'funding_current': current, 'funding_history': history, 'oi': oi, 'mark': mark_r}, values, observed_at=values['oi_time'])

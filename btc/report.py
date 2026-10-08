@@ -45,6 +45,12 @@ MARKET_LABEL = {'spot': '現物', 'linear_perp': '無期限'}
 STATUS_LABEL = {'ok': '確認済み', 'provisional': '速報', 'partial': '一部', 'stale': '古い', 'missing': '欠測',
                 'invalid': '不正', 'conflict': '矛盾', 'warming_up': '履歴不足', 'not_applicable': '対象外',
                 'terms_restricted': '規約により未使用'}
+ETF_STATE_LABEL = {'ok': '全銘柄の数値がそろい合計の照合も成立（採点に使う）',
+                   'incomplete': '全銘柄の値が未確定（採点にも正常な充足にも数えない）',
+                   'conflict': '提供元の合計と銘柄の合計が一致しない（両方を残し採点しない・データ保留）',
+                   'lagged': '期待日の行がなく1営業日遅れ（正常な充足に数えない）',
+                   'stale': '期待日から2営業日以上遅れ（古い）',
+                   'unknown': '米取引日の暦が収録範囲外（未確認）', 'missing': '欠測'}
 CODE_VERIFICATION = {'primary_body_retrieved': '公式の本文取得済み', 'secondary_body_retrieved': '本文取得済み',
                      'headline_only': '見出しのみ'}
 VERIFICATION = {'primary_confirmed': '一次本文で確認', 'secondary_body_confirmed': '報道本文で確認',
@@ -57,7 +63,7 @@ CODE_LIMITATIONS = (
     'スコアと確度は未校正の序数で、的中率や期待収益ではない',
     'Funding・比率・建玉はBinance・Bybit・OKXの線形BTC無期限だけで、市場全体ではない',
     'オプションはDeribit BTC inverse optionsだけ。建玉は保有残高で、売買の向きやディーラーのガンマを示さない',
-    'ETFの対象日は米国の祝日を考慮していない（祝日の翌営業日は遅れと表示されうる）',
+    'ETFの対象日はNYSEの休場表（2028年末まで）で決める。収録範囲外の日は米営業日を判定せず未確認とする',
     'ニュースの価格反応は公表時刻付近の値動きで、因果を示さない',
 )
 
@@ -462,6 +468,19 @@ def section_spot(doc: Doc, facts: dict, analysis: dict, index: dict, figs: Figur
         arrival = etf.get('arrival', {})
         doc.item(f'ETF到着記録（{etf["expected_trade_date"]}）: 行あり={arrival.get("row_present")}・全銘柄数値={arrival.get("full_numeric")}・'
                  f'前回から変化={arrival.get("changed_since_previous")}')
+        fallback = etf.get('lagged_fallback')
+        if fallback:
+            five_window = etf.get('five_day_window') or []
+            state_text = (f'期待日 {fallback["expected_trade_date"]} の行は全銘柄の値が未確定。5営業日合計は前営業日 '
+                          f'{fallback["used_trade_date"]} までの窓（{five_window[0]}〜{five_window[-1]}）で算出'
+                          '（1営業日遅れ・正常な充足に数えない）')
+        else:
+            state_text = ETF_STATE_LABEL.get(etf.get('status'), etf.get('status'))
+        lines['etf_state'] = doc.item(f'ETFの状態（{etf["expected_trade_date"]}）: {state_text}')
+        for fact in F:
+            if fact['metric'] in ('etf_reported_total_usd', 'etf_known_partial_sum_usd') and fact['status'] == 'conflict':
+                label = '提供元の合計' if fact['metric'] == 'etf_reported_total_usd' else '銘柄の合計（既知分）'
+                doc.item(f'ETF照合不一致 {fact["observation_date"]}: {label} {fact["display"]}')
         flows = [index[f] for f in etf['flow_fact_ids']][-10:]
         for fact in flows:
             day = fact['observation_date']
@@ -475,10 +494,11 @@ def section_spot(doc: Doc, facts: dict, analysis: dict, index: dict, figs: Figur
     else:
         lines['etf_date'] = doc.item('ETF: 欠測（Farsideを取得できず）')
     stable = st.get('stable', {})
-    if stable.get('status') == 'ok':
+    if stable.get('total_fact_id'):
         total = index[stable['total_fact_id']]
         d7, d30 = index[stable['change_7d']], index[stable['change_30d']]
-        lines['stable'] = doc.item(f'ステーブル供給（DefiLlama・全ステーブル合計）: {total["display"]}、7日変化{d7["display"]}、'
+        old = '' if stable.get('status') == 'ok' else f'（{STATUS_LABEL.get(total["status"], total["status"])}・採点に使わない）'
+        lines['stable'] = doc.item(f'ステーブル供給（DefiLlama・全ステーブル合計）{old}: {total["display"]}、7日変化{d7["display"]}、'
                                    f'30日変化{d30["display"]}')
         for fact in F:
             if fact['metric'] == 'peg_deviation_bps' and fact['category'] == 'onchain':
@@ -780,7 +800,8 @@ def machine_parts(facts: dict, analysis: dict, ev: dict, fresh: dict, dest: dict
                                           'return_after_1m_bps': None, 'return_after_5m_bps': None,
                                           'timing_error_bound_seconds': 60, 'confounded': False,
                                           'confound_event_ids': [], 'note': '反応を計測していない（件数上限）'})
-        reaction.pop('raw_sha256', None)
+        for key in ('raw_sha256', 'bars', 'bars_required', 'bars_missing', 'bars_duplicated'):
+            reaction.pop(key, None)  # kept in facts/data (recomputable); not part of the machine reaction record
         reaction['fact_ids'] = list(n.get('fact_ids', []))
         news.append({'id': n['id'], 'event_cluster_id': n['event_cluster_id'], 'title': n['title'], 'url': n['url'],
                      'published_at': n['published_at'], 'first_seen_at': n['first_seen_at'] or n['published_at'],
@@ -789,7 +810,8 @@ def machine_parts(facts: dict, analysis: dict, ev: dict, fresh: dict, dest: dict
                      'reaction': reaction})
     venues = [v['venue'] for v in st.get('derivatives', {}).get('venues', [])]
     etf = st.get('etf', {})
-    etf_status = {'ok': 'provisional', 'lagged': 'partial', 'stale': 'stale'}.get(etf.get('status'), 'missing')
+    etf_status = {'ok': 'provisional', 'lagged': 'partial', 'incomplete': 'partial', 'conflict': 'conflict',
+                  'stale': 'stale'}.get(etf.get('status'), 'missing')
     options = st.get('options', {})
     expiry_ids = [x for e in options.get('expiries', []) for x in (e['share_fact_id'], e['pcr_fact_id'], e['max_pain_fact_id'])]
     groups = {k: {'state': g['state'], 'direction': g['direction'], 'reason_code': g['reason_code'],
@@ -879,7 +901,8 @@ def _window_label(w: dict, events: dict) -> str:
 def build(analysis: dict, facts: dict, collection: dict, ctx) -> ReportParts:
     finalize_at = parse_time(ctx.generated_at).astimezone(UTC)
     index = {f['fact_id']: f for f in facts['facts']}
-    ev = scoring.evaluate(facts, mode=ctx.mode, assessments=analysis['news_assessments'], finalize_at=finalize_at)
+    ev = scoring.evaluate(facts, mode=ctx.mode, assessments=analysis['news_assessments'], finalize_at=finalize_at,
+                          recoveries=analysis.get('incident_recoveries') or [])
     events = {e['id']: e for e in facts['state'].get('events', [])}
     for key in ('active_windows', 'upcoming_windows'):
         for w in ev['trade_gate'][key]:

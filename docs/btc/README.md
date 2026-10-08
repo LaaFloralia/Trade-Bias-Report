@@ -15,6 +15,36 @@ fixture is a trimmed live collection whose news text and article URLs are synthe
   bundled Chromium (`python -m playwright install chromium`). The runner strips `BTC_PLAYWRIGHT_CHANNEL`; that
   variable is for dev tests only.
 
+## Operations: manual incident release (owner instruction only)
+
+A critical incident recorded on parent acceptance (`history/btc-incidents.json`) keeps `incident_hold` until an
+adopted edition carries a code-verified `incident_recoveries` entry: an official primary-body recovery notice plus,
+for every `affected_source_ids` source, observations made after that notice. An incident recorded without
+`affected_source_ids` cannot be released by the parent. If the official recovery never appears as a code-verified
+primary body, or no affected source was named, release it only on the owner's explicit instruction, outside the
+sandbox:
+
+```
+cd <job root>/runtime   # or the source repo
+<venv python> -B -m btc.carry list --root <job root>
+<venv python> -B -m btc.carry release --root <job root> --incident <incident_id> --reason "<why, who confirmed>"
+```
+
+- `list` is read-only: prints JSON `{"status": "ok", "open_incidents": [...]}` with `incident_id`, `published_at`,
+  `title`, `affected_source_ids`, `recorded_edition_id`, `recorded_as_of`. On an invalid carried file it prints
+  `{"status": "invalid", "error": "<code>"}` and exits 2.
+
+- Sets `status: released_manually`, `release_reason`, `released_at` (UTC) and `released_by: owner_instruction`.
+- Refuses unknown ids, ids that are not open, and an empty or control-character reason (exit 2); never deletes records;
+  writes atomically under the same lock as acceptance.
+- `release` refuses to run while either carried file is invalid (exit 2, file untouched).
+- The parent and the scheduled run never use these commands (they are not in `PARENT-WORKFLOW.md`).
+
+Carried files (`btc-known-news.json`, `btc-incidents.json`) are validated strictly on every read (schema version,
+record keys and types, incident status). An invalid file never reads as "nothing known, nothing open": the edition
+goes to `data_hold` (`carry_state_invalid`), acceptance skips every carry write (`carry.skipped`), and the file is
+left byte-for-byte for the owner to inspect and repair.
+
 ## Security boundary
 
 ### Credentials
@@ -122,6 +152,7 @@ committed cache.
 | Edition without images | about 2 MB | `reports/<mode>/editions/<name>/` |
 | Render evidence (about 120 PNG) | about 34 MB | `<edition>.render-evidence/` |
 | History (append-only JSONL) | about 0.1 MB after a few runs | `history/` |
+| Carried state (known news, incidents; written on parent acceptance) | a few KB | `history/btc-known-news.json`, `history/btc-incidents.json` |
 
 Raw HTTP bodies are never stored, only their SHA-256.
 

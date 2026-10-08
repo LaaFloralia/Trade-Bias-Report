@@ -64,27 +64,46 @@ def _f(index: dict, fact_id: str | None) -> dict | None:
     return index.get(fact_id) if fact_id else None
 
 
+SCORABLE = ('ok', 'provisional')
+
+
+def scorable(fact: dict | None) -> bool:
+    """A fact may enter scoring only when ok/provisional, not stale at as_of, and valued (R-02).
+
+    partial / stale / conflict / missing facts stay displayable but are unknown for scoring.
+    """
+    return bool(fact) and fact['status'] in SCORABLE and not fact.get('stale') and fact.get('value') is not None
+
+
 def _val(index: dict, fact_id: str | None):
     fact = _f(index, fact_id)
-    return fact['value'] if fact and fact['status'] not in ('missing', 'invalid', 'warming_up', 'terms_restricted') else None
+    return fact['value'] if scorable(fact) else None
 
 
 def bundles(facts: dict) -> dict:
+    """Normal coverage from the state and expiry of each bundle's required facts (R-01, R-02)."""
     st = facts['state']
     index = {f['fact_id']: f for f in facts['facts']}
     news = st.get('news', {})
     feeds_ok = news.get('feeds_ok') or {}
     stable = st.get('stable', {})
+    ref = st.get('reference_price', {})
+    venues = st.get('derivatives', {}).get('venues', [])
+    opts = st.get('options', {})
+    etf = st.get('etf', {})
     out = {
-        'price': st.get('reference_price', {}).get('status') == 'ok',
+        'price': ref.get('status') == 'ok' and scorable(_f(index, ref.get('fact_id'))),
         'calendar': st.get('calendar', {}).get('next_24h') == 'ok',
         'macro': st.get('macro', {}).get('status') not in (None, 'unknown'),
-        'etf': st.get('etf', {}).get('status') == 'ok',
-        'derivatives': st.get('derivatives', {}).get('current_ok', 0) >= 2,
-        'options': st.get('options', {}).get('status') == 'ok',
+        # ETF counts only when the expected session's table is complete and reconciled (design 7.3).
+        'etf': etf.get('status') == 'ok' and bool(etf.get('expected_day', {}).get('reconciled'))
+        and not etf.get('conflict_dates'),
+        'derivatives': sum(1 for v in venues if scorable(_f(index, v.get('funding_fact_id')))
+                           and scorable(_f(index, v.get('oi_fact_id')))) >= 2,
+        'options': opts.get('status') == 'ok' and scorable(_f(index, opts.get('total_fact_id'))),
         'news': feeds_ok.get('general', 0) >= 2 and feeds_ok.get('official', 0) >= 2,
-        'stable_supply': stable.get('status') == 'ok' and _val(index, stable.get('change_7d')) is not None
-        and _val(index, stable.get('change_30d')) is not None,
+        'stable_supply': stable.get('status') == 'ok' and scorable(_f(index, stable.get('total_fact_id')))
+        and _val(index, stable.get('change_7d')) is not None and _val(index, stable.get('change_30d')) is not None,
     }
     return out
 
@@ -103,6 +122,12 @@ def hard_invalid(facts: dict, as_of: datetime) -> list[str]:
             break
     if any(f['status'] == 'invalid' for f in facts['facts']):
         reasons.append('invalid_fact')
+    if st.get('carry', {}).get('status') == 'invalid':
+        # Carried known-news / incident state unreadable: never treat it as "nothing known, nothing open" (R2-04).
+        reasons.append('carry_state_invalid')
+    if st.get('etf', {}).get('conflict_dates'):
+        # Provider total vs. fund sum mismatch: both values kept, neither scored, data_hold (design 4.1, 7.4).
+        reasons.append('etf_total_mismatch')
     return reasons
 
 
@@ -112,12 +137,12 @@ def etf_component(facts: dict) -> dict:
     five = _f(index, etf.get('five_day_fact_id'))
     last = _f(index, etf.get('last_day_fact_id'))
     ids = [x['fact_id'] for x in (five, last) if x]
-    if etf.get('status') not in ('ok', 'lagged') or not five or five['value'] is None:
+    if etf.get('status') not in ('ok', 'lagged') or not scorable(five):
         return {'state': 'unknown', 'direction': 0, 'reason_code': f'etf_{etf.get("status", "missing")}', 'fact_ids': ids,
                 'provisional': False}
     total = five['value']
     state = 'supportive' if total >= ETF_THRESHOLD else 'adverse' if total <= -ETF_THRESHOLD else 'neutral'
-    if state != 'neutral' and last and last['value'] is not None and \
+    if state != 'neutral' and scorable(last) and \
             abs(last['value']) >= ETF_LAST_DAY_OPPOSITE and (last['value'] > 0) != (total > 0):
         state = 'mixed'
     return {'state': state, 'direction': SIGN.get(state, 0), 'reason_code': f'etf_5d_{state}', 'fact_ids': ids,
@@ -168,9 +193,38 @@ def spot_group(facts: dict) -> dict:
     return {'state': 'neutral', 'direction': 0, 'reason_code': 'below_thresholds', 'fact_ids': ids, 'components': comps}
 
 
-def eligible_news(facts: dict, assessments: list | None, mode: str, as_of: datetime, carried: set) -> list[dict]:
-    """Parent-selected clusters that pass the code's factual conditions (design 8.2)."""
+def _item_ids(item: dict) -> set:
+    ids = {f'url:{item["url"]}'} if item.get('url') else set()
+    if item.get('event_cluster_id'):
+        ids.add(f'cluster:{item["event_cluster_id"]}')
+    sha = (item.get('body') or {}).get('text_sha256')
+    if sha:
+        ids.add(f'body:{sha}')
+    return ids
+
+
+def known_match(item: dict, assessment: dict, known: list[dict]) -> dict | None:
+    """The adopted known event this item re-reports: shared URL / code cluster / primary body hash,
+    or a ``known_event_ids`` link set by the parent (different URL or updated headline). A URL or body
+    match beats a cluster or link match; ties go to the latest ``first_known_at`` (R2-03)."""
+    from btc import carry
+    return carry.best_match(_item_ids(item), assessment.get('known_event_ids'), known)
+
+
+def eligible_news(facts: dict, assessments: list | None, mode: str, as_of: datetime, carried) -> list[dict]:
+    """Parent-selected clusters that pass the code's factual conditions (design 8.2).
+
+    Known events (adopted earlier, ``state.news.carried``; R-05) never extend the scoring period:
+    the window is measured from ``first_known_at``, whatever URL or headline re-reports it. A follow-up
+    counts as new only when the parent marks ``follow_up_new_facts`` and the code sees a primary body
+    that differs from every known body of that event and was published after it became known.
+    ``carried`` as a set of URLs (legacy unit-test input) excludes those items outright.
+    """
     items = {n['id']: n for n in facts['state'].get('news', {}).get('items', [])}
+    known = facts['state'].get('news', {}).get('carried') or []
+    if isinstance(carried, list):
+        known = carried
+    legacy = carried if isinstance(carried, (set, frozenset)) else set()
     window = timedelta(hours=EVENT_WINDOW_HOURS[mode])
     out = []
     for a in assessments or []:
@@ -181,10 +235,22 @@ def eligible_news(facts: dict, assessments: list | None, mode: str, as_of: datet
             continue
         if item['code_verification'] != 'primary_body_retrieved':
             continue
-        published = parse_time(item['published_at'])
-        if not (as_of - window <= published <= as_of) or item['url'] in carried:
+        if item.get('url') in legacy:
             continue
-        out.append({**a, 'url': item['url']})
+        published = parse_time(item['published_at'])
+        effective, carry = published, None
+        match = known_match(item, a, known)
+        if match is not None:
+            from btc import carry as carried_state
+            first = parse_time(match['first_known_at'])
+            if carried_state.is_follow_up(item, a, match):
+                carry = {'known_id': match['known_id'], 'kind': 'follow_up_new_facts'}
+            else:
+                effective = min(published, first)
+                carry = {'known_id': match['known_id'], 'kind': 'carry_forward', 'first_known_at': match['first_known_at']}
+        if not (as_of - window <= effective and published <= as_of):
+            continue
+        out.append({**a, 'url': item.get('url'), 'carry': carry})
     return out
 
 
@@ -201,7 +267,8 @@ def event_group(facts: dict, assessments: list | None, mode: str, as_of: datetim
         clusters.setdefault(a['event_cluster_id'], set()).add(a['impact'])
     impacts = set().union(*clusters.values()) if clusters else set()
     ids = sorted({x for a in chosen for x in a.get('fact_ids', [])})
-    comps = {'clusters': sorted(clusters), 'news_ids': [a['news_id'] for a in chosen]}
+    comps = {'clusters': sorted(clusters), 'news_ids': [a['news_id'] for a in chosen],
+             'carry_forward': [{'news_id': a['news_id'], **a['carry']} for a in chosen if a.get('carry')]}
     if not impacts:
         return {'state': 'neutral', 'direction': 0, 'reason_code': 'no_confirmed_btc_event', 'fact_ids': ids, 'components': comps}
     if impacts == {'supportive'}:
@@ -213,14 +280,56 @@ def event_group(facts: dict, assessments: list | None, mode: str, as_of: datetim
     return {'state': 'mixed', 'direction': 0, 'reason_code': 'opposite_confirmed_events', 'fact_ids': ids, 'components': comps}
 
 
-def critical_incident(facts: dict, assessments: list | None) -> bool:
+def incident_id(item: dict) -> str:
+    return 'inc-' + hashlib.sha256(f'{item.get("event_cluster_id")}|{item.get("url")}'.encode()).hexdigest()[:12]
+
+
+def new_incidents(facts: dict, assessments: list | None) -> list[dict]:
+    """Critical adverse/mixed incidents confirmed from a primary body in this edition (design 7.4)."""
     items = {n['id']: n for n in facts['state'].get('news', {}).get('items', [])}
+    out = []
     for a in assessments or []:
         item = items.get(a['news_id'])
         if item and a['importance'] == 'critical' and a['verification'] == 'primary_confirmed' \
                 and item['code_verification'] == 'primary_body_retrieved' and a['impact'] in ('adverse', 'mixed'):
-            return True
-    return False
+            ident = incident_id(item)
+            if any(x['incident_id'] == ident for x in out):
+                continue
+            out.append({'incident_id': ident, 'news_id': item['id'], 'event_cluster_id': item.get('event_cluster_id'),
+                        'url': item.get('url'), 'title': item.get('title', '')[:200], 'published_at': item['published_at'],
+                        'affected_source_ids': sorted(set(a.get('affected_source_ids') or []))})
+    return out
+
+
+def incident_status(facts: dict, assessments: list | None, recoveries: list | None = None) -> dict:
+    """Open incidents = this edition's new ones + persisted open ones (R-04), minus validly released ones.
+
+    A persisted incident is released only by ``recoveries`` entries that pass ``carry.recovery_problems``
+    (official primary-body recovery after the incident + fresh data for every affected source).
+    """
+    from btc import carry
+    current = new_incidents(facts, assessments)
+    persisted = facts['state'].get('incidents', {}).get('open', [])
+    by_id = {r['incident_id']: r for r in recoveries or []}
+    released, rejected, still = [], [], []
+    for inc in persisted:
+        rec = by_id.get(inc['incident_id'])
+        if rec is None:
+            still.append(inc)
+            continue
+        problems = carry.recovery_problems(inc, rec, facts)
+        if problems:
+            rejected.append({'incident_id': inc['incident_id'], 'problems': problems})
+            still.append(inc)
+        else:
+            released.append(dict(rec))
+    open_ids = {i['incident_id'] for i in still}
+    new = [i for i in current if i['incident_id'] not in open_ids and i['incident_id'] not in {r['incident_id'] for r in released}]
+    return {'new': new, 'open': still + new, 'released': released, 'rejected': rejected}
+
+
+def critical_incident(facts: dict, assessments: list | None, recoveries: list | None = None) -> bool:
+    return bool(incident_status(facts, assessments, recoveries)['open'])
 
 
 def windows(facts: dict) -> list[dict]:
@@ -245,12 +354,12 @@ def leverage_item(facts: dict, candidate: int) -> dict:
     same, unassessed, ids = [], False, []
     for v in venues:
         funding = _f(index, v.get('funding_fact_id'))
-        if not funding or funding['value'] is None:
+        if not scorable(funding):
             continue
         ids.append(funding['fact_id'])
         if funding['value'] * candidate > 0 and abs(funding['value']) >= FUNDING_CROWDED:
             perc = _f(index, v.get('funding_percentile_fact_id'))
-            if not perc or perc['value'] is None:
+            if not scorable(perc):
                 unassessed = True
                 continue
             ids.append(perc['fact_id'])
@@ -261,7 +370,7 @@ def leverage_item(facts: dict, candidate: int) -> dict:
         now_total, base_total = 0.0, 0.0
         for v in same:
             oi, chg = _f(index, v.get('oi_fact_id')), _f(index, v.get('oi_change_fact_id'))
-            if not oi or oi['value'] is None or not chg or chg['value'] is None:
+            if not scorable(oi) or not scorable(chg):
                 return {'points': 0, 'status': 'unassessed', 'reason_code': 'oi_change_missing', 'fact_ids': ids}
             ids += [oi['fact_id'], chg['fact_id']]
             now_total += oi['value']
@@ -294,11 +403,14 @@ def options_item(facts: dict, candidate: int) -> dict:
 
 
 def evaluate(facts: dict, *, mode: str, assessments: list | None = None, finalize_at: datetime | None = None,
-             carried: set | None = None) -> dict:
-    """Full decision state. ``assessments`` None = before the parent's selection (preview)."""
+             carried=None, recoveries: list | None = None) -> dict:
+    """Full decision state. ``assessments`` None = before the parent's selection (preview).
+
+    ``carried`` defaults to the known events in ``state.news.carried`` (R-05); ``recoveries`` are the
+    parent's ``incident_recoveries`` checked against persisted incidents (R-04).
+    """
     as_of = parse_time(facts['as_of']).astimezone(UTC)
     finalize_at = (finalize_at or as_of).astimezone(UTC)
-    carried = carried or set()
     groups = {'macro': macro_group(facts), 'spot_demand': spot_group(facts),
               'btc_specific_event': event_group(facts, assessments, mode, as_of, carried)}
     present = bundles(facts)
@@ -362,7 +474,8 @@ def evaluate(facts: dict, *, mode: str, assessments: list | None = None, finaliz
                   'reason_code': f'bundles_{count}_of_8', 'fact_ids': [], 'group_id': 'quality'})
     merged = windows(facts)
     active = [w for w in merged if parse_time(w['start_at']) <= as_of <= parse_time(w['end_at'])]
-    incident = critical_incident(facts, assessments)
+    incidents = incident_status(facts, assessments, recoveries)
+    incident = bool(incidents['open'])
     high_soon = [e for e in facts['state'].get('events', []) if e['importance'] in ('high', 'critical')
                  and as_of < parse_time(e['start_at']) <= as_of + timedelta(hours=2)]
     er = -2 if active or incident else -1 if high_soon else 0
@@ -408,7 +521,8 @@ def evaluate(facts: dict, *, mode: str, assessments: list | None = None, finaliz
                  if e['importance'] in ('high', 'critical') and parse_time(e['start_at']) > as_of]
     valid_until = min([as_of + timedelta(hours=VALIDITY_HOURS[mode])] + next_high)
     if incident:
-        gate, gate_codes = 'incident_hold', ['critical_incident_confirmed']
+        gate, gate_codes = 'incident_hold', (['critical_incident_confirmed'] if incidents['new'] else []) + (
+            ['incident_unresolved'] if len(incidents['open']) > len(incidents['new']) else [])
     elif invalid:
         gate, gate_codes = 'data_hold', invalid
     elif active:
@@ -450,12 +564,16 @@ def evaluate(facts: dict, *, mode: str, assessments: list | None = None, finaliz
             'recheck_at': recheck},
         'no_trade': no_trade, 'no_trade_reason': reason, 'risk_events_next_24h': risk,
         'coverage_ratio': round(count / 8, 3), 'incident': incident,
+        'incidents_open': incidents['open'], 'incidents_new': incidents['new'],
+        'incidents_released': incidents['released'], 'incidents_rejected': incidents['rejected'],
     }
 
 
 REASON_TEXT = {'reference_price_unavailable': '参照価格が2市場で成立しない',
                'calendar_coverage_unknown': '公式カレンダーの次24時間が未確認',
-               'future_observation': '未来時刻の観測がある', 'invalid_fact': '不正な値がある'}
+               'future_observation': '未来時刻の観測がある', 'invalid_fact': '不正な値がある',
+               'etf_total_mismatch': 'ETFの提供元合計と銘柄合計が一致しない',
+               'carry_state_invalid': '採用済みの既知ニュース・未解決障害の記録が読めない（記録は変更していない）'}
 STATE_TEXT = {'supportive': '上向き', 'adverse': '下向き', 'neutral': '閾値未満', 'mixed': '材料混在', 'unknown': 'データ不足'}
 SOURCE_LABELS = {'bls_schedule_cache': 'BLS公式予定（親確認済みキャッシュ）', 'fed_calendar': 'Fed公式',
                  'bea_calendar': 'BEA公式', 'deribit_options': 'Deribit'}

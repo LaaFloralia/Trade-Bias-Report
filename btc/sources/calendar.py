@@ -41,40 +41,78 @@ class _Text(HTMLParser):
             self.parts.append(' '.join(data.split()))
 
 
-def parse_fomc(body: str, today: date) -> list[dict]:
+FOMC_DAYS = re.compile(r'(\d{1,2})-(\d{1,2})\*?')
+MONTH_TOKEN = re.compile(r'([A-Z][a-z]+)(?:/([A-Z][a-z]+))?')
+
+
+def _month_overlaps(year: int, month: int, start: date, end: date) -> bool:
+    first = date(year, month, 1)
+    last = (date(year + (month == 12), month % 12 + 1, 1)) - timedelta(days=1)
+    return first <= end and last >= start
+
+
+def parse_fomc_detail(body: str, today: date) -> tuple[list[dict], dict]:
+    """FOMC meetings plus parse statistics (R2-05).
+
+    Every month token inside a "YYYY FOMC Meetings" section is a meeting candidate. A candidate whose month
+    overlaps the target range (today-2 .. today+120) and whose day token is not "D-D" (optionally "*") is
+    counted as unparsed. ``coverage_end`` comes only from parsed structure: Dec 31 of the latest year with at
+    least one parsed meeting, capped at the 120-day window; yesterday when the current year has none.
+    """
     parser = _Text()
     parser.feed(body)
     tokens = parser.parts
-    events, year = [], None
-    i = 0
-    while i < len(tokens):
-        heading = re.fullmatch(r'(\d{4}) FOMC Meetings', tokens[i])
+    start, end = today - timedelta(days=2), today + timedelta(days=120)
+    events, unparsed, parsed_years = [], [], set()
+    candidates = parsed = 0
+    year = None
+    url = 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm'
+    for i, token in enumerate(tokens):
+        heading = re.fullmatch(r'(\d{4}) FOMC Meetings', token)
         if heading:
             year = int(heading.group(1))
-        elif year and i + 1 < len(tokens):
-            month = re.fullmatch(r'([A-Z][a-z]+)(?:/([A-Z][a-z]+))?', tokens[i])
-            days = re.fullmatch(r'(\d{1,2})-(\d{1,2})\*?', tokens[i + 1])
-            if month and days and month.group(1) in MONTHS:
-                last_month = MONTHS[month.group(2) or month.group(1)]
-                last_day = int(days.group(2))
-                try:
-                    day = date(year, last_month, last_day)
-                except ValueError:
-                    i += 1
-                    continue
-                if today - timedelta(days=2) <= day <= today + timedelta(days=120):
-                    statement = datetime(day.year, day.month, day.day, 14, 0, tzinfo=NY)
-                    url = 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm'
-                    events.append(_event(f'fomc.statement.{day.isoformat()}', 'FOMC 声明（政策金利の発表）', statement,
-                                         category='monetary_policy', importance='high', status='tentative',
-                                         source_id='fed_calendar', source_url=url))
-                    events.append(_event(f'fomc.press.{day.isoformat()}', 'FOMC 議長会見', statement + timedelta(minutes=30),
-                                         category='monetary_policy', importance='high', status='tentative',
-                                         source_id='fed_calendar', source_url=url))
-                i += 2
-                continue
-        i += 1
-    return events
+            continue
+        month = MONTH_TOKEN.fullmatch(token)
+        if not year or not month or month.group(1) not in MONTHS or (month.group(2) and month.group(2) not in MONTHS):
+            continue
+        last_month = MONTHS[month.group(2) or month.group(1)]
+        in_range = _month_overlaps(year, last_month, start, end) or _month_overlaps(year, MONTHS[month.group(1)], start, end)
+        candidates += in_range
+        days = FOMC_DAYS.fullmatch(tokens[i + 1]) if i + 1 < len(tokens) else None
+        try:
+            day = date(year, last_month, int(days.group(2))) if days else None
+        except ValueError:
+            day = None
+        if day is None:
+            if in_range:
+                unparsed.append(f'{year} {token} {tokens[i + 1] if i + 1 < len(tokens) else ""}'.strip()[:80])
+            continue
+        parsed_years.add(year)
+        parsed += in_range
+        if start <= day <= end:
+            statement = datetime(day.year, day.month, day.day, 14, 0, tzinfo=NY)
+            events.append(_event(f'fomc.statement.{day.isoformat()}', 'FOMC 声明（政策金利の発表）', statement,
+                                 category='monetary_policy', importance='high', status='tentative',
+                                 source_id='fed_calendar', source_url=url))
+            events.append(_event(f'fomc.press.{day.isoformat()}', 'FOMC 議長会見', statement + timedelta(minutes=30),
+                                 category='monetary_policy', importance='high', status='tentative',
+                                 source_id='fed_calendar', source_url=url))
+    if not parsed_years or max(parsed_years) < today.year:
+        coverage_end = (today - timedelta(days=1)).isoformat()
+    else:
+        coverage_end = min(date(max(parsed_years), 12, 31), end).isoformat()
+    stats = {'candidates_in_range': candidates, 'parsed_in_range': parsed, 'unparsed': unparsed,
+             'parsed_years': sorted(parsed_years), 'coverage_end': coverage_end}
+    return events, stats
+
+
+def parse_fomc(body: str, today: date) -> list[dict]:
+    return parse_fomc_detail(body, today)[0]
+
+
+def fomc_coverage_end(body: str, today: date) -> str:
+    """Coverage from parsed meetings only (see ``parse_fomc_detail``)."""
+    return parse_fomc_detail(body, today)[1]['coverage_end']
 
 
 class _BeaRows(HTMLParser):
@@ -101,32 +139,59 @@ class _BeaRows(HTMLParser):
             self.cell.append(data)
 
 
-def parse_bea(body: str, today: date) -> list[dict]:
+BEA_WHEN = re.compile(r'([A-Z][a-z]+) (\d{1,2}) (\d{1,2}):(\d{2}) (AM|PM)')
+
+
+def parse_bea_detail(body: str, today: date) -> tuple[list[dict], dict]:
+    """BEA GDP/PCE releases plus parse statistics (R2-05).
+
+    Every table row with a release title is a candidate. A GDP/PCE row whose date cell is not
+    "Month D H:MM AM|PM" counts as unparsed ("To Be Announced" rows are counted separately; they carry no
+    date). ``coverage_end`` is the latest successfully parsed release date of any title.
+    """
     parser = _BeaRows()
     parser.feed(body)
-    events = []
+    events, unparsed, tba, dated = [], [], 0, []
+    candidates = 0
     for row in parser.rows:
         if len(row) < 3:
             continue
-        when = re.fullmatch(r'([A-Z][a-z]+) (\d{1,2}) (\d{1,2}):(\d{2}) (AM|PM)', row[0])
         title = row[-1]
-        if not when or not BEA_KEEP.match(title) or when.group(1) not in MONTHS:
+        keep = bool(BEA_KEEP.match(title))
+        candidates += keep
+        when = BEA_WHEN.fullmatch(row[0])
+        day = None
+        if when and when.group(1) in MONTHS:
+            year = today.year
+            try:
+                day = date(year, MONTHS[when.group(1)], int(when.group(2)))
+            except ValueError:
+                day = None
+            if day and day < today - timedelta(days=180):
+                day = day.replace(year=year + 1)  # schedule pages list the coming months without a year
+        if day is None:
+            if row[0].startswith('To Be Announced'):
+                tba += keep
+            elif keep:
+                unparsed.append(f'{row[0]} | {title}'[:120])
+            continue
+        dated.append(day)
+        if not keep:
             continue
         hour = int(when.group(3)) % 12 + (12 if when.group(5) == 'PM' else 0)
-        year = today.year
-        try:
-            day = date(year, MONTHS[when.group(1)], int(when.group(2)))
-        except ValueError:
-            continue
-        if day < today - timedelta(days=180):
-            day = day.replace(year=year + 1)  # schedule pages list the coming months without a year
         local = datetime(day.year, day.month, day.day, hour, int(when.group(4)), tzinfo=NY)
         kind = 'gdp' if title.upper().startswith('GDP') else 'pce'
         name = 'GDP（BEA）' if kind == 'gdp' else 'PCE・個人所得支出（BEA）'
         events.append(_event(f'bea.{kind}.{day.isoformat()}', f'{name} {title[:80]}', local, category='macro_release',
                              importance='high', status='confirmed', source_id='bea_calendar',
                              source_url='https://www.bea.gov/news/schedule'))
-    return events
+    stats = {'candidates': candidates, 'parsed': len(events), 'unparsed': unparsed, 'to_be_announced': tba,
+             'coverage_end': max(dated).isoformat() if dated else (today - timedelta(days=1)).isoformat()}
+    return events, stats
+
+
+def parse_bea(body: str, today: date) -> list[dict]:
+    return parse_bea_detail(body, today)[0]
 
 
 def load_cache(path: Path = CACHE) -> dict:
@@ -147,18 +212,19 @@ def load_cache(path: Path = CACHE) -> dict:
 def fed_calendar(f: Fetcher, today: date | None = None) -> SourceResult:
     today = today or datetime.now(UTC).date()
     r = f.get('https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm')
-    events = parse_fomc(r.text(), today)
-    if not events:
+    events, stats = parse_fomc_detail(r.text(), today)
+    if not events and not stats['parsed_years']:
         raise FetchError('missing_field')
-    return ok('fed_calendar', [r], {'events': events, 'coverage_end': (today + timedelta(days=120)).isoformat()},
-              timestamp_quality='source_date')
+    # Any unparsed in-range candidate makes the source partial -> next_24h unknown (R2-05).
+    return ok('fed_calendar', [r], {'events': events, 'coverage_end': stats['coverage_end'], 'parse': stats},
+              status='partial' if stats['unparsed'] else 'ok', timestamp_quality='source_date')
 
 
 def bea_calendar(f: Fetcher, today: date | None = None) -> SourceResult:
     today = today or datetime.now(UTC).date()
     r = f.get('https://www.bea.gov/news/schedule')
-    events = parse_bea(r.text(), today)
-    if not events:
+    events, stats = parse_bea_detail(r.text(), today)
+    if not events and not stats['candidates']:
         raise FetchError('missing_field')
-    end = max(e['start_at'] for e in events)[:10]
-    return ok('bea_calendar', [r], {'events': events, 'coverage_end': end}, timestamp_quality='source_date')
+    return ok('bea_calendar', [r], {'events': events, 'coverage_end': stats['coverage_end'], 'parse': stats},
+              status='partial' if stats['unparsed'] else 'ok', timestamp_quality='source_date')

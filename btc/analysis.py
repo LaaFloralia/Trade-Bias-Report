@@ -8,10 +8,12 @@ never become HTML, links or images in the Markdown).
 """
 from __future__ import annotations
 
+from datetime import timedelta
 import json
 from pathlib import Path
 import re
 
+from btc import carry
 from btc.common import JST, parse_time
 from btc.facts import fact_text
 from btc.jsonschema_lite import validate as schema_validate
@@ -128,6 +130,8 @@ def validate(analysis: dict, facts: dict, *, edition_id: str) -> dict:
     facts_index = {f['fact_id']: f for f in facts['facts']}
     events = _event_index(facts)
     news = {n['id']: n for n in facts['state'].get('news', {}).get('items', [])}
+    known = {k['known_id'] for k in facts['state'].get('news', {}).get('carried') or []}
+    sources = {f['source_id'] for f in facts['facts'] if f['source_id'] != 'computed'}
     if analysis['edition_id'] != edition_id:
         problems.append('edition_id_mismatch')
     if analysis['input_manifest_sha256'] != facts['input_manifest_sha256']:
@@ -170,6 +174,36 @@ def validate(analysis: dict, facts: dict, *, edition_id: str) -> dict:
         for fact_id in a['fact_ids']:
             if fact_id not in facts_index:
                 problems.append(f'{where}: unknown_fact:{fact_id}')
+        for known_id in a.get('known_event_ids') or []:
+            if known_id not in known:
+                problems.append(f'{where}: unknown_known_event:{known_id}')
+        if a.get('follow_up_new_facts') and not a.get('known_event_ids'):
+            problems.append(f'{where}: follow_up_requires_known_event_ids')
+        for source_id in a.get('affected_source_ids') or []:
+            if source_id not in sources:
+                problems.append(f'{where}: unknown_affected_source:{source_id}')
+        if a.get('affected_source_ids') and not (a['importance'] == 'critical' and a['impact'] in ('adverse', 'mixed')):
+            problems.append(f'{where}: affected_sources_only_for_critical_incident')
+    # R-04: a recovery must name a persisted open incident, a code-known news item and existing facts;
+    # freshness, official body and affected-source coverage are checked by the code (carry.recovery_problems).
+    open_incidents = {x['incident_id']: x for x in facts['state'].get('incidents', {}).get('open', [])}
+    seen_recovery = set()
+    for i, r in enumerate(analysis.get('incident_recoveries') or []):
+        where = f'incident_recoveries[{i}]'
+        incident = open_incidents.get(r['incident_id'])
+        if incident is None:
+            problems.append(f'{where}: unknown_open_incident:{r["incident_id"]}')
+            continue
+        if r['incident_id'] in seen_recovery:
+            problems.append(f'{where}: duplicate_incident')
+        seen_recovery.add(r['incident_id'])
+        if r['news_id'] not in news:
+            problems.append(f'{where}: unknown_news:{r["news_id"]}')
+            continue
+        unknown = [f for f in r['fact_ids'] if f not in facts_index]
+        problems += [f'{where}: unknown_fact:{f}' for f in unknown]
+        if not unknown:
+            problems += [f'{where}: {p}' for p in carry.recovery_problems(incident, r, facts)]
     ids = set()
     for i, s in enumerate(analysis['scenarios']):
         if s['id'] in ids or not re.fullmatch(r'[a-z0-9_-]{1,40}', s['id']):
@@ -286,6 +320,35 @@ def briefing(facts: dict, preview: dict, *, edition_id: str, mode: str, session_
         lines.append(_table_row(n['id'], n['event_cluster_id'], n['publisher'],
                                 parse_time(n['published_at']).astimezone(JST).strftime('%m-%d %H:%M JST'),
                                 n['code_verification'], n['title'], excerpt[:200]))
+    shown_since = parse_time(facts['as_of']) - timedelta(days=carry.BRIEFING_DAYS)
+    carried = [k for k in st.get('news', {}).get('carried') or [] if parse_time(k['first_known_at']) >= shown_since]
+    lines += ['', '## 既知イベント（known_event_ids・採用済みの版で評価済み）', '',
+              '- 同じイベントの再報道（URL違い・見出し更新を含む）は known_event_ids にこの known_id を書く。'
+              'コードは初出時刻から期間を数え、再報道で加点期間を延ばさない。',
+              f'- 表は直近{carry.BRIEFING_DAYS}日に初出のものだけ。コードは{carry.KNOWN_RETENTION_DAYS}日以内の既知イベントすべてと照合する'
+              '（同じURL・本文の再報道は日数がたっても加点しない）。',
+              '- 新しい一次事実を伴う続報だけ follow_up_new_facts=true（コードは新しい一次本文と初出後の公表も確認する）。'
+              '採用された続報は別の known_id になり、その公表時刻から期間を数える。', '']
+    if carried:
+        lines += ['| known_id | 初出 | 採用版 | 見出し |', '|---|---|---|---|']
+        for k in carried:
+            lines.append(_table_row(k['known_id'], parse_time(k['first_known_at']).astimezone(JST).strftime('%m-%d %H:%M JST'),
+                                    f'{k["mode"]} {k["edition_id"]}', k['title']))
+    else:
+        lines.append('- なし')
+    incidents = st.get('incidents', {}).get('open') or []
+    lines += ['', '## 未解決の重大障害（incident_recoveries）', '',
+              '- 前の採用版から継続中。解除は incident_recoveries に incident_id・公式復旧の news_id（一次本文取得済み・'
+              '障害より後の公表）・fact_ids（affected_source_ids の各 source を、復旧告知の公表より後に取引所で観測したもの。'
+              '日付だけの値は数えない）を書いたときだけ。影響sourceが指定なしの障害は親では解除できない。', '']
+    if incidents:
+        lines += ['| incident_id | 公表 | 影響source | 見出し |', '|---|---|---|---|']
+        for inc in incidents:
+            lines.append(_table_row(inc['incident_id'], parse_time(inc['published_at']).astimezone(JST).strftime('%m-%d %H:%M JST'),
+                                    '、'.join(inc.get('affected_source_ids') or []) or '（指定なし: 親では解除できない）',
+                                    inc.get('title') or ''))
+    else:
+        lines.append('- なし')
     lines += ['', '## 目的地の候補（level_fact_ids）', '']
     for w in st.get('liquidity', {}).get('walls', []):
         lines.append(f'- observed_book_cluster: {w["price_fact_id"]}（{w["venue"]} {w["side"]}）')
